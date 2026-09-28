@@ -1,0 +1,15 @@
+{
+  "name": "chipgraph",
+  "description": "chipgraph: an AI agent system for chip (IC) design",
+  "owner": {
+    "name": "quynhonsemiconductor",
+    "url": "https://github.com/quynhonsemiconductor"
+  },
+  "plugins": [
+    {
+      "name": "chipgraph",
+      "source": "./plugin",
+      "description": "Run the chipgraph MCP server (status, build, check, approve, config_show) inside your own Claude Code."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "chipgraph",
+  "displayName": "chipgraph",
+  "version": "0.0.1",
+  "description": "AI agent system for chip (IC) design: run the chipgraph MCP server (status, build, check, approve, config_show) inside your own Claude Code.",
+  "author": {
+    "name": "quynhonsemiconductor",
+    "url": "https://github.com/quynhonsemiconductor"
+  },
+  "homepage": "https://github.com/quynhonsemiconductor/chipgraph",
+  "repository": "https://github.com/quynhonsemiconductor/chipgraph",
+  "license": "Apache-2.0",
+  "keywords": ["chip", "ic", "eda", "rtl", "mcp"]
+}
