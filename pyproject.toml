@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chipgraph"
+version = "0.0.1"
+description = "AI agent system for chip (IC) design, built on a build graph over a Design Model"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+dependencies = [
+    "typer>=0.27",
+    "pydantic>=2.13",
+    "pyyaml",
+]
+
+[project.scripts]
+chipgraph = "chipgraph.cli:app"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16",
+    "mypy>=2.3",
+    "pytest>=9.1",
+    "pre-commit",
+    "types-PyYAML",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chipgraph"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+mypy_path = "src"
+packages = ["chipgraph"]
+
+[[tool.mypy.overrides]]
+module = "chipgraph.core.*"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
