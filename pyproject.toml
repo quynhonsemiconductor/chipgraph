@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.13",
     "pyyaml",
     "opentelemetry-api>=1.45",
+    "mcp>=2.2,<3",
 ]
 
 [project.optional-dependencies]
@@ -81,9 +82,14 @@ testpaths = ["tests"]
 [tool.importlinter]
 root_package = "chipgraph"
 
-# chipgraph.mcp does not exist yet; add it to forbidden_modules when M0-14 creates it.
 [[tool.importlinter.contracts]]
 name = "core knows nothing about adapters, checks or surfaces"
 type = "forbidden"
 source_modules = ["chipgraph.core"]
-forbidden_modules = ["chipgraph.adapters", "chipgraph.checks", "chipgraph.cli", "chipgraph.app"]
+forbidden_modules = [
+    "chipgraph.adapters",
+    "chipgraph.checks",
+    "chipgraph.cli",
+    "chipgraph.app",
+    "chipgraph.mcp",
+]

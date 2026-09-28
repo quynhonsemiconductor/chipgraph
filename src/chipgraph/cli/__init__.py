@@ -508,4 +508,17 @@ def doctor(ctx: typer.Context) -> None:
         raise typer.Exit(code=1)
 
 
+# --- mcp ---------------------------------------------------------------------------
+
+
+@app.command("mcp")
+@_handle_errors
+def mcp_cmd(ctx: typer.Context) -> None:
+    """Start the MCP server over stdio, for Claude Code or another MCP client."""
+    from chipgraph.mcp import run_stdio
+
+    state: CliState = ctx.obj
+    asyncio.run(run_stdio(state.start, profile_path=state.profile_path))
+
+
 __all__ = ["app"]
