@@ -14,6 +14,7 @@ from chipgraph.core.contracts import CheckResult, CheckSpec, Issue, RuleInstance
 from chipgraph.core.plugin_api.protocols import Check, ToolAdapter
 from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.plugin_api.types import ToolContext
+from chipgraph.core.state.artifacts import hash_inputs
 from chipgraph.core.state.idempotency import IdempotencyStore, make_key
 
 
@@ -76,10 +77,30 @@ class ProfileCheckRunner:
             params=dict(instance.params),
         )
 
+        # Idempotent resume (DESIGN.md 6.2): a `pass` result is reused when the same
+        # check runs again in the same run with the same files. Only plugins with a
+        # `key_for(spec, ctx)` (today `CmdTool`) can be keyed before running; the
+        # built-in checks fold the files they read into their key inside `run()`, so
+        # they always run. The cache key adds the hashes of the instance's inputs and
+        # outputs, so editing a file between a kill and `resume` runs the check again.
+        # Failures are never reused: a fixed file must be checked again.
+        store = IdempotencyStore(self.ctx.layout, self.run_id) if self.run_id is not None else None
+        key_for = getattr(plugin, "key_for", None)
+        cache_key: str | None = None
+        if store is not None and callable(key_for):
+            refs = [r for r in (*instance.inputs, *instance.outputs) if r.path is not None]
+            files = self.ctx.store.current_hashes(refs)
+            cache_key = make_key(
+                {"check": str(key_for(spec, tool_ctx)), "files": hash_inputs(files.items())}
+            )
+            cached = store.get(cache_key)
+            if cached is not None and cached.ok:
+                return cached
+
         result = await plugin.run(spec, tool_ctx)
 
-        if self.run_id is not None:
-            IdempotencyStore(self.ctx.layout, self.run_id).put(result)
+        if store is not None and cache_key is not None and result.ok:
+            store.put(result.model_copy(update={"idempotency_key": cache_key}))
 
         return result
 

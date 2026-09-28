@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from typing import Literal, Protocol, runtime_checkable
 
 from opentelemetry import trace as otel_trace
@@ -72,6 +72,10 @@ class Tracer(Protocol):
         """Open a span named `name`, with `attributes` set on it up front."""
         ...
 
+    def flush(self) -> None:
+        """Export every finished span now. Never raises."""
+        ...
+
 
 class _NoopSpanHandle:
     """The `SpanHandle` `NoopTracer` hands out: every call is a no-op."""
@@ -94,6 +98,9 @@ class NoopTracer:
     @contextmanager
     def span(self, name: str, **attributes: AttrValue) -> Iterator[SpanHandle]:
         yield _NOOP_SPAN_HANDLE
+
+    def flush(self) -> None:
+        return None
 
 
 class _OtelSpanHandle:
@@ -121,6 +128,7 @@ class OtelTracer:
     def __init__(
         self, service_name: str = "chipgraph", *, provider: OtelTracerProvider | None = None
     ) -> None:
+        self._provider = provider
         self._tracer = (
             provider.get_tracer(service_name)
             if provider is not None
@@ -133,6 +141,15 @@ class OtelTracer:
             for key, value in attributes.items():
                 span.set_attribute(key, value)
             yield _OtelSpanHandle(span)
+
+    def flush(self) -> None:
+        """Flush the provider's span processors, so `console`/`otlp` output is not
+        left to the interpreter's exit. Tracing must never break a build."""
+        force_flush = getattr(self._provider, "force_flush", None)
+        if force_flush is None:
+            return
+        with suppress(Exception):
+            force_flush()
 
 
 _SDK_HINT = "the OpenTelemetry SDK is not installed; run `pip install chipgraph[otel]`"

@@ -19,6 +19,7 @@ from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules
 from chipgraph.core.engine.scheduler import AgentStub, Scheduler
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
+from chipgraph.core.state.trace import Tracer
 
 
 def _chipgraph_repo_root() -> Path | None:
@@ -87,7 +88,9 @@ def _resolver_for(ctx: AppContext) -> ForeachResolver:
     return _ProfileForeach(ctx.require_profile().profile.blocks)
 
 
-def make_scheduler(ctx: AppContext, target: str, *, concurrency: int = 4) -> Scheduler:
+def make_scheduler(
+    ctx: AppContext, target: str, *, concurrency: int = 4, tracer: Tracer | None = None
+) -> Scheduler:
     """Build a `Scheduler` ready to run/resume `target` for this project."""
     rules = load_rules(ctx)
     resolver = _resolver_for(ctx)
@@ -112,6 +115,7 @@ def make_scheduler(ctx: AppContext, target: str, *, concurrency: int = 4) -> Sch
         checks=ProfileCheckRunner(ctx),
         gates=ctx.gates,
         concurrency=concurrency,
+        tracer=tracer,
     )
 
 
