@@ -36,6 +36,9 @@ layout = "chipgraph.checks.layout:LayoutCheck"
 filelist = "chipgraph.checks.filelist:FilelistCheck"
 generated = "chipgraph.checks.generated:GeneratedCheck"
 
+[project.entry-points."chipgraph.adapters.review"]
+file = "chipgraph.adapters.review.file:FileReview"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",

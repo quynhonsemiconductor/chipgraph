@@ -38,8 +38,14 @@ class FileReview:
 
     name = "file"
 
-    def __init__(self, decisions_dir: Path) -> None:
-        self.decisions_dir = decisions_dir
+    def __init__(self, decisions_dir: Path | None = None) -> None:
+        # The registry builds adapters with no arguments; the default is the current
+        # project's `.chipgraph/decisions/`, and callers that know the root pass it.
+        self.decisions_dir = (
+            decisions_dir
+            if decisions_dir is not None
+            else (Path.cwd() / ".chipgraph" / "decisions")
+        )
 
     def record(self, approval: Approval) -> None:
         """Write `approval` to a new file in `decisions_dir`.
