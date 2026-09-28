@@ -25,10 +25,12 @@ from chipgraph.core.contracts.rule import RuleInstance, RuleSpec
 from chipgraph.core.contracts.types import FailureLabel, RuleKind
 from chipgraph.core.engine.graph import BuildGraph, ProductionRecord, Staleness, compute_staleness
 from chipgraph.core.engine.records import RecordStore
+from chipgraph.core.state import trace as tracing
 from chipgraph.core.state.artifacts import ArtifactStore, hash_inputs
 from chipgraph.core.state.journal import Journal, read, read_manifest, replay, write_manifest
 from chipgraph.core.state.layout import StateLayout, new_run_id
 from chipgraph.core.state.lock import BlockLock
+from chipgraph.core.state.trace import NoopTracer, Tracer
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 
@@ -128,6 +130,7 @@ class Scheduler:
         gates: GateChecker | None = None,
         concurrency: int = 4,
         owner: str = "chipgraph",
+        tracer: Tracer | None = None,
     ) -> None:
         self.graph = graph
         self.layout = layout
@@ -138,6 +141,7 @@ class Scheduler:
         self.concurrency = concurrency
         self.owner = owner
         self.records = RecordStore(layout)
+        self.tracer: Tracer = tracer if tracer is not None else NoopTracer()
 
     # --- entry points ----------------------------------------------------------------
 
@@ -185,37 +189,45 @@ class Scheduler:
     async def _execute(
         self, rid: str, journal: Journal, target: str, *, emit_run_start: bool
     ) -> RunSummary:
-        graph = self.graph
-        selected = graph.select(target)
+        with self.tracer.span(
+            tracing.SPAN_RUN, **{tracing.RUN_ID: rid, tracing.TARGET: target}
+        ) as run_span:
+            graph = self.graph
+            selected = graph.select(target)
 
-        if emit_run_start:
-            self._emit(journal, rid, "run_start", payload={"target": target})
+            if emit_run_start:
+                self._emit(journal, rid, "run_start", payload={"target": target})
 
-        blocks = sorted(
-            {graph.instances[iid].params.get("block", "graph") for iid in selected}
-        ) or ["graph"]
-        locks = [BlockLock(self.layout, block=block, owner=self.owner) for block in blocks]
-        for lock in locks:
-            lock.acquire()
-        try:
-            summary = await self._schedule(rid, journal, graph, selected)
-        finally:
+            blocks = sorted(
+                {graph.instances[iid].params.get("block", "graph") for iid in selected}
+            ) or ["graph"]
+            locks = [BlockLock(self.layout, block=block, owner=self.owner) for block in blocks]
             for lock in locks:
-                lock.release()
+                lock.acquire()
+            try:
+                summary = await self._schedule(rid, journal, graph, selected)
+            finally:
+                for lock in locks:
+                    lock.release()
 
-        self._emit(
-            journal,
-            rid,
-            "run_stop",
-            payload={
-                "done": len(summary.done),
-                "skipped_fresh": len(summary.skipped_fresh),
-                "failed": len(summary.failed),
-                "waiting_gate": len(summary.waiting_gate),
-                "blocked": len(summary.blocked),
-            },
-        )
-        return summary
+            self._emit(
+                journal,
+                rid,
+                "run_stop",
+                payload={
+                    "done": len(summary.done),
+                    "skipped_fresh": len(summary.skipped_fresh),
+                    "failed": len(summary.failed),
+                    "waiting_gate": len(summary.waiting_gate),
+                    "blocked": len(summary.blocked),
+                },
+            )
+            run_span.set("chipgraph.run.done", len(summary.done))
+            run_span.set("chipgraph.run.skipped_fresh", len(summary.skipped_fresh))
+            run_span.set("chipgraph.run.failed", len(summary.failed))
+            run_span.set("chipgraph.run.waiting_gate", len(summary.waiting_gate))
+            run_span.set("chipgraph.run.blocked", len(summary.blocked))
+            return summary
 
     async def _schedule(
         self, rid: str, journal: Journal, graph: BuildGraph, selected: set[str]
@@ -316,6 +328,32 @@ class Scheduler:
         rule = graph.rules[instance.rule_id]
         state = staleness[iid]
 
+        with self.tracer.span(
+            tracing.SPAN_RULE,
+            **{
+                tracing.RULE_ID: rule.id,
+                tracing.RULE_INSTANCE: iid,
+                tracing.RULE_KIND: rule.kind,
+            },
+        ) as rule_span:
+            return await self._process_instance_body(
+                rid, journal, iid, instance, rule, state, rule_span
+            )
+
+    async def _process_instance_body(
+        self,
+        rid: str,
+        journal: Journal,
+        iid: str,
+        instance: RuleInstance,
+        rule: RuleSpec,
+        state: Staleness,
+        rule_span: tracing.SpanHandle,
+    ) -> tuple[InstanceStatus, FailureLabel | None]:
+        def _fail(label: FailureLabel, message: str) -> None:
+            rule_span.set(tracing.FAILURE_LABEL, label)
+            rule_span.error(message)
+
         if state.state == "fresh":
             self._emit(journal, rid, "rule_done", iid, payload={"skipped": "fresh"})
             return "fresh", None
@@ -330,6 +368,7 @@ class Scheduler:
                 failure_label="constraint",
                 payload={"message": message},
             )
+            _fail("constraint", message)
             return "failed", "constraint"
 
         if rule.gate:
@@ -341,14 +380,16 @@ class Scheduler:
                 self._emit(journal, rid, "gate_wait", iid, payload={"gate": gate_id})
                 return "waiting_gate", None
             if gate_status == "rejected":
+                message = "gate rejected"
                 self._emit(
                     journal,
                     rid,
                     "rule_fail",
                     iid,
                     failure_label="planning",
-                    payload={"gate": gate_id, "message": "gate rejected"},
+                    payload={"gate": gate_id, "message": message},
                 )
+                _fail("planning", message)
                 return "failed", "planning"
 
         self._emit(journal, rid, "rule_start", iid, payload={})
@@ -359,9 +400,14 @@ class Scheduler:
             self._emit(
                 journal, rid, "rule_fail", iid, failure_label="infra", payload={"message": message}
             )
+            _fail("infra", message)
             return "failed", "infra"
 
-        outcome = await executor.execute(rule, instance)
+        exec_span_name = tracing.SPAN_INVOKE_AGENT if rule.kind == "agent" else tracing.SPAN_EXECUTE
+        with self.tracer.span(exec_span_name) as exec_span:
+            outcome = await executor.execute(rule, instance)
+            if not outcome.ok:
+                exec_span.error(outcome.message or "execution failed")
         if not outcome.ok:
             label: FailureLabel = outcome.failure_label or "infra"
             self._emit(
@@ -372,11 +418,17 @@ class Scheduler:
                 failure_label=label,
                 payload={"message": outcome.message},
             )
+            _fail(label, outcome.message)
             return "failed", label
 
         if self.checks is not None:
             for check_id in rule.checks:
-                result = await self.checks.run(check_id, instance)
+                check_attrs = {tracing.CHECK_ID: check_id}
+                with self.tracer.span(tracing.SPAN_CHECK, **check_attrs) as check_span:
+                    result = await self.checks.run(check_id, instance)
+                    check_span.set(tracing.CHECK_STATUS, result.status)
+                    if not result.ok:
+                        check_span.error(f"check {check_id} failed")
                 self._emit(
                     journal, rid, "check_result", iid, payload=result.model_dump(mode="json")
                 )
@@ -390,6 +442,7 @@ class Scheduler:
                         failure_label="verification",
                         payload={"message": message},
                     )
+                    _fail("verification", message)
                     return "failed", "verification"
 
         for ref in instance.outputs:
@@ -403,6 +456,7 @@ class Scheduler:
                     failure_label="verification",
                     payload={"message": message},
                 )
+                _fail("verification", message)
                 return "failed", "verification"
 
         record = self._build_record(instance)
