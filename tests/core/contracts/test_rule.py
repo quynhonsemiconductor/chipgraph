@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from chipgraph.core.contracts import ArtifactRef, Budget, InputSpec, RuleInstance, RuleSpec
+from chipgraph.core.contracts import ArtifactRef, Budget, InputSpec, RuleInstance, RuleSpec, RunSpec
 
 
 def _agent_rule() -> RuleSpec:
@@ -67,6 +67,7 @@ def test_rule_spec_non_agent_rejects_role() -> None:
             kind="gen",
             outputs=("design/{block}/rtl/m_{module}.sv",),
             role="rtl_writer",
+            run=RunSpec(use="cmd"),
         )
 
 
@@ -77,6 +78,7 @@ def test_rule_spec_non_agent_rejects_skills() -> None:
             kind="gen",
             outputs=("design/{block}/rtl/m_{module}.sv",),
             skills=("verilog",),
+            run=RunSpec(use="cmd"),
         )
 
 
@@ -87,17 +89,23 @@ def test_rule_spec_non_agent_rejects_non_default_budget() -> None:
             kind="gen",
             outputs=("design/{block}/rtl/m_{module}.sv",),
             budget=Budget(tries=5),
+            run=RunSpec(use="cmd"),
         )
 
 
 def test_rule_spec_requires_at_least_one_output() -> None:
     with pytest.raises(ValidationError):
-        RuleSpec(id="digital-rtl/rtl_module", kind="gen", outputs=())
+        RuleSpec(id="digital-rtl/rtl_module", kind="gen", outputs=(), run=RunSpec(use="cmd"))
 
 
 def test_rule_spec_rejects_dotdot_output_template() -> None:
     with pytest.raises(ValidationError):
-        RuleSpec(id="digital-rtl/rtl_module", kind="gen", outputs=("../escape/m.sv",))
+        RuleSpec(
+            id="digital-rtl/rtl_module",
+            kind="gen",
+            outputs=("../escape/m.sv",),
+            run=RunSpec(use="cmd"),
+        )
 
 
 def test_rule_instance_id_mismatch_rejected() -> None:
@@ -122,10 +130,38 @@ def test_rule_instance_requires_at_least_one_output() -> None:
 
 def test_rule_id_pattern_rejected_when_invalid() -> None:
     with pytest.raises(ValidationError):
-        RuleSpec(id="NoNamespace", kind="gen", outputs=("a/b.sv",))
+        RuleSpec(id="NoNamespace", kind="gen", outputs=("a/b.sv",), run=RunSpec(use="cmd"))
 
 
 def test_rule_spec_frozen() -> None:
-    rule = RuleSpec(id="digital-rtl/rtl_module", kind="gen", outputs=("a/b.sv",))
+    rule = RuleSpec(
+        id="digital-rtl/rtl_module", kind="gen", outputs=("a/b.sv",), run=RunSpec(use="cmd")
+    )
     with pytest.raises(ValidationError):
         rule.description = "changed"  # type: ignore[misc]
+
+
+def test_rule_spec_gen_requires_run() -> None:
+    with pytest.raises(ValidationError):
+        RuleSpec(id="digital-rtl/rtl_module", kind="gen", outputs=("a/b.sv",))
+
+
+def test_rule_spec_run_only_for_gen_or_import() -> None:
+    with pytest.raises(ValidationError):
+        RuleSpec(
+            id="digital-rtl/rtl_module",
+            kind="human",
+            outputs=("a/b.sv",),
+            run=RunSpec(use="cmd"),
+        )
+
+
+def test_rule_spec_import_may_have_run() -> None:
+    rule = RuleSpec(
+        id="digital-rtl/rtl_module",
+        kind="import",
+        outputs=("a/b.sv",),
+        run=RunSpec(use="cmd", args={"cmd": "qsoc import"}),
+    )
+    assert rule.run is not None
+    assert rule.run.use == "cmd"

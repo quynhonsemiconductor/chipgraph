@@ -11,6 +11,7 @@ from chipgraph.core.plugin_api.pack import load_pack
 _RULE_BODY = {
     "kind": "gen",
     "outputs": ["design/{block}/rtl/m_{block}.sv"],
+    "run": {"use": "cmd"},
 }
 
 
@@ -125,5 +126,5 @@ def test_short_rule_id_gets_the_pack_namespace(tmp_path: Path) -> None:
     from chipgraph.core.engine.rules import load_rule_file
 
     f = tmp_path / "r.yml"
-    f.write_text("rule: rtl_module\nkind: gen\noutputs: ['a/{block}.sv']\n")
+    f.write_text("rule: rtl_module\nkind: gen\noutputs: ['a/{block}.sv']\nrun: {use: cmd}\n")
     assert load_rule_file(f, namespace="digital-rtl").id == "digital-rtl/rtl_module"

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scheduler_fixtures import UppercaseExecutor
 
-from chipgraph.core.contracts import InputSpec, RuleSpec
+from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
 from chipgraph.core.engine import scheduler as scheduler_mod
 from chipgraph.core.engine.graph import StaticForeach, build_graph
 from chipgraph.core.engine.scheduler import Scheduler
@@ -29,18 +29,20 @@ from chipgraph.core.state.layout import StateLayout, new_run_id
 def chain_rules() -> list[RuleSpec]:
     """The same a->b->c chain the parent test builds to compare against."""
     return [
-        RuleSpec(id="p/a", kind="gen", outputs=("a.txt",)),
+        RuleSpec(id="p/a", kind="gen", outputs=("a.txt",), run=RunSpec(use="cmd")),
         RuleSpec(
             id="p/b",
             kind="gen",
             outputs=("b.txt",),
             inputs=(InputSpec(source="path", selector="a.txt"),),
+            run=RunSpec(use="cmd"),
         ),
         RuleSpec(
             id="p/c",
             kind="gen",
             outputs=("c.txt",),
             inputs=(InputSpec(source="path", selector="b.txt"),),
+            run=RunSpec(use="cmd"),
         ),
     ]
 

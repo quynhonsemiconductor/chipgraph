@@ -85,6 +85,29 @@
       ],
       "title": "InputSpec",
       "type": "object"
+    },
+    "RunSpec": {
+      "additionalProperties": false,
+      "description": "How a `gen`/`import` rule actually runs: a tool adapter and its arguments.",
+      "properties": {
+        "args": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Arguments passed to the tool adapter.",
+          "title": "Args",
+          "type": "object"
+        },
+        "use": {
+          "description": "The tool adapter to run, e.g. 'cmd'.",
+          "title": "Use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "use"
+      ],
+      "title": "RunSpec",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -182,6 +205,18 @@
       "default": null,
       "description": "The agent role that runs this rule, if any.",
       "title": "Role"
+    },
+    "run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How this rule actually runs (kind 'gen'/'import' only): tool adapter + args."
     },
     "schema_version": {
       "const": 1,

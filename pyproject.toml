@@ -86,4 +86,4 @@ root_package = "chipgraph"
 name = "core knows nothing about adapters, checks or surfaces"
 type = "forbidden"
 source_modules = ["chipgraph.core"]
-forbidden_modules = ["chipgraph.adapters", "chipgraph.checks", "chipgraph.cli"]
+forbidden_modules = ["chipgraph.adapters", "chipgraph.checks", "chipgraph.cli", "chipgraph.app"]

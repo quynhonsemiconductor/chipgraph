@@ -19,7 +19,7 @@ from pathlib import Path
 
 from scheduler_fixtures import UppercaseExecutor
 
-from chipgraph.core.contracts import InputSpec, RuleSpec
+from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
 from chipgraph.core.engine.graph import StaticForeach, build_graph
 from chipgraph.core.engine.records import RecordStore
 from chipgraph.core.engine.scheduler import Scheduler
@@ -33,18 +33,20 @@ _POLL_INTERVAL_S = 0.05
 
 def _chain_rules() -> list[RuleSpec]:
     return [
-        RuleSpec(id="p/a", kind="gen", outputs=("a.txt",)),
+        RuleSpec(id="p/a", kind="gen", outputs=("a.txt",), run=RunSpec(use="cmd")),
         RuleSpec(
             id="p/b",
             kind="gen",
             outputs=("b.txt",),
             inputs=(InputSpec(source="path", selector="a.txt"),),
+            run=RunSpec(use="cmd"),
         ),
         RuleSpec(
             id="p/c",
             kind="gen",
             outputs=("c.txt",),
             inputs=(InputSpec(source="path", selector="b.txt"),),
+            run=RunSpec(use="cmd"),
         ),
     ]
 
