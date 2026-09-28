@@ -25,17 +25,37 @@ from chipgraph.core.engine.graph import (
     compute_staleness,
     kind_for,
 )
+from chipgraph.core.engine.records import RecordStore
 from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules, load_rule_file
+from chipgraph.core.engine.scheduler import (
+    AgentStub,
+    CheckRunner,
+    ExecOutcome,
+    Executor,
+    GateChecker,
+    RunSummary,
+    Scheduler,
+    SchedulerError,
+)
 
 __all__ = [
+    "AgentStub",
     "BuildGraph",
+    "CheckRunner",
+    "ExecOutcome",
+    "Executor",
     "ForeachResolver",
+    "GateChecker",
     "GateError",
     "GateEvaluator",
     "GateStatus",
     "GraphError",
     "ProductionRecord",
+    "RecordStore",
     "RuleLoadError",
+    "RunSummary",
+    "Scheduler",
+    "SchedulerError",
     "Staleness",
     "StalenessState",
     "StaticForeach",
