@@ -1,0 +1,29 @@
+# Root .dockerignore — the build context is the repo root (docker/Dockerfile COPYs
+# pyproject.toml, uv.lock, README.md, src/, and, for the `test` target, tests/ and
+# examples/ from there), so this lives at the root rather than under docker/.
+
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.cache
+dist
+build
+docs
+doc
+plugin
+.claude-plugin
+evals
+interfaces
+presets
+orgs
+*.md
+!README.md
+.DS_Store
