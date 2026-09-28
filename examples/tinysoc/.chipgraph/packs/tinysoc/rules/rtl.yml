@@ -1,0 +1,9 @@
+# chipgraph example: tinysoc
+# Each block's RTL is written by a person: a `human` rule whose output is the RTL
+# file itself (DESIGN.md 3.4). Editing it makes the rule stale, so it and everything
+# built from it run again; hand-edit protection applies only to generated files.
+rule: rtl
+kind: human
+foreach: blocks
+outputs:
+  - "rtl/tiny_{block}.sv"
