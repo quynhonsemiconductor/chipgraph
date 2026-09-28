@@ -1,0 +1,219 @@
+{
+  "$defs": {
+    "JSONValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Records where a single entity or relation fact was learned from.",
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content hash of the source artifact, if known.",
+          "title": "Artifact"
+        },
+        "extractor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The extractor or format adapter id that produced this fact.",
+          "title": "Extractor"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "POSIX path the fact was read from, relative to the repo root.",
+          "title": "File"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The 1-based line number, if any.",
+          "title": "Line"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "description": "Schema version of this model.",
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "title": "Provenance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A bit field within a register.",
+  "properties": {
+    "access": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Access mode, e.g. 'rw', 'ro', 'w1c'.",
+      "title": "Access"
+    },
+    "attrs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JSONValue"
+      },
+      "description": "Open-ended extra facts not covered by typed fields.",
+      "title": "Attrs",
+      "type": "object"
+    },
+    "key": {
+      "description": "The stable model key, e.g. 'register:timer.CTRL'.",
+      "title": "Key",
+      "type": "string"
+    },
+    "kind": {
+      "const": "field",
+      "default": "field",
+      "title": "Kind",
+      "type": "string"
+    },
+    "lsb": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Least-significant bit index.",
+      "title": "Lsb"
+    },
+    "msb": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Most-significant bit index.",
+      "title": "Msb"
+    },
+    "name": {
+      "description": "A short human-readable name for this entity.",
+      "title": "Name",
+      "type": "string"
+    },
+    "register": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Model key of the owning register.",
+      "title": "Register"
+    },
+    "reset_value": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Reset value.",
+      "title": "Reset Value"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/Provenance",
+      "description": "Where this fact was learned from."
+    }
+  },
+  "required": [
+    "key",
+    "name"
+  ],
+  "title": "FieldEntity",
+  "type": "object"
+}
