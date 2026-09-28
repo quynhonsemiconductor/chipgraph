@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from chipgraph.core.contracts import InputSpec, RuleSpec
+from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
 from chipgraph.core.engine.graph import (
     GraphError,
     ProductionRecord,
@@ -24,7 +24,8 @@ def _rule(
     foreach: str | None = None,
     kind: str = "gen",
 ) -> RuleSpec:
-    return RuleSpec(id=id_, kind=kind, outputs=outputs, inputs=inputs, foreach=foreach)
+    run = RunSpec(use="cmd") if kind == "gen" else None
+    return RuleSpec(id=id_, kind=kind, outputs=outputs, inputs=inputs, foreach=foreach, run=run)
 
 
 # --- kind_for ----------------------------------------------------------------------

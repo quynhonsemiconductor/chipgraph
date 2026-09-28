@@ -18,7 +18,7 @@ from scheduler_fixtures import (
     make_check_result,
 )
 
-from chipgraph.core.contracts import InputSpec, RuleSpec
+from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
 from chipgraph.core.engine.graph import StaticForeach, build_graph
 from chipgraph.core.engine.scheduler import Scheduler
 from chipgraph.core.state import trace as tracing
@@ -41,7 +41,14 @@ def _rule(
     inputs: tuple[InputSpec, ...] = (),
     checks: tuple[str, ...] = (),
 ) -> RuleSpec:
-    return RuleSpec(id=id_, kind="gen", outputs=outputs, inputs=inputs, checks=checks)
+    return RuleSpec(
+        id=id_,
+        kind="gen",
+        outputs=outputs,
+        inputs=inputs,
+        checks=checks,
+        run=RunSpec(use="cmd"),
+    )
 
 
 def _traced_scheduler(

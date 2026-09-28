@@ -61,6 +61,15 @@ class Budget(BaseModel):
 _DEFAULT_BUDGET = Budget()
 
 
+class RunSpec(BaseModel):
+    """How a `gen`/`import` rule actually runs: a tool adapter and its arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    use: str = Field(description="The tool adapter to run, e.g. 'cmd'.")
+    args: dict[str, Any] = Field(default={}, description="Arguments passed to the tool adapter.")
+
+
 class RuleSpec(BaseModel):
     """The specification of a rule: how it produces outputs from inputs."""
 
@@ -96,6 +105,10 @@ class RuleSpec(BaseModel):
     gate: str | None = Field(
         default=None, description="A gate id that must approve before this rule runs."
     )
+    run: RunSpec | None = Field(
+        default=None,
+        description="How this rule actually runs (kind 'gen'/'import' only): tool adapter + args.",
+    )
 
     @model_validator(mode="after")
     def _check_outputs_present(self) -> Self:
@@ -117,6 +130,14 @@ class RuleSpec(BaseModel):
                 raise ValueError("'skills' is only allowed when kind='agent'")
             if self.budget != _DEFAULT_BUDGET:
                 raise ValueError("a non-default 'budget' is only allowed when kind='agent'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_run_field(self) -> Self:
+        if self.run is not None and self.kind not in ("gen", "import"):
+            raise ValueError("'run' is only allowed when kind is 'gen' or 'import'")
+        if self.kind == "gen" and self.run is None:
+            raise ValueError("RuleSpec with kind='gen' requires 'run'")
         return self
 
 

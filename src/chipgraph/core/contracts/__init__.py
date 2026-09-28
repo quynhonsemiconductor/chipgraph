@@ -9,7 +9,7 @@ from chipgraph.core.contracts.artifact import Artifact, ArtifactRef, ProducedBy
 from chipgraph.core.contracts.check import CheckResult, CheckSpec, Issue
 from chipgraph.core.contracts.event import Event, EventType, RunManifest
 from chipgraph.core.contracts.gate import Approval, GateSpec
-from chipgraph.core.contracts.rule import Budget, InputSpec, RuleInstance, RuleSpec
+from chipgraph.core.contracts.rule import Budget, InputSpec, RuleInstance, RuleSpec, RunSpec
 from chipgraph.core.contracts.types import (
     ArtifactKind,
     CheckStatus,
@@ -47,6 +47,7 @@ __all__ = [
     "RuleKind",
     "RuleSpec",
     "RunManifest",
+    "RunSpec",
     "Severity",
     "Sha256",
 ]

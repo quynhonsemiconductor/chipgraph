@@ -21,7 +21,7 @@ from scheduler_fixtures import (
     make_check_result,
 )
 
-from chipgraph.core.contracts import InputSpec, RuleSpec
+from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
 from chipgraph.core.engine.graph import StaticForeach, build_graph
 from chipgraph.core.engine.records import RecordStore
 from chipgraph.core.engine.scheduler import AgentStub, Scheduler
@@ -41,6 +41,7 @@ def _rule(
     foreach: str | None = None,
     role: str | None = None,
 ) -> RuleSpec:
+    run = RunSpec(use="cmd") if kind == "gen" else None
     return RuleSpec(
         id=id_,
         kind=kind,
@@ -50,6 +51,7 @@ def _rule(
         gate=gate,
         foreach=foreach,
         role=role,
+        run=run,
     )
 
 
