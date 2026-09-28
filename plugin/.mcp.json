@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "chipgraph": {
+      "command": "uvx",
+      "args": ["chipgraph@0.0.1", "-C", "${CLAUDE_PROJECT_DIR}", "mcp"]
+    }
+  }
+}
