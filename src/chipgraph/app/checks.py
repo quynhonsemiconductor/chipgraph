@@ -10,11 +10,13 @@ cached in that run's `IdempotencyStore`.
 from __future__ import annotations
 
 from chipgraph.app.context import AppContext
+from chipgraph.app.findings import findings_from_check, layer_for_check
 from chipgraph.core.contracts import CheckResult, CheckSpec, Issue, RuleInstance
 from chipgraph.core.plugin_api.protocols import Check, ToolAdapter
 from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.plugin_api.types import ToolContext
 from chipgraph.core.state.artifacts import hash_inputs
+from chipgraph.core.state.findings import FindingStore
 from chipgraph.core.state.idempotency import IdempotencyStore, make_key
 
 
@@ -24,6 +26,7 @@ class ProfileCheckRunner:
     def __init__(self, ctx: AppContext, *, run_id: str | None = None) -> None:
         self.ctx = ctx
         self.run_id = run_id
+        self.finding_store = FindingStore(ctx.layout)
 
     async def run(self, check_id: str, instance: RuleInstance) -> CheckResult:
         resolved = self.ctx.require_profile()
@@ -32,39 +35,45 @@ class ProfileCheckRunner:
 
         cfg = profile.adapters.get(check_id)
         if cfg is None:
-            return CheckResult(
-                check_id=check_id,
-                status="error",
-                issues=(
-                    Issue(
-                        severity="error",
-                        msg=(
-                            f"no adapter configured for check {check_id!r}; "
-                            f"configured adapters: {sorted(profile.adapters)}"
+            return self._record(
+                check_id,
+                CheckResult(
+                    check_id=check_id,
+                    status="error",
+                    issues=(
+                        Issue(
+                            severity="error",
+                            msg=(
+                                f"no adapter configured for check {check_id!r}; "
+                                f"configured adapters: {sorted(profile.adapters)}"
+                            ),
                         ),
                     ),
+                    duration_s=0.0,
+                    idempotency_key=make_key({"check_id": check_id, "error": "unknown-check"}),
                 ),
-                duration_s=0.0,
-                idempotency_key=make_key({"check_id": check_id, "error": "unknown-check"}),
             )
 
         plugin = self._resolve_plugin(cfg.use)
         if plugin is None:
-            return CheckResult(
-                check_id=check_id,
-                status="error",
-                issues=(
-                    Issue(
-                        severity="error",
-                        msg=(
-                            f"no check or tool adapter named {cfg.use!r} "
-                            f"(configured for check {check_id!r})"
+            return self._record(
+                check_id,
+                CheckResult(
+                    check_id=check_id,
+                    status="error",
+                    issues=(
+                        Issue(
+                            severity="error",
+                            msg=(
+                                f"no check or tool adapter named {cfg.use!r} "
+                                f"(configured for check {check_id!r})"
+                            ),
                         ),
                     ),
-                ),
-                duration_s=0.0,
-                idempotency_key=make_key(
-                    {"check_id": check_id, "error": "unknown-adapter", "use": cfg.use}
+                    duration_s=0.0,
+                    idempotency_key=make_key(
+                        {"check_id": check_id, "error": "unknown-adapter", "use": cfg.use}
+                    ),
                 ),
             )
 
@@ -95,13 +104,30 @@ class ProfileCheckRunner:
             )
             cached = store.get(cache_key)
             if cached is not None and cached.ok:
-                return cached
+                return self._record(check_id, cached)
 
         result = await plugin.run(spec, tool_ctx)
 
         if store is not None and cache_key is not None and result.ok:
             store.put(result.model_copy(update={"idempotency_key": cache_key}))
 
+        return self._record(check_id, result)
+
+    def _record(self, check_id: str, result: CheckResult) -> CheckResult:
+        """Record `result`'s issues as findings, never failing the check for it.
+
+        Only an `OSError` writing to the finding store is swallowed; anything else
+        (e.g. a bug building a `Finding`) is a real error and propagates.
+        """
+        try:
+            layer = layer_for_check(check_id, result.check_id)
+            findings = findings_from_check(
+                result, layer=layer, store=self.ctx.store, run_id=self.run_id
+            )
+            if findings:
+                self.finding_store.upsert(findings)
+        except OSError:
+            pass
         return result
 
     def _resolve_plugin(self, use: str) -> Check | ToolAdapter | None:

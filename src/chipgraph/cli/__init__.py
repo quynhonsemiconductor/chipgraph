@@ -24,16 +24,18 @@ import typer
 import yaml
 
 from chipgraph import __version__
+from chipgraph.app import findings as findings_app
 from chipgraph.app.build import make_scheduler
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity, find_repo_root
 from chipgraph.app.errors import AppError
 from chipgraph.core.config.errors import ConfigError
-from chipgraph.core.contracts import ArtifactRef, CheckResult, RuleInstance
+from chipgraph.core.contracts import ArtifactRef, CheckResult, Finding, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state import trace as trace_mod
+from chipgraph.core.state.findings import FindingStore, effective_status, waiver_gate_id
 from chipgraph.core.state.layout import StateLayout
 from chipgraph.core.state.trace import Tracer
 
@@ -560,6 +562,108 @@ def doctor(ctx: typer.Context) -> None:
             typer.echo(f"{mark:7} {name}: {detail}")
     if not ok:
         raise typer.Exit(code=1)
+
+
+# --- findings / waive ---------------------------------------------------------------
+
+_FINDING_STATUS_CHOICES = ("open", "waived", "fixed", "all")
+
+
+def _finding_first_evidence(finding: Finding) -> str:
+    ev = finding.evidence[0]
+    if ev.file is not None:
+        return f"{ev.file}:{ev.line}" if ev.line is not None else ev.file
+    return f"model:{ev.model_key}"
+
+
+def _findings_with_effective_status(
+    app_ctx: AppContext, *, status: str, layer: int | None
+) -> list[Finding]:
+    """Every stored finding matching `layer`, with `.status` set to its *effective*
+    status (resolving waiver currency against the finding's current artifact hashes),
+    filtered by `status` unless it is `"all"`.
+    """
+    store = FindingStore(app_ctx.layout)
+    rows: list[Finding] = []
+    for finding in store.list(layer=layer):
+        waivers = app_ctx.review.approvals(waiver_gate_id(finding.id))
+        current_hashes = app_ctx.store.current_hashes(finding.artifacts)
+        eff = effective_status(finding, waivers, current_hashes)
+        if status != "all" and eff != status:
+            continue
+        display = finding if eff == finding.status else finding.model_copy(update={"status": eff})
+        rows.append(display)
+    return rows
+
+
+@app.command("findings")
+@_handle_errors
+def findings_cmd(
+    ctx: typer.Context,
+    status: Annotated[
+        str, typer.Option("--status", help="open|waived|fixed|all (default: open).")
+    ] = "open",
+    layer: Annotated[
+        int | None, typer.Option("--layer", min=1, max=5, help="Only this DESIGN.md layer.")
+    ] = None,
+) -> None:
+    """List recorded findings, with their effective status (DESIGN.md 4.8)."""
+    state: CliState = ctx.obj
+    if status not in _FINDING_STATUS_CHOICES:
+        raise AppError(
+            f"--status must be one of {'|'.join(_FINDING_STATUS_CHOICES)}, got {status!r}"
+        )
+    app_ctx = _load_ctx(state)
+    rows = _findings_with_effective_status(app_ctx, status=status, layer=layer)
+
+    if state.json_output:
+        typer.echo(json.dumps([f.model_dump(mode="json") for f in rows], indent=2))
+        return
+    if not rows:
+        typer.echo("no findings")
+        return
+    for finding in rows:
+        typer.echo(
+            f"{finding.id}  L{finding.layer}  {finding.severity:9}{finding.source:16}"
+            f"{_finding_first_evidence(finding):40}{finding.status:7}{finding.claim}"
+        )
+
+
+@app.command("waive")
+@_handle_errors
+def waive_cmd(
+    ctx: typer.Context,
+    finding_id: Annotated[str, typer.Argument(help="A finding id, e.g. 'F-1a2b3c4d'.")],
+    reason: Annotated[str, typer.Option("--reason", help="Why this finding is waived.")],
+    by: Annotated[str | None, typer.Option("--by")] = None,
+) -> None:
+    """Waive a finding, binding the waiver to its artifacts' current hashes."""
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    store = FindingStore(app_ctx.layout)
+    finding = store.get_by_id(finding_id)
+    if finding is None:
+        typer.echo(f"no such finding: {finding_id!r}", err=True)
+        raise typer.Exit(code=2)
+
+    who = by or default_identity()
+    current_hashes = app_ctx.store.current_hashes(finding.artifacts)
+    try:
+        waived = findings_app.waive(
+            finding,
+            by=who,
+            reason=reason,
+            store=store,
+            review=app_ctx.review,
+            current_hashes=current_hashes,
+        )
+    except ValueError as exc:
+        raise AppError(str(exc)) from exc
+
+    if state.json_output:
+        typer.echo(waived.model_dump_json())
+    else:
+        typer.echo(f"waived {waived.id} by {who!r}: {reason}")
 
 
 # --- mcp ---------------------------------------------------------------------------
