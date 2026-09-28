@@ -8,6 +8,7 @@ from chipgraph.core.contracts.agent import AgentResult, Decision
 from chipgraph.core.contracts.artifact import Artifact, ArtifactRef, ProducedBy
 from chipgraph.core.contracts.check import CheckResult, CheckSpec, Issue
 from chipgraph.core.contracts.event import Event, EventType, RunManifest
+from chipgraph.core.contracts.finding import Evidence, Finding, FindingSeverity, FindingStatus
 from chipgraph.core.contracts.gate import Approval, GateSpec
 from chipgraph.core.contracts.rule import Budget, InputSpec, RuleInstance, RuleSpec, RunSpec
 from chipgraph.core.contracts.types import (
@@ -36,7 +37,11 @@ __all__ = [
     "Decision",
     "Event",
     "EventType",
+    "Evidence",
     "FailureLabel",
+    "Finding",
+    "FindingSeverity",
+    "FindingStatus",
     "GateSpec",
     "InputSpec",
     "Issue",
@@ -65,5 +70,6 @@ TOP_LEVEL_MODELS = (
     RunManifest,
     AgentResult,
     Decision,
+    Finding,
 )
 """Top-level models: each gets its own file in `schemas/` (see export.py)."""

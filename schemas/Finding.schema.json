@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "A reference to an artifact, identifying it without describing its content.",
+      "properties": {
+        "kind": {
+          "description": "The kind of artifact this is, e.g. rtl, spec, report.",
+          "enum": [
+            "spec",
+            "rtl",
+            "tb",
+            "sva",
+            "report",
+            "plan",
+            "model",
+            "doc",
+            "diagram",
+            "script",
+            "config",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "internal",
+          "description": "Data sensitivity label: public, internal, or nda.",
+          "enum": [
+            "public",
+            "internal",
+            "nda"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "model_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key into the Design Model when this artifact is model-based, not a file.",
+          "title": "Model Key"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "POSIX path to the artifact, relative to the repo root, when it is file-based.",
+          "title": "Path"
+        },
+        "repo": {
+          "default": ".",
+          "description": "The workspace member (repo) id this artifact belongs to.",
+          "title": "Repo",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "description": "Schema version of this model.",
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "A pointer to where a finding was observed: a file:line, or a Design Model key.",
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "POSIX path, relative to the repo root.",
+          "title": "File"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1-based line number, if any.",
+          "title": "Line"
+        },
+        "model_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key into the Design Model, when this evidence is not a file.",
+          "title": "Model Key"
+        },
+        "note": {
+          "default": "",
+          "description": "An optional free-text note about this evidence.",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "title": "Evidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A single detected problem, at one of the 5 layers of DESIGN.md 4.8.",
+  "properties": {
+    "artifact_hashes": {
+      "additionalProperties": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "default": {},
+      "description": "Content hashes of `artifacts` at detection time, keyed by '<repo>:<path or model_key>'.",
+      "title": "Artifact Hashes",
+      "type": "object"
+    },
+    "artifacts": {
+      "default": [],
+      "description": "Artifacts this finding concerns; what a waiver binds to.",
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "claim": {
+      "description": "What is wrong, in plain language.",
+      "title": "Claim",
+      "type": "string"
+    },
+    "confidence": {
+      "default": 1.0,
+      "description": "Confidence in this finding.",
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "evidence": {
+      "description": "Where this was observed; at least one is required.",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "fingerprint": {
+      "default": "",
+      "description": "Stable identity hash of source+claim+evidence; computed.",
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "first_seen": {
+      "description": "When this finding (fingerprint) was first seen.",
+      "format": "date-time",
+      "title": "First Seen",
+      "type": "string"
+    },
+    "id": {
+      "default": "",
+      "description": "'F-<first 8 chars of fingerprint>'; computed.",
+      "title": "Id",
+      "type": "string"
+    },
+    "last_seen": {
+      "description": "When this finding was last (re)detected.",
+      "format": "date-time",
+      "title": "Last Seen",
+      "type": "string"
+    },
+    "layer": {
+      "description": "Which of the 5 layers of DESIGN.md 4.8 found this.",
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Layer",
+      "type": "integer"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The run that (re)detected this finding.",
+      "title": "Run Id"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "severity": {
+      "description": "How serious this finding is.",
+      "enum": [
+        "error",
+        "warning",
+        "question"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "source": {
+      "description": "Where this came from: 'check:<id>', 'critic', 'z3', 'formal', or 'lint'.",
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "default": "open",
+      "description": "This finding's lifecycle status.",
+      "enum": [
+        "open",
+        "fixed",
+        "waived"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "suggestion": {
+      "default": "",
+      "description": "A suggested fix, if any.",
+      "title": "Suggestion",
+      "type": "string"
+    }
+  },
+  "required": [
+    "layer",
+    "severity",
+    "source",
+    "evidence",
+    "claim",
+    "first_seen",
+    "last_seen"
+  ],
+  "title": "Finding",
+  "type": "object"
+}
