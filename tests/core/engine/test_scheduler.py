@@ -21,10 +21,10 @@ from scheduler_fixtures import (
     make_check_result,
 )
 
-from chipgraph.core.contracts import InputSpec, RuleSpec, RunSpec
+from chipgraph.core.contracts import InputSpec, RuleInstance, RuleSpec, RunSpec
 from chipgraph.core.engine.graph import StaticForeach, build_graph
 from chipgraph.core.engine.records import RecordStore
-from chipgraph.core.engine.scheduler import AgentStub, Scheduler
+from chipgraph.core.engine.scheduler import AgentStub, ExecOutcome, Scheduler
 from chipgraph.core.state.artifacts import ArtifactStore, LabelRules
 from chipgraph.core.state.journal import read, replay
 from chipgraph.core.state.layout import StateLayout
@@ -349,6 +349,64 @@ def test_diverged_output_fails_constraint_and_blocks_dependents(tmp_path: Path) 
     events = read(layout.journal(summary.run_id)).events
     fail_events = [e for e in events if e.type == "rule_fail"]
     assert fail_events[0].failure_label == "constraint"
+
+
+def test_a_failed_rebuild_is_not_mistaken_for_a_hand_edit(tmp_path: Path) -> None:
+    """The tool rewrites an output, its check fails, then the input is reverted: the next
+    run rebuilds (`never_built`) instead of reporting the tool's leftover as `diverged`."""
+    rules = [
+        _rule(
+            "p/a",
+            ("a.txt",),
+            inputs=(InputSpec(source="path", selector="in.txt"),),
+            checks=("chk",),
+        )
+    ]
+    source = tmp_path / "in.txt"
+    source.write_text("x", encoding="utf-8")
+    executor = UppercaseExecutor(tmp_path)
+    checks = FakeCheckRunner({"chk": make_check_result("chk", ok=True)})
+    scheduler, _store, _layout = _make_scheduler(tmp_path, rules, executor, checks=checks)
+    assert asyncio.run(scheduler.run("*")).done == ("p/a[]",)
+
+    source.write_text("y", encoding="utf-8")
+    checks.results["chk"] = make_check_result("chk", ok=False)
+    assert asyncio.run(scheduler.run("*")).failed == ("p/a[]",)
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "Y"
+
+    source.write_text("x", encoding="utf-8")
+    checks.results["chk"] = make_check_result("chk", ok=True)
+    summary = asyncio.run(scheduler.run("*"))
+
+    assert summary.done == ("p/a[]",)
+    assert summary.failed == ()
+
+
+class _HumanDone:
+    """A `human` executor whose person has already written the outputs."""
+
+    async def execute(self, rule: RuleSpec, instance: RuleInstance) -> ExecOutcome:
+        return ExecOutcome(ok=True)
+
+
+def test_editing_a_human_rule_output_rebuilds_it_and_its_dependents(tmp_path: Path) -> None:
+    rules = [
+        _rule("p/h", ("h.txt",), kind="human"),
+        _rule("p/b", ("b.txt",), inputs=(InputSpec(source="path", selector="h.txt"),)),
+    ]
+    (tmp_path / "h.txt").write_text("spec v1", encoding="utf-8")
+    executor = UppercaseExecutor(tmp_path)
+    scheduler, _store, _layout = _make_scheduler(
+        tmp_path, rules, executor, executors={"gen": executor, "human": _HumanDone()}
+    )
+    asyncio.run(scheduler.run("*"))
+
+    (tmp_path / "h.txt").write_text("spec v2", encoding="utf-8")
+    summary = asyncio.run(scheduler.run("*"))
+
+    assert summary.failed == ()
+    assert summary.done == ("p/b[]", "p/h[]")
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "SPEC V2"
 
 
 def test_rewind_deletes_records_and_next_run_rebuilds(tmp_path: Path) -> None:

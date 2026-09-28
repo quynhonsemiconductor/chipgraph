@@ -409,6 +409,12 @@ class Scheduler:
             _fail("infra", message)
             return "failed", "infra"
 
+        # The executor may rewrite the outputs, so the old record no longer describes the
+        # files on disk. Drop it now: if this attempt fails, the next run sees
+        # `never_built` and rebuilds, instead of mistaking the tool's own leftover
+        # output for a hand edit (`diverged`).
+        self.records.delete(iid)
+
         exec_span_name = tracing.SPAN_INVOKE_AGENT if rule.kind == "agent" else tracing.SPAN_EXECUTE
         with self.tracer.span(exec_span_name) as exec_span:
             outcome = await executor.execute(rule, instance)
