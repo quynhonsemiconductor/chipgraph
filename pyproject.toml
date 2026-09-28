@@ -18,6 +18,19 @@ dependencies = [
 [project.scripts]
 chipgraph = "chipgraph.cli:app"
 
+[project.entry-points."chipgraph.adapters.vcs"]
+git = "chipgraph.adapters.vcs.git:GitVcs"
+
+[project.entry-points."chipgraph.adapters.runner"]
+local = "chipgraph.adapters.runner.local:LocalRunner"
+
+[project.entry-points."chipgraph.adapters.tool"]
+cmd = "chipgraph.adapters.tool.cmd:CmdTool"
+
+[project.entry-points."chipgraph.adapters.parser"]
+verilator = "chipgraph.adapters.parser.verilator:VerilatorParser"
+verible = "chipgraph.adapters.parser.verible:VeribleParser"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",
