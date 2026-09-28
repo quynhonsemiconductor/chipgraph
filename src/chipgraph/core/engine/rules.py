@@ -19,11 +19,12 @@ class RuleLoadError(Exception):
     """Raised when a rule file, or a pack's set of rules, fails to load."""
 
 
-def load_rule_file(path: Path) -> RuleSpec:
+def load_rule_file(path: Path, *, namespace: str | None = None) -> RuleSpec:
     """Load a single `RuleSpec` from a YAML file at `path`.
 
     The id key may be written `rule:` (as in DESIGN.md 3.4) or `id:`; having both is
-    an error. Any other validation failure (bad YAML, schema mismatch) raises
+    an error. With `namespace` (the pack name), a short id such as `rtl_module` becomes
+    `<namespace>/rtl_module`. Any other validation failure (bad YAML, schema mismatch) raises
     `RuleLoadError` naming `path`.
     """
     try:
@@ -44,6 +45,8 @@ def load_rule_file(path: Path) -> RuleSpec:
         raise RuleLoadError(f"rule file {path} has both 'rule' and 'id' keys; use only one")
     if "rule" in data:
         data["id"] = data.pop("rule")
+    if namespace is not None and isinstance(data.get("id"), str) and "/" not in data["id"]:
+        data["id"] = f"{namespace}/{data['id']}"
 
     try:
         return RuleSpec.model_validate(data)
@@ -73,7 +76,7 @@ def load_pack_rules(pack: Pack) -> list[RuleSpec]:
     specs: dict[str, RuleSpec] = {}
     for rel in pack.manifest.provides.rules:
         for file_path in _rule_files_under(pack.path(rel)):
-            spec = load_rule_file(file_path)
+            spec = load_rule_file(file_path, namespace=pack.manifest.name)
             namespace = spec.id.split("/", 1)[0]
             if namespace != pack.manifest.name:
                 raise RuleLoadError(

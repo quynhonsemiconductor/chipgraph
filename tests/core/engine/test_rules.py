@@ -119,3 +119,11 @@ def test_load_pack_rules_duplicate_ids(tmp_path: Path) -> None:
     pack = load_pack(pack_dir)
     with pytest.raises(RuleLoadError, match="duplicate rule id"):
         load_pack_rules(pack)
+
+
+def test_short_rule_id_gets_the_pack_namespace(tmp_path: Path) -> None:
+    from chipgraph.core.engine.rules import load_rule_file
+
+    f = tmp_path / "r.yml"
+    f.write_text("rule: rtl_module\nkind: gen\noutputs: ['a/{block}.sv']\n")
+    assert load_rule_file(f, namespace="digital-rtl").id == "digital-rtl/rtl_module"
