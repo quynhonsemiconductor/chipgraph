@@ -1,0 +1,61 @@
+# chipgraph profile for QSoC, a training SoC with one `make` entry point (task M0-18).
+#
+# This is documentation, not a CI test: copy it to the root of a QSoC clone as
+# `.chipgraph.yml`. Every check calls the `make` target developers and CI already use,
+# so `chipgraph check` gives the same answer as the per-block part of `make check`,
+# one line per check and block.
+#
+# The repository's Python checks print findings as "  <file>:<line>  [<rule>]  <msg>";
+# `regex` turns those lines into issues. `make lint` indents Verilator's log under a
+# per-block header, which the `verilator` parser reads.
+#
+# Not covered here: the repository-wide targets of `make check` (filelists, pkg-check,
+# tables, wrap-check, vendor-guard). `chipgraph check` runs every adapter once per
+# block, so they stay in `make check` until checks can run once per repository.
+project: qsoc
+
+packs: []
+
+adapters:
+  lint:
+    use: cmd
+    cmd: "make lint BLOCK={block}"
+    parser: verilator
+  naming:
+    use: cmd
+    cmd: "make naming BLOCK={block}"
+    regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
+  hardcode:
+    use: cmd
+    cmd: "make hardcode BLOCK={block}"
+    regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
+  module_rules:
+    use: cmd
+    cmd: "make module-rules BLOCK={block}"
+    regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
+  contract_tags:
+    use: cmd
+    cmd: "make contract-tags BLOCK={block}"
+    regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
+
+# One entry per directory under design/ that has a <block>.f filelist.
+blocks:
+  bus: {}
+  common: {}
+  cpu: {}
+  dma: {}
+  dsram: {}
+  gpio: {}
+  i2c: {}
+  intmap: {}
+  iomux: {}
+  isram: {}
+  pwm: {}
+  rom: {}
+  scrc: {}
+  spi: {}
+  sysdbg: {}
+  timer: {}
+  top: {}
+  uart: {}
+  wdt: {}
