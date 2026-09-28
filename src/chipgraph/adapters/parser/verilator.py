@@ -16,7 +16,7 @@ from chipgraph.core.contracts import Issue
 from chipgraph.core.contracts.types import Severity
 
 _LINE_RE = re.compile(
-    r"^%(?P<kind>Error|Warning)(-(?P<rule>[A-Za-z0-9_]+))?:\s+"
+    r"^\s*%(?P<kind>Error|Warning)(-(?P<rule>[A-Za-z0-9_]+))?:\s+"
     r"(?P<file>[^\s:]+):(?P<line>\d+)(:(?P<col>\d+))?:\s*(?P<msg>.*)$"
 )
 

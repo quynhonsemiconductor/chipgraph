@@ -94,3 +94,19 @@ def test_ignores_continuation_and_summary_lines() -> None:
     assert issues[0].line == 7
     assert issues[0].rule == "WIDTH"
     assert issues[0].severity == "warning"
+
+
+def test_reads_lines_indented_by_a_wrapper_script() -> None:
+    """Lint scripts often indent Verilator's log under a per-block header."""
+    log = "\n".join(
+        [
+            "  pwm        FAIL",
+            "      %Error: design/pwm/rtl/top.sv:178:18: Can't find definition of variable: 'x'",
+            "      %Error: Exiting due to 1 error(s)",
+        ]
+    )
+    issues = VerilatorParser().parse(log)
+    assert len(issues) == 1
+    assert issues[0].file == "design/pwm/rtl/top.sv"
+    assert issues[0].line == 178
+    assert issues[0].severity == "error"
