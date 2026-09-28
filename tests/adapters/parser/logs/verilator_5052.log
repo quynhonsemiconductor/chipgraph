@@ -1,0 +1,25 @@
+%Warning-WIDTHTRUNC: combo2.sv:15:11: Operator ASSIGNDLY expects 4 bits on the Assign RHS, but Assign RHS's VARREF 'a' generates 8 bits.
+                                    : ... note: In instance 'combo2'
+   15 |       out <= a;
+      |           ^~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.052
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-UNUSEDSIGNAL: combo2.sv:2:22: Bits of signal are not used: 'a'[7:4]
+                                     : ... note: In instance 'combo2'
+    2 |   input  logic [7:0] a,
+      |                      ^
+                       ... For warning description see https://verilator.org/warn/UNUSEDSIGNAL?v=5.052
+                       ... Use "/* verilator lint_off UNUSEDSIGNAL */" and lint_on around source to disable this message.
+%Warning-UNUSEDSIGNAL: combo2.sv:8:9: Signal is not used: 'w_x'
+                                    : ... note: In instance 'combo2'
+    8 |   logic w_x;
+      |         ^~~
+%Error: Exiting due to 3 warning(s)
+%Error-PINNOTFOUND: combo.sv:23:6: Pin not found: 'x'
+   23 |     .x   (rst_n)
+      |      ^
+                                 : ... Location of instance's module declaration
+    1 | module combo_sub (
+      |        ^~~~~~~~~
+                    ... For error description see https://verilator.org/warn/PINNOTFOUND?v=5.052
+%Error: Exiting due to 1 error(s)

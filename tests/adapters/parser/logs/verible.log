@@ -1,0 +1,4 @@
+verible_lint.sv:1:33-35: input port names must end with _i, _ni or _pi [Style: suffixes-for-signals-and-types] [port-name-suffix]
+verible_lint.sv:1:50-56: output port names must end with _o, _no, or _po [Style: suffixes-for-signals-and-types] [port-name-suffix]
+verible_lint.sv:2:9-24: Signal name does not match the naming convention defined by regex pattern: [a-z_0-9]+ [Style: signal-conventions] [signal-name-style]
+verible_syntax.sv:3:1-9: syntax error at token "endmodule"
