@@ -479,6 +479,14 @@ def compute_staleness(
             for ref in instance.outputs
             if current.get(_ref_key(ref)) != record.output_hashes.get(_ref_key(ref))
         ]
+        if diverged_outputs and graph.rules[instance.rule_id].kind == "human":
+            # A person writes a `human` rule's outputs, so a changed output is that
+            # person's new work, not a hand edit of generated content: rebuild it.
+            reasons = tuple(
+                f"output {ref.path or ref.model_key} was edited" for ref in diverged_outputs
+            )
+            result[iid] = Staleness(state="stale", reasons=reasons)
+            continue
         if diverged_outputs:
             reasons = tuple(
                 f"output {ref.path or ref.model_key} changed after it was produced"
