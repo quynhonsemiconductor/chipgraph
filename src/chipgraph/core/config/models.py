@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from chipgraph.core.contracts.types import DataLabel, ModelTier
 
@@ -138,6 +138,17 @@ class PathRule(BaseModel):
         default=None,
         description="Why this exception exists; required when a check is off or write is denied.",
     )
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def _yaml_booleans_to_on_off(cls, value: object) -> object:
+        # YAML 1.1 (PyYAML) reads an unquoted `off` / `on` as a boolean. Accept both
+        # spellings, so `checks: { naming: off }` works as the examples in DESIGN.md show.
+        if isinstance(value, dict):
+            return {
+                k: ("on" if v is True else "off" if v is False else v) for k, v in value.items()
+            }
+        return value
 
     @model_validator(mode="after")
     def _require_reason_when_relaxed(self) -> Self:

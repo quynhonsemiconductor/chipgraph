@@ -126,3 +126,13 @@ def test_user_config_allows_personal_fields() -> None:
     )
     assert user.autonomy["rtl"] == "L2"
     assert user.prefer_models["medium"] == "glm"
+
+
+def test_path_rule_accepts_unquoted_yaml_off() -> None:
+    import yaml
+
+    from chipgraph.core.config.models import PathRule
+
+    raw = yaml.safe_load('checks: { naming: off, header: on }\nreason: "legacy code"\n')
+    rule = PathRule.model_validate(raw)
+    assert rule.checks == {"naming": "off", "header": "on"}
