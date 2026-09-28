@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import os
 import shutil
 import sys
 from collections import Counter
@@ -32,7 +33,11 @@ from chipgraph.core.contracts import ArtifactRef, CheckResult, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.state import journal as journal_mod
+from chipgraph.core.state import trace as trace_mod
 from chipgraph.core.state.layout import StateLayout
+from chipgraph.core.state.trace import Tracer
+
+TraceExporter = Literal["none", "console", "otlp"]
 
 app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True, help="Inspect the resolved profile.")
@@ -40,12 +45,20 @@ app.add_typer(config_app, name="config")
 
 
 class CliState:
-    """The global options every command reads: `--profile`, `--json`, `-C/--dir`."""
+    """The global options every command reads: `--profile`, `--json`, `-C/--dir`, `--trace`."""
 
-    def __init__(self, *, profile_path: Path | None, json_output: bool, start: Path) -> None:
+    def __init__(
+        self,
+        *,
+        profile_path: Path | None,
+        json_output: bool,
+        start: Path,
+        trace: TraceExporter,
+    ) -> None:
         self.profile_path = profile_path
         self.json_output = json_output
         self.start = start
+        self.trace = trace
 
 
 def _load_ctx(state: CliState) -> AppContext:
@@ -72,6 +85,14 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit(code=0)
 
 
+def _default_trace() -> TraceExporter:
+    """`$CHIPGRAPH_TRACE`, if it names a known exporter, else `"none"`."""
+    value = os.environ.get("CHIPGRAPH_TRACE", "none").strip().lower()
+    if value in ("none", "console", "otlp"):
+        return value  # type: ignore[return-value]
+    return "none"
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -95,10 +116,23 @@ def main(
         Path | None,
         typer.Option("-C", "--dir", help="Start looking for a profile from this directory."),
     ] = None,
+    trace: Annotated[
+        TraceExporter | None,
+        typer.Option(
+            "--trace",
+            help="Export OpenTelemetry spans for build/resume ('none'|'console'|'otlp'); "
+            "default from $CHIPGRAPH_TRACE, else 'none'.",
+        ),
+    ] = None,
 ) -> None:
     """chipgraph: an AI agent system for chip (IC) design, built on a build graph."""
     start = directory if directory is not None else Path.cwd()
-    ctx.obj = CliState(profile_path=profile, json_output=json_output, start=start)
+    ctx.obj = CliState(
+        profile_path=profile,
+        json_output=json_output,
+        start=start,
+        trace=trace if trace is not None else _default_trace(),
+    )
 
 
 # --- init --------------------------------------------------------------------------
@@ -269,9 +303,15 @@ def check(
 # --- build / resume / rewind --------------------------------------------------------
 
 
-def _print_summary(summary: RunSummary, json_output: bool) -> None:
+def _handoff_path(app_ctx: AppContext, run_id: str) -> Path:
+    return app_ctx.layout.run_dir(run_id) / "HANDOFF.md"
+
+
+def _print_summary(summary: RunSummary, json_output: bool, handoff_path: Path) -> None:
     if json_output:
-        typer.echo(summary.model_dump_json(indent=2))
+        payload = summary.model_dump(mode="json")
+        payload["handoff"] = str(handoff_path)
+        typer.echo(json.dumps(payload, indent=2))
         return
     typer.echo(f"run {summary.run_id}")
     for label, ids in (
@@ -283,6 +323,12 @@ def _print_summary(summary: RunSummary, json_output: bool) -> None:
     ):
         if ids:
             typer.echo(f"  {label}: {', '.join(ids)}")
+    typer.echo(str(handoff_path))
+
+
+def _build_tracer(state: CliState, *, offline: bool) -> Tracer:
+    """Build the tracer `build`/`resume` should use for this invocation."""
+    return trace_mod.configure(state.trace, offline=offline)
 
 
 @app.command()
@@ -295,10 +341,14 @@ def build(
     """Build TARGET with the scheduler."""
     state: CliState = ctx.obj
     app_ctx = _load_ctx(state)
-    app_ctx.require_profile()
-    scheduler = make_scheduler(app_ctx, target, concurrency=concurrency)
-    summary = asyncio.run(scheduler.run(target))
-    _print_summary(summary, state.json_output)
+    resolved = app_ctx.require_profile()
+    tracer = _build_tracer(state, offline=resolved.profile.offline)
+    scheduler = make_scheduler(app_ctx, target, concurrency=concurrency, tracer=tracer)
+    try:
+        summary = asyncio.run(scheduler.run(target))
+    finally:
+        tracer.flush()
+    _print_summary(summary, state.json_output, _handoff_path(app_ctx, summary.run_id))
     if not summary.ok:
         raise typer.Exit(code=1)
 
@@ -309,12 +359,16 @@ def resume(ctx: typer.Context, run_id: Annotated[str, typer.Argument()]) -> None
     """Resume a run that was interrupted."""
     state: CliState = ctx.obj
     app_ctx = _load_ctx(state)
-    app_ctx.require_profile()
-    scheduler = make_scheduler(app_ctx, "*")
+    resolved = app_ctx.require_profile()
+    tracer = _build_tracer(state, offline=resolved.profile.offline)
+    scheduler = make_scheduler(app_ctx, "*", tracer=tracer)
     if isinstance(scheduler.checks, ProfileCheckRunner):
         scheduler.checks.run_id = run_id
-    summary = asyncio.run(scheduler.resume(run_id))
-    _print_summary(summary, state.json_output)
+    try:
+        summary = asyncio.run(scheduler.resume(run_id))
+    finally:
+        tracer.flush()
+    _print_summary(summary, state.json_output, _handoff_path(app_ctx, summary.run_id))
     if not summary.ok:
         raise typer.Exit(code=1)
 

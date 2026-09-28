@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -158,6 +160,68 @@ def test_build_status_rewind_build(tmp_path: Path) -> None:
     build2 = runner.invoke(app, ["-C", str(tmp_path), "build", "demo/gen_out"])
     assert build2.exit_code == 0
     assert "demo/gen_out[block=a]" in build2.output
+
+
+def test_build_prints_handoff_path(tmp_path: Path) -> None:
+    init_git(tmp_path)
+    _write_pack(tmp_path)
+    write_profile(tmp_path, "project: demo\npacks: [demo]\nblocks:\n  a: {}\n")
+
+    build1 = runner.invoke(app, ["-C", str(tmp_path), "build", "demo/gen_out"])
+    assert build1.exit_code == 0, build1.output
+    runs_dir = tmp_path / ".chipgraph" / "state" / "runs"
+    run_ids = [p.name for p in runs_dir.iterdir() if p.is_dir()]
+    assert len(run_ids) == 1
+    expected = runs_dir / run_ids[0] / "HANDOFF.md"
+    assert expected.is_file()
+    assert str(expected) in build1.output
+
+    as_json = runner.invoke(app, ["--json", "-C", str(tmp_path), "build", "demo/gen_out"])
+    assert as_json.exit_code == 0, as_json.output
+    payload = json.loads(as_json.output)
+    assert payload["handoff"].endswith("HANDOFF.md")
+    assert Path(payload["handoff"]).is_file()
+
+
+def _invoke_subprocess(tmp_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the real `chipgraph` CLI in a subprocess.
+
+    `ConsoleSpanExporter` defaults its `out` param to `sys.stdout` bound at import
+    time (opentelemetry's own code, not chipgraph's), which is the real process
+    stdout, not `typer.testing.CliRunner`'s in-memory buffer; a real subprocess (a
+    real OS pipe for fd 1) is what actually observes it.
+    """
+    return subprocess.run(
+        [sys.executable, "-c", "from chipgraph.cli import app; app()", *args],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_build_trace_console_prints_spans_unless_offline(tmp_path: Path) -> None:
+    init_git(tmp_path)
+    _write_pack(tmp_path)
+    write_profile(tmp_path, "project: demo\npacks: [demo]\nblocks:\n  a: {}\n")
+
+    traced = _invoke_subprocess(tmp_path, ["--trace", "console", "build", "demo/gen_out"])
+    assert traced.returncode == 0, traced.stdout + traced.stderr
+    assert '"name": "chipgraph.run"' in traced.stdout
+
+    plain = _invoke_subprocess(tmp_path, ["build", "demo/gen_out"])
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert '"name": "chipgraph.run"' not in plain.stdout
+
+
+def test_offline_profile_disables_tracing_even_with_trace_console(tmp_path: Path) -> None:
+    init_git(tmp_path)
+    _write_pack(tmp_path)
+    write_profile(tmp_path, "project: demo\noffline: true\npacks: [demo]\nblocks:\n  a: {}\n")
+
+    result = _invoke_subprocess(tmp_path, ["--trace", "console", "build", "demo/gen_out"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"name": "chipgraph.run"' not in result.stdout
 
 
 def test_approve_makes_a_waiting_gate_pass_on_next_build(tmp_path: Path) -> None:

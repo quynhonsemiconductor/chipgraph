@@ -103,3 +103,18 @@ def test_configure_console_without_sdk_raises_clear_error(monkeypatch: pytest.Mo
 
     with pytest.raises(RuntimeError, match=r"chipgraph\[otel\]"):
         trace.configure("console")
+
+
+def test_flush_exports_batched_spans_before_exit() -> None:
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=60_000))
+    tracer = trace.OtelTracer(provider=provider)
+    with tracer.span(trace.SPAN_RUN):
+        pass
+    assert exporter.get_finished_spans() == ()
+    tracer.flush()
+    assert [s.name for s in exporter.get_finished_spans()] == [trace.SPAN_RUN]
+    trace.NoopTracer().flush()

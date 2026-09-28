@@ -201,6 +201,38 @@ def test_gate_approved_lets_the_rule_run(tmp_path: Path) -> None:
     assert summary.done == ("p/gated[]",)
 
 
+def test_run_writes_handoff_md_with_waiting_gate_next_step(tmp_path: Path) -> None:
+    rule = _rule("p/gated", ("gated.txt",), gate="gate:main")
+    executor = UppercaseExecutor(tmp_path)
+    gates = FakeGateChecker({})
+    scheduler, _store, layout = _make_scheduler(tmp_path, [rule], executor, gates=gates)
+
+    summary = asyncio.run(scheduler.run("*"))
+
+    assert summary.waiting_gate == ("p/gated[]",)
+    handoff_path = layout.run_dir(summary.run_id) / "HANDOFF.md"
+    assert handoff_path.is_file()
+    content = handoff_path.read_text(encoding="utf-8")
+    assert "chipgraph approve" in content
+    assert "gate:main" in content
+
+
+def test_resume_rewrites_handoff_md(tmp_path: Path) -> None:
+    rule = _rule("p/a", ("a.txt",))
+    executor = UppercaseExecutor(tmp_path)
+    scheduler, _store, layout = _make_scheduler(tmp_path, [rule], executor)
+
+    run1 = asyncio.run(scheduler.run("*"))
+    handoff_path = layout.run_dir(run1.run_id) / "HANDOFF.md"
+    assert handoff_path.is_file()
+
+    resumed = asyncio.run(scheduler.resume(run1.run_id))
+    assert resumed.ok
+    assert handoff_path.is_file()
+    content = handoff_path.read_text(encoding="utf-8")
+    assert "nothing to do" in content
+
+
 def test_gate_rejected_fails_with_planning_label(tmp_path: Path) -> None:
     rule = _rule("p/gated", ("gated.txt",), gate="gate:main")
     executor = UppercaseExecutor(tmp_path)
@@ -235,6 +267,17 @@ def test_failing_check_fails_the_rule_and_blocks_downstream(tmp_path: Path) -> N
     fail_events = [e for e in events if e.type == "rule_fail"]
     assert fail_events[0].failure_label == "verification"
     assert checks.calls == ["chk"]
+
+    run_stop = [e for e in events if e.type == "run_stop"][-1]
+    assert run_stop.payload["blocked"] == ["p/b[]"]
+    assert run_stop.payload["blocked_count"] == 1
+
+    handoff_path = layout.run_dir(summary.run_id) / "HANDOFF.md"
+    assert handoff_path.is_file()
+    from chipgraph.core.state.handoff import build_handoff
+
+    handoff = build_handoff(events, target="*")
+    assert handoff.blocked == ("p/b[]",)
 
 
 def test_missing_output_fails_verification(tmp_path: Path) -> None:

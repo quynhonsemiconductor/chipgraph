@@ -27,6 +27,7 @@ from chipgraph.core.engine.graph import BuildGraph, ProductionRecord, Staleness,
 from chipgraph.core.engine.records import RecordStore
 from chipgraph.core.state import trace as tracing
 from chipgraph.core.state.artifacts import ArtifactStore, hash_inputs
+from chipgraph.core.state.handoff import build_handoff, write_handoff
 from chipgraph.core.state.journal import Journal, read, read_manifest, replay, write_manifest
 from chipgraph.core.state.layout import StateLayout, new_run_id
 from chipgraph.core.state.lock import BlockLock
@@ -219,7 +220,10 @@ class Scheduler:
                     "skipped_fresh": len(summary.skipped_fresh),
                     "failed": len(summary.failed),
                     "waiting_gate": len(summary.waiting_gate),
-                    "blocked": len(summary.blocked),
+                    # A sorted list of blocked instance ids, not just a count: `handoff.py`
+                    # reads this to list *which* instances are blocked, not only how many.
+                    "blocked": list(summary.blocked),
+                    "blocked_count": len(summary.blocked),
                 },
             )
             run_span.set("chipgraph.run.done", len(summary.done))
@@ -227,6 +231,8 @@ class Scheduler:
             run_span.set("chipgraph.run.failed", len(summary.failed))
             run_span.set("chipgraph.run.waiting_gate", len(summary.waiting_gate))
             run_span.set("chipgraph.run.blocked", len(summary.blocked))
+
+            self._write_handoff(rid, journal, target)
             return summary
 
     async def _schedule(
@@ -476,6 +482,21 @@ class Scheduler:
             inputs_hash=inputs_hash,
             output_hashes=output_hashes,
         )
+
+    def _write_handoff(self, rid: str, journal: Journal, target: str) -> None:
+        """Write `runs/<rid>/HANDOFF.md` from the journal so far.
+
+        `RuleSpec.gate` is only a gate id string (DESIGN.md 6.1); nothing in the graph
+        or rule specs names *who* approves a gate, so `approvers` is always empty here.
+        A failure to write HANDOFF.md must never fail the run itself: only an `OSError`
+        (disk full, permissions, ...) is swallowed, everything else still propagates.
+        """
+        try:
+            events = read(journal.path).events
+            handoff = build_handoff(events, target=target)
+            write_handoff(self.layout, handoff)
+        except OSError:
+            pass
 
     def _emit(
         self,
