@@ -31,6 +31,11 @@ cmd = "chipgraph.adapters.tool.cmd:CmdTool"
 verilator = "chipgraph.adapters.parser.verilator:VerilatorParser"
 verible = "chipgraph.adapters.parser.verible:VeribleParser"
 
+[project.entry-points."chipgraph.adapters.check"]
+layout = "chipgraph.checks.layout:LayoutCheck"
+filelist = "chipgraph.checks.filelist:FilelistCheck"
+generated = "chipgraph.checks.generated:GeneratedCheck"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",
@@ -65,10 +70,9 @@ testpaths = ["tests"]
 [tool.importlinter]
 root_package = "chipgraph"
 
-# chipgraph.checks and chipgraph.mcp do not exist yet; add them to forbidden_modules
-# when their tasks (M0-xx checks, M0-14 mcp) create them.
+# chipgraph.mcp does not exist yet; add it to forbidden_modules when M0-14 creates it.
 [[tool.importlinter.contracts]]
 name = "core knows nothing about adapters, checks or surfaces"
 type = "forbidden"
 source_modules = ["chipgraph.core"]
-forbidden_modules = ["chipgraph.adapters", "chipgraph.cli"]
+forbidden_modules = ["chipgraph.adapters", "chipgraph.checks", "chipgraph.cli"]
