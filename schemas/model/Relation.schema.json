@@ -1,0 +1,149 @@
+{
+  "$defs": {
+    "JSONValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Records where a single entity or relation fact was learned from.",
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content hash of the source artifact, if known.",
+          "title": "Artifact"
+        },
+        "extractor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The extractor or format adapter id that produced this fact.",
+          "title": "Extractor"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "POSIX path the fact was read from, relative to the repo root.",
+          "title": "File"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The 1-based line number, if any.",
+          "title": "Line"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "description": "Schema version of this model.",
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "title": "Provenance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A directed edge between two entities, identified by their model keys.",
+  "properties": {
+    "attrs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JSONValue"
+      },
+      "description": "Open-ended extra facts not covered by typed fields.",
+      "title": "Attrs",
+      "type": "object"
+    },
+    "dst": {
+      "description": "Model key of the destination entity.",
+      "title": "Dst",
+      "type": "string"
+    },
+    "kind": {
+      "description": "The relation kind: one of CORE_RELATION_KINDS, or a pack-defined kind string.",
+      "title": "Kind",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/Provenance",
+      "description": "Where this fact was learned from."
+    },
+    "src": {
+      "description": "Model key of the source entity.",
+      "title": "Src",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "src",
+    "dst"
+  ],
+  "title": "Relation",
+  "type": "object"
+}
