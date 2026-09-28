@@ -1,0 +1,142 @@
+name: image
+
+on:
+  pull_request:
+    paths:
+      - docker/**
+      - pyproject.toml
+      - uv.lock
+      - src/**
+      - tests/e2e/**
+      - examples/**
+      - .github/workflows/image.yml
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - docker/**
+      - pyproject.toml
+      - uv.lock
+      - src/**
+      - tests/e2e/**
+      - examples/**
+      - .github/workflows/image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/quynhonsemiconductor/chipgraph-eda
+
+jobs:
+  build-test:
+    name: build test image, run tinysoc e2e
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: test
+          tags: chipgraph-eda:test
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the tinysoc e2e suite inside the image
+        env:
+          REPORT_DIR: ${{ runner.temp }}/e2e-report
+        run: |
+          set -eu
+          mkdir -p "$REPORT_DIR"
+          docker run --rm \
+            -v "$REPORT_DIR:/tmp/report" \
+            chipgraph-eda:test \
+            sh -c 'uv run --no-sync pytest -m e2e tests/e2e -q --junitxml=/tmp/report/e2e-junit.xml'
+
+      - name: Fail if the e2e tests did not actually run
+        env:
+          REPORT_DIR: ${{ runner.temp }}/e2e-report
+        run: |
+          python3 - "$REPORT_DIR/e2e-junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          if suite is None:
+              raise SystemExit("no <testsuite> found in the junit report")
+
+          tests = int(suite.get("tests", 0))
+          failures = int(suite.get("failures", 0))
+          errors = int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed = tests - failures - errors - skipped
+
+          print(f"tests={tests} passed={passed} failures={failures} errors={errors} skipped={skipped}")
+
+          if skipped:
+              raise SystemExit(
+                  f"{skipped} e2e test(s) were skipped inside the image "
+                  "(verilator/make missing?) — the image must run them, not skip them"
+              )
+          if failures or errors:
+              raise SystemExit("e2e tests failed inside the image")
+          if passed < 5:
+              raise SystemExit(f"expected at least 5 passing e2e tests, got {passed}")
+          PY
+
+  publish:
+    name: publish image to GHCR
+    needs: build-test
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push chipgraph-eda to ghcr.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
