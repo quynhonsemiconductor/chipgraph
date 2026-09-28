@@ -16,18 +16,12 @@ from pathlib import Path
 from chipgraph.adapters.parser import PARSERS, GenericRegexParser
 from chipgraph.core.contracts import CheckResult, CheckSpec, Issue
 from chipgraph.core.contracts.types import CheckStatus
-from chipgraph.core.plugin_api.protocols import LogParser, Runner
+from chipgraph.core.plugin_api.protocols import LogParser
 from chipgraph.core.plugin_api.types import ToolContext
 
 _DEFAULT_OK_RETURNCODES = (0,)
 _LOG_TAIL_MAX_CHARS = 4000
 _MISSING_EXECUTABLE_RETURNCODE = 127
-
-# `ToolContext.runner: Runner` is a forward reference (core/plugin_api/types.py only
-# imports `Runner` under `TYPE_CHECKING`, since core must not depend on a concrete
-# adapter). Resolve it here, the first place a concrete `Runner` and `ToolContext` are
-# both in scope, so constructing a `ToolContext` does not raise `PydanticUserError`.
-ToolContext.model_rebuild(_types_namespace={"Runner": Runner})
 
 
 class CmdTool:
