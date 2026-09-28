@@ -66,3 +66,8 @@ __all__ = [
     "load_pack",
     "resolve_requires",
 ]
+
+# `ToolContext.runner` names the `Runner` protocol, which types.py can only import under
+# TYPE_CHECKING (protocols.py imports types.py). Resolve the reference once, here, so any
+# import of the plugin API gives a usable `ToolContext`.
+ToolContext.model_rebuild(_types_namespace={"Runner": Runner})

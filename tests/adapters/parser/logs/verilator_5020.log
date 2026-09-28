@@ -1,0 +1,6 @@
+%Warning-UNUSED: design/a.sv:7: Signal is not used: 'w_x'
+                  ... Use "/* verilator lint_off UNUSED */" and lint_on around source to disable this message.
+%Error-PINNOTFOUND: file.sv:224:8: Pin not found: 'x'
+   224 |     .x   (rst_n)
+       |      ^
+%Error: Exiting due to 2 error(s)
