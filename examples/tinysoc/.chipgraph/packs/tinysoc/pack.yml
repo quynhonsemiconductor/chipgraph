@@ -1,0 +1,19 @@
+# chipgraph example: tinysoc — the project's own pack (DESIGN.md 3.2, 3.4).
+#
+# Two rules:
+#   tinysoc/rtl           a `human` rule: a person writes each block's RTL
+#                         (`rtl/tiny_{block}.sv`); other rules depend on it.
+#   tinysoc/lint_manifest a `gen` rule: for each block, writes a small deterministic
+#                         manifest (`scripts/gen_manifest.py`) and then runs the `lint`
+#                         check (Verilator, via `.chipgraph.yml`'s `adapters.lint`)
+#                         against that block's filelist.
+#
+# `chipgraph build tinysoc/lint_manifest` selects every block's instance of this rule
+# plus its `tinysoc/rtl` dependency, i.e. "build and lint every block" — see
+# `examples/tinysoc/README.md`.
+name: tinysoc
+version: 0.1.0
+description: chipgraph example project — a tiny open-source SoC (timer + GPIO).
+provides:
+  rules:
+    - rules

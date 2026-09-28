@@ -1,0 +1,16 @@
+# chipgraph project profile for the tinysoc example (see DESIGN.md 8.3-8.6).
+project: tinysoc
+
+packs:
+  - tinysoc
+
+adapters:
+  lint:
+    use: cmd
+    cmd: "make lint BLOCK={block}"
+    parser: verilator
+
+blocks:
+  timer: {}
+  gpio: {}
+  top: {}

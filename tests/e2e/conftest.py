@@ -1,0 +1,53 @@
+"""Shared fixtures for `tests/e2e`: a fresh, git-initialized copy of `examples/tinysoc`.
+
+`examples/tinysoc` lives inside the chipgraph git repository itself, so running
+chipgraph directly against it would resolve the *chipgraph* repo as the project root
+(`AppContext.find_repo_root` walks up to the nearest `.git`) and would write run state
+into a tracked directory. Every e2e test instead copies the example into a fresh
+`tmp_path` and `git init`s it there, so chipgraph always sees `tmp_path` as both the
+profile root and the repo root, and nothing lands in the chipgraph checkout.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+_EXAMPLE_ROOT = Path(__file__).resolve().parents[2] / "examples" / "tinysoc"
+
+
+def _tool_missing(name: str) -> bool:
+    return shutil.which(name) is None
+
+
+requires_eda_tools = pytest.mark.skipif(
+    _tool_missing("verilator") or _tool_missing("make"),
+    reason="verilator and/or make not found on PATH",
+)
+
+
+def copy_tinysoc(dest: Path) -> Path:
+    """Copy `examples/tinysoc` into `dest` and `git init` it there.
+
+    Returns `dest`. The copy is a plain file copy (not a git clone/worktree): the
+    example's own git history, if any, is irrelevant here.
+    """
+    shutil.copytree(_EXAMPLE_ROOT, dest)
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    subprocess.run(["git", "config", "user.email", "e2e@example.invalid"], cwd=dest, check=True)
+    subprocess.run(["git", "config", "user.name", "e2e"], cwd=dest, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "initial import of tinysoc"], cwd=dest, check=True)
+    return dest
+
+
+@pytest.fixture
+def tinysoc(tmp_path: Path) -> Path:
+    """A fresh, git-initialized copy of `examples/tinysoc` under `tmp_path`."""
+    return copy_tinysoc(tmp_path / "tinysoc")
+
+
+__all__ = ["copy_tinysoc", "requires_eda_tools", "tinysoc"]

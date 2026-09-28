@@ -1,0 +1,17 @@
+# chipgraph example: tinysoc
+# For each block: write a small, deterministic manifest of its filelist and source
+# hashes, then run the `lint` check (Verilator) against that block.
+rule: lint_manifest
+kind: gen
+foreach: blocks
+inputs:
+  - path: "rtl/tiny_{block}.sv"
+  - path: "filelists/{block}.f"
+outputs:
+  - "build/{block}.manifest.json"
+run:
+  use: cmd
+  args:
+    cmd: ["python3", "scripts/gen_manifest.py", "{block}"]
+checks:
+  - lint

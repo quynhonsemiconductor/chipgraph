@@ -78,6 +78,9 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: needs the EDA tools (verilator)",
+]
 
 [tool.importlinter]
 root_package = "chipgraph"
