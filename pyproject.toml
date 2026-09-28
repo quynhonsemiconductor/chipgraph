@@ -13,6 +13,13 @@ dependencies = [
     "typer>=0.27",
     "pydantic>=2.13",
     "pyyaml",
+    "opentelemetry-api>=1.45",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-sdk>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
 ]
 
 [project.scripts]
@@ -47,6 +54,7 @@ dev = [
     "pre-commit",
     "types-PyYAML",
     "import-linter>=2.15",
+    "opentelemetry-sdk>=1.45",
 ]
 
 [tool.hatch.build.targets.wheel]
