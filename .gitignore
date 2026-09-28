@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# uv / venv
+.venv/
+venv/
+
+# Caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.cache/
+
+# chipgraph runtime state
+.chipgraph/state/
+
+# OS
+.DS_Store
