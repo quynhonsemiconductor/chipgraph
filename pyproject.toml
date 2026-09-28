@@ -25,6 +25,7 @@ dev = [
     "pytest>=9.1",
     "pre-commit",
     "types-PyYAML",
+    "import-linter>=2.15",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -47,3 +48,14 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.importlinter]
+root_package = "chipgraph"
+
+# chipgraph.checks and chipgraph.mcp do not exist yet; add them to forbidden_modules
+# when their tasks (M0-xx checks, M0-14 mcp) create them.
+[[tool.importlinter.contracts]]
+name = "core knows nothing about adapters, checks or surfaces"
+type = "forbidden"
+source_modules = ["chipgraph.core"]
+forbidden_modules = ["chipgraph.adapters", "chipgraph.cli"]
