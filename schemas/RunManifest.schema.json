@@ -1,0 +1,100 @@
+{
+  "additionalProperties": false,
+  "description": "A snapshot of everything needed to reproduce or audit a run.",
+  "properties": {
+    "adapters": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Adapter ids to their versions.",
+      "title": "Adapters",
+      "type": "object"
+    },
+    "chipgraph_version": {
+      "description": "The chipgraph version that executed this run.",
+      "title": "Chipgraph Version",
+      "type": "string"
+    },
+    "models": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Model ids to their versions.",
+      "title": "Models",
+      "type": "object"
+    },
+    "packs": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Pack ids to their versions.",
+      "title": "Packs",
+      "type": "object"
+    },
+    "profile_hash": {
+      "description": "Hash of the resolved profile used for this run.",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Profile Hash",
+      "type": "string"
+    },
+    "profile_sources": {
+      "default": [],
+      "description": "Sources the profile was assembled from, e.g. '.chipgraph.yml@<commit>'.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Profile Sources",
+      "type": "array"
+    },
+    "run_id": {
+      "description": "The id of this run.",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runner": {
+      "default": "local",
+      "description": "The runner used to execute this run.",
+      "title": "Runner",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "description": "When this run started.",
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "target": {
+      "description": "The build target this run was invoked with.",
+      "title": "Target",
+      "type": "string"
+    },
+    "tools": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "EDA tool ids to their versions.",
+      "title": "Tools",
+      "type": "object"
+    }
+  },
+  "required": [
+    "run_id",
+    "started_at",
+    "target",
+    "chipgraph_version",
+    "profile_hash"
+  ],
+  "title": "RunManifest",
+  "type": "object"
+}

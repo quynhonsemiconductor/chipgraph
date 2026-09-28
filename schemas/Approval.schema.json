@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "description": "A recorded decision against a gate, pinned to the artifact hashes it approved.",
+  "properties": {
+    "artifact_hashes": {
+      "additionalProperties": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "description": "Hashes the decision was made against, keyed by '<repo>:<path or model_key>'.",
+      "minProperties": 1,
+      "title": "Artifact Hashes",
+      "type": "object"
+    },
+    "at": {
+      "description": "When this decision was made.",
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+    },
+    "by": {
+      "description": "The identity that made this decision.",
+      "title": "By",
+      "type": "string"
+    },
+    "decision": {
+      "description": "The decision that was made.",
+      "enum": [
+        "approve",
+        "reject",
+        "baseline",
+        "waive"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "gate_id": {
+      "description": "The id of the gate this approval is for.",
+      "title": "Gate Id",
+      "type": "string"
+    },
+    "note": {
+      "default": "",
+      "description": "An optional free-text note explaining the decision.",
+      "title": "Note",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "gate_id",
+    "by",
+    "at",
+    "artifact_hashes",
+    "decision"
+  ],
+  "title": "Approval",
+  "type": "object"
+}

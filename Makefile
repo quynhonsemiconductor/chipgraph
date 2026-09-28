@@ -6,10 +6,11 @@
 #   fmt     ruff format + ruff check --fix
 #   type    mypy
 #   test    pytest
-#   check   lint + type + test
+#   check   lint + type + test + schemas-check
 #   schemas regenerate schemas/ from the pydantic contracts (M0-02)
+#   schemas-check   verify schemas/ matches the pydantic contracts, without writing
 
-.PHONY: sync lint fmt type test check schemas
+.PHONY: sync lint fmt type test check schemas schemas-check
 
 sync:
 	uv sync
@@ -28,7 +29,7 @@ type:
 test:
 	uv run pytest
 
-check: lint type test
+check: lint type test schemas-check
 
 schemas:
 	@if [ ! -d src/chipgraph/core/contracts ]; then \
@@ -36,3 +37,6 @@ schemas:
 	else \
 		uv run python -m chipgraph.core.contracts.export; \
 	fi
+
+schemas-check:
+	uv run python -m chipgraph.core.contracts.export --check

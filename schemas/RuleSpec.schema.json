@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "Budget": {
+      "additionalProperties": false,
+      "description": "Resource budget for an agent rule: retries, model tier, and token cap.",
+      "properties": {
+        "escalate": {
+          "anyOf": [
+            {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Higher model tier to escalate to after repeated failures.",
+          "title": "Escalate"
+        },
+        "tier": {
+          "default": "medium",
+          "description": "Model tier to use.",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum tokens allowed, if capped.",
+          "title": "Tokens"
+        },
+        "tries": {
+          "default": 3,
+          "description": "Maximum number of attempts.",
+          "minimum": 1,
+          "title": "Tries",
+          "type": "integer"
+        }
+      },
+      "title": "Budget",
+      "type": "object"
+    },
+    "InputSpec": {
+      "additionalProperties": false,
+      "description": "A declared input to a rule: where it comes from and how to select it.",
+      "properties": {
+        "selector": {
+          "description": "A template selecting the input, e.g. 'block/{block}'.",
+          "title": "Selector",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where this input comes from: the Design Model, a spec, an artifact, or a path.",
+          "enum": [
+            "model",
+            "spec",
+            "artifact",
+            "path"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "selector"
+      ],
+      "title": "InputSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The specification of a rule: how it produces outputs from inputs.",
+  "properties": {
+    "budget": {
+      "$ref": "#/$defs/Budget",
+      "description": "Resource budget."
+    },
+    "checks": {
+      "default": [],
+      "description": "Check ids run to verify this rule's outputs.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "description": {
+      "default": "",
+      "description": "A short, plain-English description of the rule.",
+      "title": "Description",
+      "type": "string"
+    },
+    "foreach": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "A selector this rule is expanded over, e.g. one instance per block.",
+      "title": "Foreach"
+    },
+    "gate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "A gate id that must approve before this rule runs.",
+      "title": "Gate"
+    },
+    "id": {
+      "description": "Namespaced rule id, e.g. 'digital-rtl/rtl_module'.",
+      "pattern": "^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_]*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "inputs": {
+      "default": [],
+      "description": "The inputs this rule consumes.",
+      "items": {
+        "$ref": "#/$defs/InputSpec"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "kind": {
+      "description": "How this rule produces its outputs.",
+      "enum": [
+        "gen",
+        "agent",
+        "human",
+        "import"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "outputs": {
+      "description": "Output path templates this rule produces.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The agent role that runs this rule, if any.",
+      "title": "Role"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "skills": {
+      "default": [],
+      "description": "Skill ids available to the agent role.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "verified_by": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_]*$",
+          "type": "string"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "A rule or check id that verifies this rule's outputs.",
+      "title": "Verified By"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "outputs"
+  ],
+  "title": "RuleSpec",
+  "type": "object"
+}

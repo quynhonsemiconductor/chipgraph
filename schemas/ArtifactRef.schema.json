@@ -1,0 +1,80 @@
+{
+  "additionalProperties": false,
+  "description": "A reference to an artifact, identifying it without describing its content.",
+  "properties": {
+    "kind": {
+      "description": "The kind of artifact this is, e.g. rtl, spec, report.",
+      "enum": [
+        "spec",
+        "rtl",
+        "tb",
+        "sva",
+        "report",
+        "plan",
+        "model",
+        "doc",
+        "diagram",
+        "script",
+        "config",
+        "other"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "default": "internal",
+      "description": "Data sensitivity label: public, internal, or nda.",
+      "enum": [
+        "public",
+        "internal",
+        "nda"
+      ],
+      "title": "Label",
+      "type": "string"
+    },
+    "model_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Key into the Design Model when this artifact is model-based, not a file.",
+      "title": "Model Key"
+    },
+    "path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "POSIX path to the artifact, relative to the repo root, when it is file-based.",
+      "title": "Path"
+    },
+    "repo": {
+      "default": ".",
+      "description": "The workspace member (repo) id this artifact belongs to.",
+      "title": "Repo",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "ArtifactRef",
+  "type": "object"
+}
