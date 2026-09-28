@@ -1,0 +1,160 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "A reference to an artifact, identifying it without describing its content.",
+      "properties": {
+        "kind": {
+          "description": "The kind of artifact this is, e.g. rtl, spec, report.",
+          "enum": [
+            "spec",
+            "rtl",
+            "tb",
+            "sva",
+            "report",
+            "plan",
+            "model",
+            "doc",
+            "diagram",
+            "script",
+            "config",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "default": "internal",
+          "description": "Data sensitivity label: public, internal, or nda.",
+          "enum": [
+            "public",
+            "internal",
+            "nda"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "model_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key into the Design Model when this artifact is model-based, not a file.",
+          "title": "Model Key"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "POSIX path to the artifact, relative to the repo root, when it is file-based.",
+          "title": "Path"
+        },
+        "repo": {
+          "default": ".",
+          "description": "The workspace member (repo) id this artifact belongs to.",
+          "title": "Repo",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "description": "Schema version of this model.",
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ProducedBy": {
+      "additionalProperties": false,
+      "description": "Records which rule instance and run produced an artifact.",
+      "properties": {
+        "rule_id": {
+          "description": "The id of the rule that produced this artifact.",
+          "pattern": "^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_]*$",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "run_id": {
+          "description": "The id of the run in which this artifact was produced.",
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "run_id"
+      ],
+      "title": "ProducedBy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A concrete artifact: a reference plus its content hash and provenance.",
+  "properties": {
+    "content_hash": {
+      "description": "SHA-256 hash of the artifact's content.",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "inputs_hash": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Hash of the inputs this was produced from; None when not produced by a rule.",
+      "title": "Inputs Hash"
+    },
+    "produced_by": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProducedBy"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Which rule and run produced this; None if human-written or pre-existing."
+    },
+    "ref": {
+      "$ref": "#/$defs/ArtifactRef",
+      "description": "The reference identifying this artifact."
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ref",
+    "content_hash"
+  ],
+  "title": "Artifact",
+  "type": "object"
+}

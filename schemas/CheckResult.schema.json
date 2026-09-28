@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "Issue": {
+      "additionalProperties": false,
+      "description": "A single issue found by a check, such as a lint violation.",
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The file this issue was found in, if any.",
+          "title": "File"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The 1-based line number, if any.",
+          "title": "Line"
+        },
+        "msg": {
+          "description": "A human-readable message describing the issue.",
+          "title": "Msg",
+          "type": "string"
+        },
+        "rule": {
+          "default": "",
+          "description": "The specific rule within the check that fired.",
+          "title": "Rule",
+          "type": "string"
+        },
+        "severity": {
+          "default": "error",
+          "description": "How serious this issue is.",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "msg"
+      ],
+      "title": "Issue",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The outcome of running a check.",
+  "properties": {
+    "check_id": {
+      "description": "The id of the check that was run.",
+      "title": "Check Id",
+      "type": "string"
+    },
+    "duration_s": {
+      "description": "How long the check took to run, in seconds.",
+      "minimum": 0,
+      "title": "Duration S",
+      "type": "number"
+    },
+    "idempotency_key": {
+      "description": "A key identifying repeat runs of the same check invocation.",
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "issues": {
+      "default": [],
+      "description": "Issues found while running the check.",
+      "items": {
+        "$ref": "#/$defs/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "log_tail": {
+      "default": "",
+      "description": "The tail of the check's log output, truncated to 4000 characters.",
+      "title": "Log Tail",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "description": "The overall outcome of the check.",
+      "enum": [
+        "pass",
+        "fail",
+        "error",
+        "skipped"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "check_id",
+    "status",
+    "duration_s",
+    "idempotency_key"
+  ],
+  "title": "CheckResult",
+  "type": "object"
+}

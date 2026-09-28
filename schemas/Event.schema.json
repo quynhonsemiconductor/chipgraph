@@ -1,0 +1,95 @@
+{
+  "additionalProperties": false,
+  "description": "A single entry in a run's append-only journal.",
+  "properties": {
+    "failure_label": {
+      "anyOf": [
+        {
+          "enum": [
+            "context",
+            "constraint",
+            "verification",
+            "planning",
+            "infra"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Why a rule failed; only set when type is 'rule_fail'.",
+      "title": "Failure Label"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "default": {},
+      "description": "Event-type-specific data.",
+      "title": "Payload",
+      "type": "object"
+    },
+    "rule_instance": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The rule instance this event concerns, if any.",
+      "title": "Rule Instance"
+    },
+    "run_id": {
+      "description": "The id of the run this event belongs to.",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "seq": {
+      "description": "The 0-based sequence number of this event within the run.",
+      "minimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "ts": {
+      "description": "When this event occurred.",
+      "format": "date-time",
+      "title": "Ts",
+      "type": "string"
+    },
+    "type": {
+      "description": "The kind of event this is.",
+      "enum": [
+        "run_start",
+        "rule_start",
+        "tool_call",
+        "check_result",
+        "agent_turn",
+        "gate_wait",
+        "gate_decision",
+        "rule_done",
+        "rule_fail",
+        "run_stop"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "seq",
+    "ts",
+    "type"
+  ],
+  "title": "Event",
+  "type": "object"
+}

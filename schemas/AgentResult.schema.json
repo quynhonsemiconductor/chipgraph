@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "description": "The outcome of running an agent rule.",
+  "properties": {
+    "assumptions": {
+      "default": [],
+      "description": "Assumptions the agent made while working.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cost of the agent run, in USD.",
+      "title": "Cost"
+    },
+    "files_written": {
+      "default": [],
+      "description": "Paths of files the agent wrote.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Files Written",
+      "type": "array"
+    },
+    "open_questions": {
+      "default": [],
+      "description": "Questions the agent could not resolve on its own.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "description": "The final status of the agent run.",
+      "enum": [
+        "done",
+        "failed",
+        "needs_human",
+        "budget_exhausted"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tokens consumed by the agent run.",
+      "title": "Tokens"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "AgentResult",
+  "type": "object"
+}

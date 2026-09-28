@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "description": "A single resolved decision, made by a rule, a small model, or a large model.",
+  "properties": {
+    "backend": {
+      "description": "What made this decision: a rule, a small model, or a large model.",
+      "enum": [
+        "rule",
+        "small",
+        "large"
+      ],
+      "title": "Backend",
+      "type": "string"
+    },
+    "confidence": {
+      "description": "Confidence in this decision, from 0 to 1.",
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "question_id": {
+      "description": "The id of the question this decision answers.",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ],
+      "description": "The decided value.",
+      "title": "Value"
+    }
+  },
+  "required": [
+    "question_id",
+    "value",
+    "confidence",
+    "backend"
+  ],
+  "title": "Decision",
+  "type": "object"
+}
