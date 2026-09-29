@@ -915,7 +915,7 @@ PR nâng version (mục 16, O7).
 | zai-sdk (GLM) | 0.2.3 | 2026-06-16 | Hoặc dùng endpoint tương thích Anthropic |
 | pydantic | 2.13.5 | 2026-08-28 | |
 | typer | 0.27.2 | 2026-08-28 | |
-| pyslang | 11.0.0 | 2026-05-15 | |
+| pyslang | 12.0.0 | 2026-09-29 | Stub của 12.x đọc được bằng mypy (11.x thì không) |
 | cocotb | 2.1.0 | 2026-08-30 | cocotb 2.x (API mới so với 1.x) |
 | edalize | 0.6.8 | 2026-04-24 | |
 | fusesoc | 2.4.7 | 2026-09-08 | Tham khảo cho thư viện IP |
