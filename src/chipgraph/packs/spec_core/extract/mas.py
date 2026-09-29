@@ -228,6 +228,7 @@ def _extract_requirements(
         return
 
     # Inferred requirements: each top-level numbered item of the infer_heading section.
+    inferred: dict[str, int] = {}  # key -> first source line
     for section in md.iter_sections_by_title(doc, cfg.infer_heading):
         top_indent = _min_ordered_indent(section.list_items)
         for item in section.list_items:
@@ -236,7 +237,7 @@ def _extract_requirements(
             token = tx.strip_markup_token(tx.first_token(tx.strip_leading_number(item.text)))
             if token and id_regex.fullmatch(token):
                 continue  # declared wins; already emitted above
-            _emit_inferred(builder, block, block_key, item)
+            _emit_inferred(builder, block, block_key, item, inferred)
 
 
 def _try_declare(
@@ -272,10 +273,22 @@ def _try_declare(
     )
 
 
-def _emit_inferred(builder: _Builder, block: str, block_key: str, item: md.ListItem) -> None:
+def _emit_inferred(
+    builder: _Builder, block: str, block_key: str, item: md.ListItem, inferred: dict[str, int]
+) -> None:
     normalized = tx.normalize_item_text(item.text)
     digest = tx.content_hash8(normalized)
     key = make_key("requirement", f"{block}.h{digest}")
+    if key in inferred:
+        # Same text, same key: a second copy would conflict in the model (D37 keys by text).
+        builder.diag(
+            item.line,
+            "warning",
+            "req.duplicate_text",
+            f"verification item repeats the text of line {inferred[key]}; not inferred twice",
+        )
+        return
+    inferred[key] = item.line
     builder.entities.append(
         RequirementEntity(
             key=key,
@@ -330,6 +343,7 @@ def _ports_from_table(
     seen: set[str],
 ) -> None:
     ncols = len(table.headers)
+    table_keys: set[str] = set()
     for row in table.rows:
         if len(row.cells) != ncols:
             builder.diag(
@@ -353,8 +367,23 @@ def _ports_from_table(
             width = _parse_width(widths[idx])
             key = make_key("port", "spec", block, signal)
             if key in seen:
+                # Twice in one table is a template error. In two tables it is usually the
+                # same signal on two modules of the block (a wrapper and its core); the
+                # first row is kept.
+                if key in table_keys:
+                    builder.diag(
+                        row.line, "error", "port.duplicate", f"port {signal!r} listed twice"
+                    )
+                else:
+                    builder.diag(
+                        row.line,
+                        "info",
+                        "port.repeated",
+                        f"port {signal!r} also in an earlier interface table; first row kept",
+                    )
                 continue
             seen.add(key)
+            table_keys.add(key)
             builder.entities.append(
                 PortEntity(
                     key=key,
@@ -452,12 +481,20 @@ def _extract_registers(
                 _registers_from_table(
                     builder, table, cols, block, block_key, reg_names, with_fields=False
                 )
-            else:
+            elif "offset" in colset:
                 builder.diag(
                     table.header_line,
                     "warning",
                     "register.table_form",
                     "register table not in template form; no registers read from it",
+                )
+            else:
+                # No Offset column: a memory map or a field sub-table, not a register map.
+                builder.diag(
+                    table.header_line,
+                    "info",
+                    "register.other_table",
+                    "table in the register section without an Offset column; skipped",
                 )
 
 

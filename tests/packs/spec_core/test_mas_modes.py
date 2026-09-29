@@ -179,3 +179,52 @@ def test_infer_off_leaves_only_declared(tmp_path: Path) -> None:
     cfg = RequirementsCfg(id_pattern="{BLOCK}_\\d{3}")  # infer defaults to "off"
     model, _ = MasExtractor.extract_model(path, block="BLK", requirements=cfg)
     assert model.by_kind("requirement") == ()
+
+
+def test_duplicate_port_is_an_error_at_its_line(tmp_path: Path) -> None:
+    body = (
+        "# 5. Interface\n"  # 1
+        "\n"  # 2
+        "| Signal | Dir | Width | Description |\n"  # 3
+        "|---|---|---|---|\n"  # 4
+        "| `a` | in | 1 | first |\n"  # 5
+        "| `a` | in | 1 | again |\n"  # 6
+    )
+    model, diags = MasExtractor.extract_model(_write(tmp_path, body), block="x")
+    errs = _errors(diags)
+    assert [(e.code, e.line) for e in errs] == [("port.duplicate", 6)]
+    assert len(model.by_kind("port")) == 1
+
+
+def test_inferred_items_with_the_same_text_do_not_raise(tmp_path: Path) -> None:
+    body = (
+        "# 12. Verification\n"  # 1
+        "\n"  # 2
+        "1. Reset values match section 6.\n"  # 3
+        "2. Reset values match section 6.\n"  # 4
+    )
+    cfg = RequirementsCfg(infer="verification")
+    model, diags = MasExtractor.extract_model(_write(tmp_path, body), block="x", requirements=cfg)
+    assert len(model.by_kind("requirement")) == 1
+    assert [(d.code, d.line) for d in diags if d.severity == "warning"] == [
+        ("req.duplicate_text", 4)
+    ]
+
+
+def test_same_port_in_two_interface_tables_is_not_an_error(tmp_path: Path) -> None:
+    body = (
+        "# 5. Interface\n"  # 1
+        "\n"  # 2
+        "| Signal | Dir | Width | Description |\n"  # 3
+        "|---|---|---|---|\n"  # 4
+        "| `i_clk` | in | 1 | wrapper |\n"  # 5
+        "\n"  # 6
+        "| Signal | Dir | Width | Description |\n"  # 7
+        "|---|---|---|---|\n"  # 8
+        "| `i_clk` | in | 1 | core |\n"  # 9
+    )
+    model, diags = MasExtractor.extract_model(_write(tmp_path, body), block="x")
+    assert not _errors(diags)
+    assert [(d.code, d.line) for d in diags] == [("port.repeated", 9)]
+    (port,) = model.by_kind("port")
+    assert port.source.line == 5

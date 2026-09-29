@@ -24,7 +24,7 @@ enabled clock cycle. It is word-addressed through a 2-bit address bus.
 
 # 3. Block diagram
 
-The block is in the `peri` clock and reset domain and sits behind a 4-bit word address bus.
+The block is in tinysoc's single `clk`/`rst_n` domain, behind the 4-bit word address bus of `tiny_top`.
 
 # 4. IP used
 
@@ -59,7 +59,7 @@ All registers reset to 0. Addresses are word offsets of the 2-bit `addr`.
 | `0x0` | `COUNT` | `COUNT` | 31:0 | RW | 0 | free-running counter; a write loads it |
 | `0x1` | `COMPARE` | `COMPARE` | 31:0 | RW | 0 | interrupt asserts once `COUNT` reaches this while enabled |
 | `0x2` | `CTRL` | `EN` | 0 | RW | 0 | 1 = counter runs |
-| | | `IRQ_CLR` | 1 | WO | 0 | write 1 to clear a pending interrupt; reads the pending flag |
+| | | `IRQ_CLR` | 1 | W1C | 0 | reads the pending-interrupt flag; write 1 to clear it |
 
 # 7. Functional behaviour
 
@@ -80,7 +80,7 @@ and stays high until cleared.
 ## 7.3 Read path
 
 `REQ-TIM-005` Reading `CTRL` returns the enable bit in bit 0 and the pending-interrupt
-flag in bit 1; every other offset reads 0.
+flag in bit 1; offset `0x3` reads 0.
 
 # 8. Instances
 
@@ -92,7 +92,7 @@ One instance in `tiny_top`.
 
 | Function | Where it lives |
 |---|---|
-| clock gating | top |
+| clock prescaler | not provided: the counter steps every enabled cycle |
 
 # 10. Tie-offs
 
@@ -120,7 +120,7 @@ Open: interrupt vector assignment, from the interrupt map owner.
 3. Interrupt (`REQ-TIM-003`): `irq` rises the cycle after `COUNT` reaches `COMPARE`
    while enabled.
 4. Interrupt clear (`REQ-TIM-004`): a write of 1 to `CTRL.IRQ_CLR` drops `irq`.
-5. Read path (`REQ-TIM-005`): `CTRL` reads back enable and pending; other offsets read 0.
+5. Read path (`REQ-TIM-005`): `CTRL` reads back enable and pending; offset `0x3` reads 0.
 
 # Appendix A. Acronyms
 

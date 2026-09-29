@@ -25,7 +25,7 @@ through a 2-bit address bus.
 
 # 3. Block diagram
 
-The block is in the `peri` clock and reset domain and sits behind a 4-bit word address bus.
+The block is in tinysoc's single `clk`/`rst_n` domain, behind the 4-bit word address bus of `tiny_top`.
 
 # 4. IP used
 
@@ -53,14 +53,14 @@ The block is in the `peri` clock and reset domain and sits behind a 4-bit word a
 
 # 6. Register map
 
-All registers reset to 0. Addresses are word offsets of the 2-bit `addr`.
+`DATA_OUT` and `DIR` reset to 0; `DATA_IN` has no reset. Offsets are words of the 2-bit `addr`.
 
 : Register map
 
 | Offset | Register | Field | Bits | Access | Reset | Description |
 |---|---|---|---|---|---|---|
 | `0x0` | `DATA_OUT` | `DATA_OUT` | 7:0 | RW | 0 | driven onto `pin_out` |
-| `0x1` | `DATA_IN` | `DATA_IN` | 7:0 | RO | 0 | current value of `pin_in` |
+| `0x1` | `DATA_IN` | `DATA_IN` | 7:0 | RO | -- | current value of `pin_in` |
 | `0x2` | `DIR` | `DIR` | 7:0 | RW | 0 | per-bit direction, 1 = output |
 
 # 7. Functional behaviour
@@ -77,7 +77,7 @@ the upper bits.
 
 ## 7.3 Direction
 
-`REQ-GPIO-003` A write to `DIR` appears on `pin_dir`; every other offset reads 0.
+`REQ-GPIO-003` A write to `DIR` appears on `pin_dir` from the next clock; offset `0x3` reads 0.
 
 # 8. Instances
 
@@ -97,7 +97,7 @@ One instance in `tiny_top`.
 
 | Port | Tied to | Why |
 |---|---|---|
-| `wdata[31:8]` | ignored | only the low 8 bits are used |
+| -- | -- | -- |
 
 # 11. Requirements on others, and open items
 
@@ -113,7 +113,7 @@ Open: pad ring pull configuration, from the pad ring owner.
 
 1. Output (`REQ-GPIO-001`): a write to `DATA_OUT` drives `pin_out` and holds it.
 2. Input (`REQ-GPIO-002`): `DATA_IN` reads back `pin_in` in bits 7:0; upper bits read 0.
-3. Direction (`REQ-GPIO-003`): a write to `DIR` drives `pin_dir`; other offsets read 0.
+3. Direction (`REQ-GPIO-003`): a write to `DIR` drives `pin_dir`; offset `0x3` reads 0.
 
 # Appendix A. Acronyms
 

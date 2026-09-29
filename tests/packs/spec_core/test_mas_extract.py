@@ -48,7 +48,7 @@ def test_tinysoc_timer_registers_and_fields() -> None:
     assert fields["EN"].register == "register:timer.CTRL"
     assert (fields["EN"].msb, fields["EN"].lsb) == (0, 0)
     assert (fields["COUNT"].msb, fields["COUNT"].lsb) == (31, 0)
-    assert fields["IRQ_CLR"].access == "wo"
+    assert fields["IRQ_CLR"].access == "w1c"
     # A `contains` relation joins each field to its register.
     contains = model.get_relations(kind="contains", src="register:timer.CTRL")
     dsts = {r.dst for r in contains}
