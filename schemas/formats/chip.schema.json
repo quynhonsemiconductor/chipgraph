@@ -1,0 +1,311 @@
+{
+  "$defs": {
+    "Auto": {
+      "const": "auto",
+      "type": "string"
+    },
+    "BlockSpec": {
+      "additionalProperties": false,
+      "description": "A block: an IP instance on a bus.",
+      "properties": {
+        "base": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Auto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Base address, or 'auto'.",
+          "title": "Base"
+        },
+        "bus": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The bus it is a slave of.",
+          "title": "Bus"
+        },
+        "clock": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock"
+        },
+        "interrupts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InterruptSpec"
+          },
+          "title": "Interrupts",
+          "type": "array"
+        },
+        "ip": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The IP it instantiates.",
+          "title": "Ip"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner"
+        },
+        "reset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reset"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Size of its window in bytes.",
+          "title": "Size"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "BlockSpec",
+      "type": "object"
+    },
+    "BusSpec": {
+      "additionalProperties": false,
+      "description": "A bus; the protocol is data (for example 'APB', 'AXI4').",
+      "properties": {
+        "masters": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Masters",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "protocol": {
+          "title": "Protocol",
+          "type": "string"
+        },
+        "slaves": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Slaves",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "protocol"
+      ],
+      "title": "BusSpec",
+      "type": "object"
+    },
+    "ClockSpec": {
+      "additionalProperties": false,
+      "description": "A clock.",
+      "properties": {
+        "frequency_hz": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frequency Hz"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ClockSpec",
+      "type": "object"
+    },
+    "InterruptSpec": {
+      "additionalProperties": false,
+      "description": "One interrupt output of a block.",
+      "properties": {
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Auto"
+            }
+          ],
+          "default": "auto",
+          "description": "Interrupt line, or 'auto'.",
+          "title": "Line"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "InterruptSpec",
+      "type": "object"
+    },
+    "ResetSpec": {
+      "additionalProperties": false,
+      "description": "A reset.",
+      "properties": {
+        "active_low": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Low"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sync": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sync"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ResetSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The `chip.yml` schema.",
+  "properties": {
+    "addr_width": {
+      "minimum": 1,
+      "title": "Addr Width",
+      "type": "integer"
+    },
+    "blocks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BlockSpec"
+      },
+      "title": "Blocks",
+      "type": "array"
+    },
+    "buses": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BusSpec"
+      },
+      "title": "Buses",
+      "type": "array"
+    },
+    "clocks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ClockSpec"
+      },
+      "title": "Clocks",
+      "type": "array"
+    },
+    "data_width": {
+      "minimum": 1,
+      "title": "Data Width",
+      "type": "integer"
+    },
+    "project": {
+      "title": "Project",
+      "type": "string"
+    },
+    "resets": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResetSpec"
+      },
+      "title": "Resets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project",
+    "data_width",
+    "addr_width"
+  ],
+  "title": "ChipYaml",
+  "type": "object"
+}

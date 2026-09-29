@@ -1,0 +1,46 @@
+# A minimal chip fixture for testing chip.yml adapter.
+# Equivalent to examples/tinysoc but in chip.yml format.
+
+project: tinysoc
+data_width: 32
+addr_width: 32
+
+buses:
+  - name: apb
+    protocol: APB
+    masters: [top]
+    slaves: [timer, gpio]
+
+blocks:
+  - name: timer
+    ip: apb_timer
+    bus: apb
+    base: auto
+    size: 0x1000
+    interrupts:
+      - line: auto
+        name: overflow
+    clock: main
+    reset: rst_n
+    owner: engineering
+
+  - name: gpio
+    ip: gpio
+    bus: apb
+    base: auto
+    size: 0x1000
+    interrupts:
+      - line: auto
+        name: pin_change
+    clock: main
+    reset: rst_n
+    owner: engineering
+
+clocks:
+  - name: main
+    frequency_hz: 100000000
+
+resets:
+  - name: rst_n
+    active_low: true
+    sync: true
