@@ -16,6 +16,7 @@ dependencies = [
     "opentelemetry-api>=1.45",
     "mcp>=2.2,<3",
     "jinja2>=3.1",
+    "pyslang>=11,<12",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +49,9 @@ generated = "chipgraph.checks.generated:GeneratedCheck"
 [project.entry-points."chipgraph.adapters.review"]
 file = "chipgraph.adapters.review.file:FileReview"
 
+[project.entry-points."chipgraph.adapters.extractor"]
+pyslang = "chipgraph.adapters.tool.pyslang:PyslangExtractor"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",
@@ -76,6 +80,7 @@ packages = ["chipgraph"]
 [[tool.mypy.overrides]]
 module = "chipgraph.core.*"
 strict = true
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
