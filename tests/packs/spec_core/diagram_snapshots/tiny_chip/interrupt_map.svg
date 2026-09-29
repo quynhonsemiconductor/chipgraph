@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="208" viewBox="0 0 500 208" font-family="sans-serif" font-size="12">
+  <title>Interrupt map</title>
+  <desc>Interrupt map: 2 assigned line(s), 0 unassigned.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#000000"/></marker></defs>
+  <rect x="20" y="20" width="460" height="44" fill="#ffffff" stroke="#000000"/>
+  <text x="250" y="36" text-anchor="middle">Interrupt map (line -&gt; source)</text>
+  <rect x="20" y="76" width="460" height="44" fill="#ffffff" stroke="#000000"/>
+  <text x="250" y="92" text-anchor="middle">line 0: overflow  (block timer)</text>
+  <rect x="20" y="132" width="460" height="44" fill="#ffffff" stroke="#000000"/>
+  <text x="250" y="148" text-anchor="middle">line 1: pin_change  (block gpio)</text>
+</svg>

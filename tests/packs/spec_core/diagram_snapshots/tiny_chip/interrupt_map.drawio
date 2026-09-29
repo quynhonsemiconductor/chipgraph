@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile><diagram id="0" name="Interrupt map">
+<mxGraphModel dx="500" dy="208" grid="0" pageWidth="500" pageHeight="208" math="0" shadow="0">
+<root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+<mxCell id="irq_header" value="Interrupt map (line -&gt; source)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="20" y="20" width="460" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="interrupt_timer_overflow" value="line 0: overflow  (block timer)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="20" y="76" width="460" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="interrupt_gpio_pin_change" value="line 1: pin_change  (block gpio)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="20" y="132" width="460" height="44" as="geometry"/>
+</mxCell>
+</root>
+</mxGraphModel>
+</diagram></mxfile>
