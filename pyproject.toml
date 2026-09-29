@@ -52,6 +52,10 @@ file = "chipgraph.adapters.review.file:FileReview"
 [project.entry-points."chipgraph.adapters.extractor"]
 pyslang = "chipgraph.adapters.tool.pyslang:PyslangExtractor"
 
+[project.entry-points."chipgraph.adapters.format"]
+qsoc-contract = "chipgraph.adapters.format.qsoc_contract:QSocContractAdapter"
+chip-yaml = "chipgraph.adapters.format.chip_yaml:ChipYamlAdapter"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",
