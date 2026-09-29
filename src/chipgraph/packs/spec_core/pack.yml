@@ -1,0 +1,6 @@
+schema_version: 1
+name: spec-core
+version: 0.1.0
+description: >-
+  Deterministic extractors for text specifications (QNSC-style Micro-Architecture
+  Specifications): requirements, interface ports, register maps and open items.
