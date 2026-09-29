@@ -327,6 +327,71 @@ def check(
         raise typer.Exit(code=1)
 
 
+# --- ingest -------------------------------------------------------------------------
+
+
+@app.command()
+@_handle_errors
+def ingest(
+    ctx: typer.Context,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit 1 if any error-severity issue was found.")
+    ] = False,
+) -> None:
+    """Run every extractor, build the Design Model, and print stats."""
+    from chipgraph.app.ingest import run_ingest
+
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    app_ctx.require_profile()
+    report = run_ingest(app_ctx)
+    stats = report.result.stats
+
+    if state.json_output:
+        payload = {
+            "db": str(report.db_path),
+            "build_inputs_hash": report.result.build_inputs_hash,
+            "stats": stats.model_dump(mode="json"),
+            "issues": [i.model_dump(mode="json") for i in report.issues],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        _print_ingest_text(stats, report)
+
+    if strict and report.has_error:
+        raise typer.Exit(code=1)
+
+
+def _print_ingest_text(stats: object, report: object) -> None:
+    from chipgraph.app.ingest import IngestReport
+    from chipgraph.core.model.ingest import IngestStats
+
+    assert isinstance(stats, IngestStats)
+    assert isinstance(report, IngestReport)
+    typer.echo(
+        f"inputs: {stats.inputs}   entities: {stats.entities}   relations: {stats.relations}"
+    )
+    if stats.entities_by_kind:
+        typer.echo("entities by kind:")
+        for kind, count in sorted(stats.entities_by_kind.items()):
+            typer.echo(f"  {count:5} {kind}")
+    if stats.entities_by_block:
+        typer.echo("entities by block:")
+        for block, count in sorted(stats.entities_by_block.items()):
+            typer.echo(f"  {count:5} {block or '(none)'}")
+    by_sev = stats.diagnostics_by_severity
+    if by_sev:
+        summary = ", ".join(f"{sev}={by_sev[sev]}" for sev in sorted(by_sev))
+        typer.echo(f"issues: {summary}   conflicts: {stats.conflicts}")
+    else:
+        typer.echo(f"issues: none   conflicts: {stats.conflicts}")
+    shown = [i for i in report.issues if i.severity in ("warning", "error")][:20]
+    for issue in shown:
+        loc = f"{issue.file or '-'}:{issue.line or '-'}"
+        typer.echo(f"  {issue.severity:7} [{issue.code}] {loc}  {issue.message}")
+    typer.echo(f"db: {report.db_path}")
+
+
 # --- build / resume / rewind --------------------------------------------------------
 
 

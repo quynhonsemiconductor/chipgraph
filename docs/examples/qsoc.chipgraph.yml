@@ -21,9 +21,18 @@ packs: []
 # yet, so `infer: verification` keys each of their numbered Verification items by block
 # and content hash. A declared ID always wins. Drop `infer` once every MAS has IDs.
 spec:
+  chip:
+    path: util/qsoc_contract.yml
+    format: qsoc-contract
   requirements:
     id_pattern: '{BLOCK}_\d{3}'
     infer: verification
+
+# Where per-block RTL filelists and MAS specs live, so `chipgraph ingest` can build the
+# Design Model (M1-06). `{block}` is the directory name; `{BLOCK}` its upper-case form.
+layout:
+  filelist: "design/{block}/{block}.f"
+  spec: "doc/specs/QNSC_{BLOCK}_MAS.md"
 
 adapters:
   lint:

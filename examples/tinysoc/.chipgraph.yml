@@ -4,6 +4,17 @@ project: tinysoc
 packs:
   - tinysoc
 
+# The chip-level spec and where per-block RTL and MAS specs live, so `chipgraph ingest`
+# can build the Design Model (M1-06). Only `timer` and `gpio` have a MAS.
+spec:
+  chip:
+    path: chip.yml
+    format: chip-yaml
+
+layout:
+  filelist: "filelists/{block}.f"
+  spec: "doc/specs/TINY_{BLOCK}_MAS.md"
+
 adapters:
   lint:
     use: cmd

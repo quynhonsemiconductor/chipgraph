@@ -8,6 +8,8 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
 
 - `rtl/` — `tiny_timer.sv` (counter + compare + IRQ), `tiny_gpio.sv` (in/out/dir
   registers), `tiny_top.sv` (instantiates both behind a 4-bit register bus).
+- `chip.yml` — the chip-level spec (chipgraph's own `chip-yaml` format): the `clk`/`rst_n`
+  domain, the three blocks, and `timer`'s one interrupt. Read by `chipgraph ingest`.
 - `doc/specs/<BLOCK>_MAS.md` — a short MAS per block (`TINY_TIMER`, `TINY_GPIO`),
   the seed for the `spec-core` `mas-markdown` extractor; kept truthful to `rtl/`.
 - `filelists/<block>.f` — one Verilator filelist per block (`timer`, `gpio`, `top`),
@@ -35,6 +37,7 @@ cp -r examples/tinysoc /tmp/tinysoc && git -C /tmp/tinysoc init -q
 cd /tmp/tinysoc
 chipgraph config check                 # validate the profile
 chipgraph doctor                       # confirm make and verilator are on PATH
+chipgraph ingest                       # build the Design Model from chip.yml, RTL and MAS
 chipgraph check                        # run `lint` directly, for every block
 chipgraph build tinysoc/lint_manifest  # build and lint every block through the graph
 chipgraph status                       # see what the last run did
