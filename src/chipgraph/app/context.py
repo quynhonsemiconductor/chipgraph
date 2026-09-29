@@ -20,6 +20,7 @@ from chipgraph.core.config.loader import ResolvedProfile
 from chipgraph.core.config.loader import load as load_profile
 from chipgraph.core.config.models import DataCfg, Profile
 from chipgraph.core.engine.gate import GateEvaluator
+from chipgraph.core.plugin_api.local import LocalPluginRecord, load_local_plugins
 from chipgraph.core.plugin_api.registry import PluginError, Registry
 from chipgraph.core.state.artifacts import ArtifactStore, LabelRules
 from chipgraph.core.state.backend import LocalBackend
@@ -58,6 +59,7 @@ class AppContext:
     review: FileReview
     gates: GateEvaluator
     backend: LocalBackend | None = None
+    local_plugins: tuple[LocalPluginRecord, ...] = ()
 
     @property
     def profile(self) -> Profile | None:
@@ -101,6 +103,8 @@ class AppContext:
         except PluginError as exc:
             raise AppError(str(exc)) from exc
 
+        local_plugins = cls._load_local_plugins(root, resolved, registry)
+
         review = FileReview(layout.decisions_dir)
         gates = GateEvaluator(review, store)
 
@@ -113,7 +117,41 @@ class AppContext:
             review=review,
             gates=gates,
             backend=backend,
+            local_plugins=local_plugins,
         )
+
+    @staticmethod
+    def _load_local_plugins(
+        root: Path, resolved: ResolvedProfile | None, registry: Registry
+    ) -> tuple[LocalPluginRecord, ...]:
+        """Load the profile's local plugins into `registry`, honouring policy and env.
+
+        Disabled either by `policy.local_plugins: deny` (an org may turn it off) or by the
+        `CHIPGRAPH_LOCAL_PLUGINS=0` personal safety switch; the env switch can only disable,
+        never enable. A `PluginError` while loading becomes an `AppError`.
+        """
+        if resolved is None or not resolved.profile.plugins:
+            return ()
+
+        entries = resolved.profile.plugins
+        disabled_reason: str | None = None
+        if resolved.profile.policy.local_plugins == "deny":
+            source = resolved.provenance.get("policy.local_plugins")
+            where = source.location if source is not None else "profile"
+            disabled_reason = f"disabled by {where}"
+        elif os.environ.get("CHIPGRAPH_LOCAL_PLUGINS") == "0":
+            disabled_reason = "disabled by CHIPGRAPH_LOCAL_PLUGINS=0"
+
+        try:
+            return load_local_plugins(
+                root,
+                entries,
+                registry,
+                enabled=disabled_reason is None,
+                disabled_reason=disabled_reason,
+            )
+        except PluginError as exc:
+            raise AppError(str(exc)) from exc
 
 
 def default_identity() -> str:

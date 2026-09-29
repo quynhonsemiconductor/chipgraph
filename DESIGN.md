@@ -690,7 +690,7 @@ mặc định tool → tổ chức → preset → dự án → đường dẫn �
 | V2 | **Template ghi đè từng phần** | Template dùng Jinja2, chia thành block. Dự án chỉ ghi đè block cần đổi (ví dụ header), không phải copy cả file. Thứ tự tìm: block → dự án → tổ chức → pack |
 | V3 | **Code mẫu của chính dự án** (`style.exemplars`) | Profile chỉ ra vài file "chuẩn" của dự án; Author nhận chúng làm ví dụ, nên code sinh ra giống phong cách của team. Formatter của dự án (verible-format, emacs AUTO, script riêng) chạy sau khi sinh |
 | V4 | **Ngoại lệ theo đường dẫn** (`paths:`) | Vùng legacy hay IP vendor dùng luật khác hoặc được miễn check, có lý do ghi rõ |
-| V5 | **Plugin cục bộ của dự án** (`.chipgraph/plugins/`) | Khi quy ước quá đặc biệt để khai báo bằng dữ liệu (ví dụ đường dẫn tính theo công thức riêng), dự án viết một hàm Python nhỏ theo plugin API mà không phải fork tool. Plugin cục bộ chạy code, nên phải được lead duyệt như code |
+| V5 | **Plugin cục bộ của dự án** (`.chipgraph/plugins/`) | Khi quy ước quá đặc biệt để khai báo bằng dữ liệu (ví dụ đường dẫn tính theo công thức riêng), dự án viết một hàm Python nhỏ theo plugin API mà không phải fork tool. Plugin cục bộ chạy code, nên phải được lead duyệt như code. Tổ chức tắt được bằng `policy.local_plugins: deny` (chỉ được siết chặt: một tầng đã `deny` thì tầng sau không được `allow` lại); mỗi người tự tắt tạm bằng biến môi trường `CHIPGRAPH_LOCAL_PLUGINS=0` (chỉ tắt, không bật) khi thử tool trên repo chưa tin tưởng |
 | V6 | **Chia sẻ quy ước** | Luật tổ chức và preset nằm trong repo git riêng: `extends: [git+https://…/company-rules@v3]`. Nhiều dự án dùng chung, có version |
 
 ```yaml

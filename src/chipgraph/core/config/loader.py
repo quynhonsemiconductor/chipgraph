@@ -477,6 +477,30 @@ class ResolvedProfile:
 # --------------------------------------------------------------------------------------
 
 
+def _enforce_tighten_only_policy(layers: list[_Layer]) -> None:
+    """`policy.local_plugins` may only tighten across layers.
+
+    Any layer may set it to ``deny``; once a layer has denied, no later layer may set it
+    back to ``allow``. Raises `ConfigError` naming the offending file and the layer that
+    denied. Layers that do not mention the key are ignored.
+    """
+    denied_by: SourceRef | None = None
+    for layer in layers:
+        policy = layer.data.get("policy")
+        if not isinstance(policy, Mapping) or "local_plugins" not in policy:
+            continue
+        value = policy["local_plugins"]
+        if value == "deny":
+            denied_by = layer.source
+        elif value == "allow" and denied_by is not None:
+            raise ConfigError(
+                "policy.local_plugins is tighten-only: cannot set 'allow' after "
+                f"{denied_by.location!r} ({denied_by.kind}) set 'deny'",
+                file=layer.source.location,
+                key="policy.local_plugins",
+            )
+
+
 def load(
     root: Path,
     *,
@@ -508,6 +532,8 @@ def load(
         project_file, "project", str(project_file), data_dir, fetcher, frozenset()
     )
     layers = [tool_layer, *project_layers]
+
+    _enforce_tighten_only_policy(layers)
 
     merged: dict[str, Any] = {}
     provenance: dict[str, SourceRef] = {}

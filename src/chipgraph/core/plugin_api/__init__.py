@@ -5,6 +5,11 @@ tool names appear here. Concrete adapters live under `chipgraph.adapters`, which
 never imports.
 """
 
+from chipgraph.core.plugin_api.local import (
+    LocalPluginApi,
+    LocalPluginRecord,
+    load_local_plugins,
+)
 from chipgraph.core.plugin_api.pack import (
     Pack,
     PackManifest,
@@ -49,6 +54,8 @@ __all__ = [
     "LlmProvider",
     "LlmRequest",
     "LlmResponse",
+    "LocalPluginApi",
+    "LocalPluginRecord",
     "LogParser",
     "Pack",
     "PackManifest",
@@ -63,6 +70,7 @@ __all__ = [
     "ToolContext",
     "VcsAdapter",
     "discover_packs",
+    "load_local_plugins",
     "load_pack",
     "resolve_requires",
 ]
