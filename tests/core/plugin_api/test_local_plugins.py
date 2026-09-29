@@ -200,12 +200,47 @@ def test_same_stem_in_two_subdirs_do_not_clash(tmp_path: Path) -> None:
     assert {"from_x", "from_y"} <= set(registry.names("check"))
 
 
-def test_module_not_left_in_sys_modules(tmp_path: Path) -> None:
-    before = set(sys.modules)
+def test_module_is_only_registered_under_a_unique_name(tmp_path: Path) -> None:
     rel = _install(tmp_path, "tiny_layout.py")
-    load_local_plugins(tmp_path, (rel,), Registry(), enabled=True)
-    added = set(sys.modules) - before
-    assert not any(name.startswith("chipgraph_local_plugin_") for name in added)
+    (record,) = load_local_plugins(tmp_path, (rel,), Registry(), enabled=True)
+    assert record.sha256 is not None
+    name = f"chipgraph_local_plugin_tiny_layout_{record.sha256[:8]}"
+    assert name in sys.modules, "the plugin module stays importable under its unique name"
+    assert "tiny_layout" not in sys.modules
+
+
+def test_failed_import_leaves_nothing_in_sys_modules(tmp_path: Path) -> None:
+    before = set(sys.modules)
+    rel = _install(tmp_path, "raises_on_import.py")
+    with pytest.raises(PluginError):
+        load_local_plugins(tmp_path, (rel,), Registry(), enabled=True)
+    assert not any(n.startswith("chipgraph_local_plugin_") for n in set(sys.modules) - before)
+
+
+def test_plugin_using_dataclasses_loads(tmp_path: Path) -> None:
+    body = (
+        "from __future__ import annotations\n"
+        "import typing\n"
+        "from dataclasses import dataclass\n\n"
+        "@dataclass\n"
+        "class Opts:\n"
+        "    x: int = 1\n"
+        "    y: typing.ClassVar[int] = 2\n\n"
+        "def register(api):\n"
+        "    pass\n"
+    )
+    rel = _write(tmp_path, ".chipgraph/plugins/dc.py", body)
+    (record,) = load_local_plugins(tmp_path, (rel,), Registry(), enabled=True)
+    assert record.loaded
+
+
+def test_root_given_through_a_symlink(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    rel = _install(real, "tiny_layout.py")
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    (record,) = load_local_plugins(link, (rel,), Registry(), enabled=True)
+    assert record.path == rel
 
 
 _REGISTER_TEMPLATE = '''\

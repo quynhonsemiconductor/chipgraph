@@ -1,9 +1,9 @@
 """Load a project's own plugins from files it lists, through the plugin API.
 
 A project may keep small Python plugins next to its code, under `<root>/.chipgraph/plugins/`,
-and list them in the profile so the tool loads them into the registry. They run code, so
-loading is off by default under a "deny" policy and can be turned off per invocation with an
-environment switch; the caller decides whether loading is enabled.
+and list them in the profile so the tool loads them into the registry. They run code: an
+organization can forbid them with a `deny` policy, a user can switch them off with an
+environment variable, and the caller decides whether loading is enabled.
 
 This module stays generic: it knows nothing about chips, tools or any concrete plugin kind.
 A listed file must define ``register(api)`` and call ``api.register(kind, name, obj)`` for
@@ -102,6 +102,7 @@ def _module_name(path: Path, digest: str) -> str:
 
 
 def _load_one(root: Path, entry: str, registry: Registry) -> LocalPluginRecord:
+    root = root.resolve()
     target = _resolve_under_plugins_dir(root, entry)
     data = target.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -113,13 +114,15 @@ def _load_one(root: Path, entry: str, registry: Registry) -> LocalPluginRecord:
         raise PluginError(f"local plugin {entry!r}: cannot create an import spec for {target}")
 
     module = importlib.util.module_from_spec(spec)
+    # The module must be in `sys.modules` while it runs (e.g. `dataclasses` looks its
+    # module up there). The name is unique to this file's content, so it cannot shadow a
+    # real package; it is removed again if the import fails.
+    sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
     except Exception as exc:
-        raise PluginError(f"local plugin {entry!r}: failed to import: {exc}") from exc
-    finally:
-        # Never leave the module cached under a name a later import could pick up.
         sys.modules.pop(module_name, None)
+        raise PluginError(f"local plugin {entry!r}: failed to import: {exc}") from exc
 
     register = getattr(module, "register", None)
     if not callable(register):
