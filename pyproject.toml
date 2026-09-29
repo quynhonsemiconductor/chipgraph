@@ -16,7 +16,7 @@ dependencies = [
     "opentelemetry-api>=1.45",
     "mcp>=2.2,<3",
     "jinja2>=3.1",
-    "pyslang>=11,<12",
+    "pyslang>=12,<13",
 ]
 
 [project.optional-dependencies]
