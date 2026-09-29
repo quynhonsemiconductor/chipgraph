@@ -58,6 +58,9 @@ mas-markdown = "chipgraph.packs.spec_core.extract.mas:MasExtractor"
 qsoc-contract = "chipgraph.adapters.format.qsoc_contract:QSocContractAdapter"
 chip-yaml = "chipgraph.adapters.format.chip_yaml:ChipYamlAdapter"
 
+[project.entry-points."chipgraph.adapters.generator"]
+diagram = "chipgraph.packs.spec_core.gen.diagram:DiagramGenerator"
+
 [dependency-groups]
 dev = [
     "ruff>=0.16",

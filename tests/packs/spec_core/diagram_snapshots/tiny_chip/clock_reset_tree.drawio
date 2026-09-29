@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile><diagram id="0" name="Clock/reset tree">
+<mxGraphModel dx="460" dy="264" grid="0" pageWidth="460" pageHeight="264" math="0" shadow="0">
+<root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+<mxCell id="clock_main" value="clock: main" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="20" y="20" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="clock_main__use__block_gpio" value="gpio" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="260" y="20" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="clock_main__use__block_timer" value="timer" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="260" y="76" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="reset_rst_n" value="reset: rst_n" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="20" y="132" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="reset_rst_n__use__block_gpio" value="gpio" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="260" y="132" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="reset_rst_n__use__block_timer" value="timer" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxGeometry x="260" y="188" width="180" height="44" as="geometry"/>
+</mxCell>
+<mxCell id="e0" value="" style="endArrow=classic;html=0;strokeColor=#000000;fontColor=#000000" edge="1" parent="1" source="clock_main" target="clock_main__use__block_gpio">
+<mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="e1" value="" style="endArrow=classic;html=0;strokeColor=#000000;fontColor=#000000" edge="1" parent="1" source="clock_main" target="clock_main__use__block_timer">
+<mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="e2" value="" style="endArrow=classic;html=0;strokeColor=#000000;fontColor=#000000" edge="1" parent="1" source="reset_rst_n" target="reset_rst_n__use__block_gpio">
+<mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="e3" value="" style="endArrow=classic;html=0;strokeColor=#000000;fontColor=#000000" edge="1" parent="1" source="reset_rst_n" target="reset_rst_n__use__block_timer">
+<mxGeometry relative="1" as="geometry"/>
+</mxCell>
+</root>
+</mxGraphModel>
+</diagram></mxfile>
