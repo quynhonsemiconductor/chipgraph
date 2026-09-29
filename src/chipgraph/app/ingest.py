@@ -17,8 +17,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from chipgraph.adapters.format.chip_yaml import ChipYamlAdapter
-from chipgraph.adapters.format.qsoc_contract import QSocContractAdapter
 from chipgraph.adapters.tool.filelist import Filelist, FilelistError, read_filelist
 from chipgraph.adapters.tool.pyslang import ParseDiagnostic, PyslangExtractor
 from chipgraph.app.context import AppContext
@@ -33,15 +31,8 @@ from chipgraph.core.model.ingest import (
 )
 from chipgraph.core.model.model import DesignModel
 from chipgraph.core.model.store import ModelStore, default_model_db_path
+from chipgraph.core.plugin_api.registry import PluginError, Registry
 from chipgraph.packs.spec_core.extract.mas import MasDiagnostic, MasExtractor
-
-# The format adapters ingest knows how to build a chip-level spec from. The registry maps
-# a `format` name to an adapter; ingest only needs the two built-in ones, and calls their
-# `load_model` (richer than the `load` protocol) directly.
-_CHIP_FORMATS: dict[str, object] = {
-    "qsoc-contract": QSocContractAdapter(),
-    "chip-yaml": ChipYamlAdapter(),
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +62,7 @@ def run_ingest(ctx: AppContext) -> IngestReport:
     resolved = ctx.require_profile()
     root = ctx.root
 
-    builder = _PartBuilder(root, resolved)
+    builder = _PartBuilder(root, resolved, ctx.registry)
     builder.build_chip_spec()
     builder.build_blocks()
 
@@ -95,6 +86,7 @@ class _PartBuilder:
 
     root: Path
     resolved: ResolvedProfile
+    registry: Registry
     parts: list[SourcePart] = None  # type: ignore[assignment]
     input_files: list[InputFile] = None  # type: ignore[assignment]
     issues: list[IngestIssue] = None  # type: ignore[assignment]
@@ -111,13 +103,27 @@ class _PartBuilder:
         if chip is None:
             return
         path = (self.root / chip.path).resolve()
-        adapter = _CHIP_FORMATS.get(chip.format)
-        if adapter is None:
+        # Any `format` adapter in the registry (built-in, entry point or local plugin) that
+        # offers `load_model(path, root)` can build the chip-level part.
+        try:
+            adapter = self.registry.get("format", chip.format)
+        except PluginError as exc:
             self.issues.append(
                 IngestIssue(
                     severity="error",
                     code="chip_spec_format",
-                    message=f"unknown chip spec format {chip.format!r}",
+                    message=f"unknown chip spec format {chip.format!r}: {exc}",
+                    file=chip.path,
+                )
+            )
+            return
+        load_model = getattr(adapter, "load_model", None)
+        if not callable(load_model):
+            self.issues.append(
+                IngestIssue(
+                    severity="error",
+                    code="chip_spec_format",
+                    message=f"format adapter {chip.format!r} has no load_model(path, root)",
                     file=chip.path,
                 )
             )
@@ -133,7 +139,7 @@ class _PartBuilder:
             )
             return
         try:
-            model, warnings = adapter.load_model(path, self.root)  # type: ignore[attr-defined]
+            model, warnings = load_model(path, root=self.root)
         except Exception as exc:  # extractor must not crash ingest
             self.issues.append(
                 IngestIssue(
@@ -360,7 +366,9 @@ def _rel(path: Path, root: Path) -> str:
 
 
 def _parse_diag_to_issue(diag: ParseDiagnostic, block: str, root: Path) -> IngestIssue:
-    severity = "error" if diag.severity == "error" else "warning"
+    # slang's warnings are lint findings (the `lint` check reports those); for ingest only
+    # a parse or elaboration error matters, so warnings are kept as info.
+    severity = "error" if diag.severity == "error" else "info"
     file = _rel(Path(diag.file), root) if diag.file else None
     return IngestIssue(
         severity=severity,  # type: ignore[arg-type]

@@ -223,3 +223,23 @@ def test_stats_group_entities_by_kind_source_and_block() -> None:
     assert result.stats.entities_by_source == {"rtl": 2}
     # The module carries a `block`; the port does not, so only the module is counted.
     assert result.stats.entities_by_block["block:timer"] == 1
+
+
+def test_shared_module_ports_follow_the_owning_block() -> None:
+    # `sync` lives in common/ and is also elaborated by pwm with another width: the owner
+    # (common, by directory) wins for the module's port too, whatever the order.
+    def port(width: int) -> PortEntity:
+        return PortEntity(key="port:sync.i_d", name="i_d", width=width, module="module:sync")
+
+    def part(block: str, width: int) -> SourcePart:
+        mod = _mod("sync", "design/common/rtl/sync.sv")
+        return SourcePart(source="rtl", block=block, model=DesignModel.build([mod, port(width)]))
+
+    for parts in (
+        [part("block:common", 1), part("block:pwm", 4)],
+        [part("block:pwm", 4), part("block:common", 1)],
+    ):
+        model, result = ingest(parts)
+        assert model.get("module:sync").block == "block:common"
+        assert model.get("port:sync.i_d").width == 1
+        assert [i.code for i in result.issues] == ["conflict"]

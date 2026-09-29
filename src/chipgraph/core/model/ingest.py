@@ -119,6 +119,7 @@ class _MergeState:
     entities: dict[str, EntityBase] = field(default_factory=dict)
     entity_source: dict[str, str] = field(default_factory=dict)
     entity_owner_first: dict[str, bool] = field(default_factory=dict)
+    entity_origin: dict[str, str] = field(default_factory=dict)
     relations: list[Relation] = field(default_factory=list)
     issues: list[IngestIssue] = field(default_factory=list)
     conflicts: int = 0
@@ -285,8 +286,23 @@ def _merge_part(state: _MergeState, part: SourcePart, owners: Mapping[str, _Owne
     is_owner_of = _owner_predicate(part, owners)
     for key, entity in part.model.entities.items():
         entity = _apply_ownership(entity, owners)
-        _merge_entity(state, key, entity, part.source, is_owner_of(key))
+        origin = f"{part.source}:{part.block}" if part.block else part.source
+        owner = is_owner_of(_owning_module(key, entity))
+        _merge_entity(state, key, entity, part.source, owner, origin)
     state.relations.extend(part.model.relations)
+
+
+def _owning_module(key: str, entity: EntityBase) -> str:
+    """The module key whose ownership decides a conflict on `entity`.
+
+    A module decides for itself; a port or parameter decides by the module it belongs to,
+    so the owning block's elaboration of a shared module wins for its ports and parameters
+    too. Anything else decides by its own key.
+    """
+    module = getattr(entity, "module", None)
+    if isinstance(module, str) and module:
+        return module
+    return key
 
 
 def _owner_predicate(part: SourcePart, owners: Mapping[str, _Ownership]) -> Callable[[str], bool]:
@@ -294,7 +310,7 @@ def _owner_predicate(part: SourcePart, owners: Mapping[str, _Ownership]) -> Call
         ownership = owners.get(key)
         if ownership is None or ownership.owner is None:
             return part.block is None
-        return _block_name(ownership.owner) == part.block or ownership.owner == part.block
+        return ownership.owner == part.block
 
     return predicate
 
@@ -318,13 +334,19 @@ def _apply_ownership(entity: EntityBase, owners: Mapping[str, _Ownership]) -> En
 
 
 def _merge_entity(
-    state: _MergeState, key: str, entity: EntityBase, source: str, is_owner: bool
+    state: _MergeState,
+    key: str,
+    entity: EntityBase,
+    source: str,
+    is_owner: bool,
+    origin: str,
 ) -> None:
     existing = state.entities.get(key)
     if existing is None:
         state.entities[key] = entity
         state.entity_source[key] = source
         state.entity_owner_first[key] = is_owner
+        state.entity_origin[key] = origin
         return
     if existing == entity:
         return
@@ -333,11 +355,14 @@ def _merge_entity(
     keep_existing = _keeps_existing(
         state.entity_owner_first[key], state.entity_source[key], is_owner, source, existing, entity
     )
-    kept, dropped = (existing, entity) if keep_existing else (entity, existing)
+    kept = existing if keep_existing else entity
+    old_origin = state.entity_origin[key]
+    kept_origin, dropped_origin = (old_origin, origin) if keep_existing else (origin, old_origin)
     if not keep_existing:
         state.entities[key] = entity
         state.entity_source[key] = source
         state.entity_owner_first[key] = is_owner
+        state.entity_origin[key] = origin
     state.conflicts += 1
     state.issues.append(
         IngestIssue(
@@ -345,8 +370,8 @@ def _merge_entity(
             code="conflict",
             key=key,
             message=(
-                f"conflicting content for {key!r}; kept {kept.source.extractor or 'unknown'}, "
-                f"dropped {dropped.source.extractor or 'unknown'}"
+                f"conflicting content for {key!r}; kept {kept_origin} "
+                f"({kept.source.file or '?'}:{kept.source.line or '-'}), dropped {dropped_origin}"
             ),
             file=kept.source.file,
             line=kept.source.line,
