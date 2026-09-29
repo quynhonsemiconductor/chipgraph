@@ -44,8 +44,8 @@ src/chipgraph/core/        contracts, engine, model, runtime, state, config, plu
 src/chipgraph/adapters/    tool, parser, format, llm, runtime, runner, vcs, review
 src/chipgraph/checks/      built-in checks
 src/chipgraph/cli/  mcp/   user surfaces
-packs/<name>/pack.yml      domain packs: rules, roles, skills, schemas, templates
-interfaces/ presets/ orgs/ data, not code
+src/chipgraph/packs/       built-in packs: pack.yml + code, one snake_case dir each (D36)
+src/chipgraph/orgs/  presets/  interfaces/    built-in data, not code
 plugin/                    Claude Code plugin
 examples/tinysoc/          open-source sample project for end-to-end tests
 evals/                     Inspect AI evals

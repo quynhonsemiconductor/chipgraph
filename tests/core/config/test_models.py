@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from chipgraph.core.config.models import PathRule, Profile, UserConfig
+from chipgraph.core.config.models import PathRule, Profile, RequirementsCfg, UserConfig
 
 
 def _minimal_profile(**overrides: object) -> Profile:
@@ -136,3 +136,40 @@ def test_path_rule_accepts_unquoted_yaml_off() -> None:
     raw = yaml.safe_load('checks: { naming: off, header: on }\nreason: "legacy code"\n')
     rule = PathRule.model_validate(raw)
     assert rule.checks == {"naming": "off", "header": "on"}
+
+
+# --------------------------------------------------------------------------------------
+# spec.requirements (D37)
+# --------------------------------------------------------------------------------------
+
+
+def test_requirements_defaults_to_declared_ids() -> None:
+    cfg = Profile(project="x").spec.requirements
+    assert cfg.infer == "off"
+    assert cfg.infer_heading == "Verification"
+    regex = cfg.id_regex()
+    assert regex.fullmatch("REQ-TIM-004")
+    assert not regex.fullmatch("REQ-tim-4")
+    assert not regex.fullmatch("TIM-004")
+
+
+def test_requirements_pattern_with_block_placeholder() -> None:
+    cfg = RequirementsCfg(id_pattern=r"REQ-{BLOCK}-\d+")
+    assert cfg.id_regex("timer").fullmatch("REQ-TIMER-12")
+    assert not cfg.id_regex("timer").fullmatch("REQ-UART-12")
+    with pytest.raises(ValueError, match="block name"):
+        cfg.id_regex()
+
+
+def test_requirements_rejects_bad_regex_and_unknown_mode() -> None:
+    with pytest.raises(ValidationError, match="not a valid regex"):
+        RequirementsCfg(id_pattern="REQ-[")
+    with pytest.raises(ValidationError):
+        RequirementsCfg(infer="everything")  # type: ignore[arg-type]
+
+
+def test_requirements_infer_mode_from_profile_data() -> None:
+    profile = Profile.model_validate(
+        {"project": "x", "spec": {"requirements": {"infer": "verification"}}}
+    )
+    assert profile.spec.requirements.infer == "verification"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from importlib import resources
 from pathlib import Path
 
 from chipgraph.app.checks import ProfileCheckRunner
@@ -22,25 +23,27 @@ from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.state.trace import Tracer
 
 
-def _chipgraph_repo_root() -> Path | None:
-    """The root of the chipgraph repository itself (`packs/` next to `pyproject.toml`), if any.
+def builtin_packs_dir() -> Path | None:
+    """The directory of the packs shipped inside the `chipgraph.packs` package (D36).
 
-    `None` when chipgraph is installed as a package with no `packs/` sibling (e.g. from
-    a wheel), in which case only a project's own packs and `$CHIPGRAPH_PACK_PATH` apply.
+    Found through `importlib.resources`, so it is the same whether chipgraph runs from a
+    checkout or is installed from a wheel. `None` if the package is not on a real
+    filesystem (e.g. imported from a zip), since packs are loaded from directories.
     """
-    here = Path(__file__).resolve()
-    for candidate in here.parents:
-        if (candidate / "packs").is_dir() and (candidate / "pyproject.toml").is_file():
-            return candidate
-    return None
+    root = resources.files("chipgraph.packs")
+    return root if isinstance(root, Path) and root.is_dir() else None
 
 
 def pack_search_paths(ctx: AppContext) -> list[Path]:
-    """The search paths packs are discovered from, in order (DESIGN.md 3.2)."""
+    """The search paths packs are discovered from, in order (DESIGN.md 3.2, D36).
+
+    The project's `.chipgraph/packs/`, then the built-in packs, then each entry of
+    `$CHIPGRAPH_PACK_PATH`. Two packs with the same name anywhere on the path are an error.
+    """
     paths = [ctx.root / ".chipgraph" / "packs"]
-    chipgraph_root = _chipgraph_repo_root()
-    if chipgraph_root is not None:
-        paths.append(chipgraph_root / "packs")
+    builtin = builtin_packs_dir()
+    if builtin is not None:
+        paths.append(builtin)
     env_value = os.environ.get("CHIPGRAPH_PACK_PATH", "")
     paths.extend(Path(p) for p in env_value.split(os.pathsep) if p)
     return paths

@@ -11,8 +11,10 @@ from chipgraph.core.config.loader import (
     ResolvedProfile,
     SourceFetcher,
     SourceRef,
+    builtin_data_dir,
     find_profile,
     load,
+    resolve_data_ref,
 )
 from chipgraph.core.config.models import (
     AdapterCfg,
@@ -25,6 +27,7 @@ from chipgraph.core.config.models import (
     NamingCfg,
     PathRule,
     Profile,
+    RequirementsCfg,
     SourceCfg,
     SpecCfg,
     StateCfg,
@@ -48,6 +51,7 @@ __all__ = [
     "NamingCfg",
     "PathRule",
     "Profile",
+    "RequirementsCfg",
     "ResolvedProfile",
     "SourceCfg",
     "SourceFetcher",
@@ -58,6 +62,8 @@ __all__ = [
     "TargetCfg",
     "TemplatesCfg",
     "UserConfig",
+    "builtin_data_dir",
     "find_profile",
     "load",
+    "resolve_data_ref",
 ]

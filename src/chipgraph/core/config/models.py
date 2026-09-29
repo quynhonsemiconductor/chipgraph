@@ -8,6 +8,7 @@ conventions (layout, naming, templates, checks).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -33,6 +34,59 @@ class SourceCfg(BaseModel):
     format: str = Field(description="Format of the source, e.g. 'qsoc-contract'.")
 
 
+_DEFAULT_REQ_ID_PATTERN = r"REQ-[A-Z][A-Z0-9_]*-\d+"
+
+
+class RequirementsCfg(BaseModel):
+    """How requirement IDs are found in text specs (DECISIONS D37).
+
+    By default REQ-IDs are declared in the spec and matched by `id_pattern`. The temporary
+    `infer: verification` mode also treats each numbered item of a spec's "Verification"
+    section as a requirement, keyed by block and content hash rather than by its number.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id_pattern: str = Field(
+        default=_DEFAULT_REQ_ID_PATTERN,
+        description=(
+            "Regex a declared REQ-ID must match (whole ID). '{block}' and '{BLOCK}' are "
+            "replaced by the block name, lower- and upper-case, before compiling."
+        ),
+    )
+    infer: Literal["off", "verification"] = Field(
+        default="off",
+        description=(
+            "Temporary mode: 'verification' infers one requirement per numbered item of the "
+            "spec section titled `infer_heading`, for specs without REQ-IDs."
+        ),
+    )
+    infer_heading: str = Field(
+        default="Verification",
+        description="Title of the section items are inferred from, without its number.",
+    )
+
+    @field_validator("id_pattern")
+    @classmethod
+    def _pattern_compiles(cls, value: str) -> str:
+        probe = value.replace("{block}", "x").replace("{BLOCK}", "X")
+        try:
+            re.compile(probe)
+        except re.error as exc:
+            raise ValueError(f"id_pattern is not a valid regex: {exc}") from exc
+        return value
+
+    def id_regex(self, block: str | None = None) -> re.Pattern[str]:
+        """The compiled `id_pattern`, with `{block}`/`{BLOCK}` filled in for `block`."""
+        pattern = self.id_pattern
+        if block is not None:
+            pattern = pattern.replace("{block}", re.escape(block.lower()))
+            pattern = pattern.replace("{BLOCK}", re.escape(block.upper()))
+        elif "{block}" in pattern or "{BLOCK}" in pattern:
+            raise ValueError("id_pattern uses '{block}'/'{BLOCK}'; a block name is required")
+        return re.compile(pattern)
+
+
 class SpecCfg(BaseModel):
     """Where the chip-level spec and per-IP specs live."""
 
@@ -40,6 +94,10 @@ class SpecCfg(BaseModel):
 
     chip: SourceCfg | None = Field(default=None, description="The chip-level spec source.")
     ip_dir: str | None = Field(default=None, description="Directory containing per-IP specs.")
+    requirements: RequirementsCfg = Field(
+        default_factory=RequirementsCfg,
+        description="How requirement IDs are found in text specs (D37).",
+    )
 
 
 class AdapterCfg(BaseModel):

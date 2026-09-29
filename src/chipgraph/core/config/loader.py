@@ -18,6 +18,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -297,12 +298,49 @@ def _translate_validation_error(
 # --------------------------------------------------------------------------------------
 
 
-def _default_data_dir() -> Path | None:
-    here = Path(__file__).resolve()
-    for candidate in here.parents:
-        if (candidate / "orgs").is_dir():
-            return candidate
+def builtin_data_dir() -> Path | None:
+    """The directory holding the `orgs/` and `presets/` shipped with chipgraph (D36).
+
+    It is the `chipgraph` package directory, found through `importlib.resources` so it is
+    the same from a checkout and from a wheel. `None` if the package is not on a real
+    filesystem or ships neither `orgs/` nor `presets/`.
+    """
+    root = resources.files("chipgraph")
+    if not isinstance(root, Path):
+        return None
+    if (root / "orgs").is_dir() or (root / "presets").is_dir():
+        return root
     return None
+
+
+def _default_data_dir() -> Path | None:
+    return builtin_data_dir()
+
+
+def resolve_data_ref(ref: str, base_dir: Path, data_dir: Path | None = None) -> Path:
+    """Resolve a data file reference from a profile to an existing file.
+
+    - `org:<org>/<file>` and `preset:<preset>/<file>` resolve under `data_dir/orgs/` and
+      `data_dir/presets/` (default: `builtin_data_dir()`), e.g. `org:qnsc/naming-v1.yml`.
+    - `path:<rel>` or a plain relative path resolves against `base_dir`; an absolute path
+      is used as is.
+
+    Raises `ConfigError` if the reference is malformed or the file does not exist.
+    """
+    kind, sep, rest = ref.partition(":")
+    if sep and kind in ("org", "preset"):
+        root = data_dir if data_dir is not None else builtin_data_dir()
+        if root is None:
+            raise ConfigError(f"reference {ref!r} needs a data_dir with '{kind}s/'; none found")
+        if "/" not in rest or rest.startswith("/") or ".." in Path(rest).parts:
+            raise ConfigError(f"invalid reference {ref!r}: expected '{kind}:<name>/<file>'")
+        target = root / f"{kind}s" / rest
+    else:
+        rel = rest if sep and kind == "path" else ref
+        target = base_dir / rel
+    if not target.is_file():
+        raise ConfigError(f"reference {ref!r}: no file at {target}")
+    return target
 
 
 def _default_user_config_path() -> Path:

@@ -96,7 +96,7 @@ markers = [
 root_package = "chipgraph"
 
 [[tool.importlinter.contracts]]
-name = "core knows nothing about adapters, checks or surfaces"
+name = "core knows nothing about adapters, checks, packs or surfaces"
 type = "forbidden"
 source_modules = ["chipgraph.core"]
 forbidden_modules = [
@@ -105,4 +105,5 @@ forbidden_modules = [
     "chipgraph.cli",
     "chipgraph.app",
     "chipgraph.mcp",
+    "chipgraph.packs",
 ]

@@ -362,6 +362,47 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
 - **Xem lại khi:** Anthropic đổi điều khoản; hoặc spike S7 cho thấy Claude Code không giới
   hạn quyền subagent đủ chặt.
 
+## D36. Pack và dữ liệu đi kèm tool nằm trong package Python — Chốt (2026-09-29)
+
+- **Vấn đề:** plan để pack ở `packs/<tên>/` tại gốc repo, còn luật tổ chức và preset ở `orgs/`,
+  `presets/`. Wheel chỉ đóng gói `src/chipgraph`, nên cài bằng `uvx chipgraph` thì không có pack
+  nào. Tên có dấu gạch (`spec-core`) cũng không import được, trong khi code của pack (extractor,
+  generator) phải được tìm qua entry point.
+- **Chọn:**
+  - Pack đi kèm tool nằm ở `src/chipgraph/packs/<tên_snake>/`: `pack.yml`, `__init__.py` và code.
+    Tên trong `pack.yml` vẫn là tên có gạch (`spec-core`); chỉ tên thư mục là snake_case.
+  - Code của pack đăng ký qua entry point `chipgraph.adapters.<loại>` trong `pyproject.toml`,
+    như adapter. Task thêm code pack được phép thêm dòng entry point của mình.
+  - Luật tổ chức, preset và thư viện interface đi kèm tool nằm ở `src/chipgraph/orgs/`,
+    `src/chipgraph/presets/`, `src/chipgraph/interfaces/` (dữ liệu, không phải code).
+  - Tìm qua `importlib.resources`, không dò thư mục cha của file nguồn.
+  - Thứ tự tìm pack: `.chipgraph/packs/` của dự án → pack đi kèm tool → `$CHIPGRAPH_PACK_PATH`.
+    Hai pack trùng tên vẫn là lỗi.
+  - `import-linter` cấm `chipgraph.core` import `chipgraph.packs`.
+- **Lý do:** một nguồn cho cả khi chạy từ repo và khi cài từ wheel; pack có code được test,
+  typecheck và đóng gói như phần còn lại.
+- **Bỏ:** giữ `packs/` ở gốc rồi `force-include` vào wheel. Đường dẫn khi dev và khi cài khác
+  nhau, và code trong thư mục có gạch vẫn không import được.
+
+## D37. REQ-ID: khai trong spec, hoặc suy ra tạm thời — Chốt (2026-09-29)
+
+- **Vấn đề:** truy vết (`trace`, `/trace`) cần REQ-ID, nhưng MAS của QSoC chưa có REQ-ID nào.
+- **Chọn:** hai chế độ, cấu hình trong profile (`spec.requirements`).
+  - **Khai (mặc định):** REQ-ID viết trong spec, khớp một regex cấu hình được
+    (`id_pattern`, mặc định `REQ-[A-Z][A-Z0-9_]*-\d+`; `{block}` và `{BLOCK}` được thay bằng tên
+    block). Key là `requirement:<ID>`.
+  - **Suy ra (tạm):** `infer: verification`. Mỗi mục đánh số trong mục có tiêu đề
+    "Verification" của MAS là một yêu cầu. Key là `requirement:<block>.h<8 hex>`, lấy từ sha256
+    của câu đã chuẩn hóa (bỏ số thứ tự, gộp khoảng trắng), nên đánh số lại không làm đổi key.
+    Entity ghi `attrs.id_source = "inferred"` (chế độ khai ghi `"declared"`). Finding dựa trên
+    yêu cầu suy ra phải nói rõ đó là ID suy ra, không phải ID thật.
+- **Lý do:** chạy được trên QSoC ngay, không phải đợi team đổi quy trình; key không lệch khi
+  sửa thứ tự.
+- **Rủi ro:** sửa câu chữ của một mục thì key đổi; truy vết cũ của mục đó mất. Chấp nhận, vì đây
+  là chế độ tạm.
+- **Việc riêng, ngoài chipgraph:** thêm REQ-ID vào template MAS của QSoC là thay đổi quy trình
+  của team; lead bàn với team.
+
 ## Lịch xem lại
 
 | Quyết định | Xem lại khi |
@@ -375,6 +416,7 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
 | D14 (Jev) | Có evals (M4) và chính sách dữ liệu |
 | D8 (5 vai) | Evals cho thấy một vai thừa hoặc thiếu |
 | X1 (không fine-tune) | Bắt buộc chạy local và có đủ dữ liệu |
+| D37 (REQ-ID suy ra) | MAS của QSoC có REQ-ID; khi đó tắt `infer` |
 
 ---
 
