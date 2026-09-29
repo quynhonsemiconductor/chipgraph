@@ -593,7 +593,7 @@ packs: [spec-core, lang-sv, digital-rtl, dv, assist, pm]
 spec:
   chip: { path: util/qsoc_contract.yml, format: qsoc-contract }
   ip_dir: doc/specs
-  requirements: { infer: verification }   # D37: tạm suy ra REQ từ mục Verification của MAS
+  requirements: { id_pattern: "{BLOCK}_\\d{3}", infer: verification }   # D37: ID kiểu DMA_001; MAS chưa có ID thì suy ra
 adapters:
   lint:  { use: make, cmd: "make lint BLOCK={block}", parser: verilator }
   sim:   { use: edalize, tool: verilator }

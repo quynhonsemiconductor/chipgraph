@@ -10,6 +10,7 @@ names a specific chip project, bus protocol or tool.
 
 from __future__ import annotations
 
+import warnings
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -131,15 +132,26 @@ class RegisterEntity(EntityBase):
     access: str | None = Field(default=None, description="Access mode, e.g. 'rw', 'ro', 'w1c'.")
 
 
-class FieldEntity(EntityBase):
-    """A bit field within a register."""
+# `register` shadows `ABCMeta.register` (pydantic model classes are ABCs), and pydantic
+# warns about it on every import. The field is an instance attribute and nothing calls
+# `FieldEntity.register(...)` as an ABC, so the name is kept (it is in the stored model and
+# its JSON Schema) and only that one warning is silenced.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message='Field name "register" in "FieldEntity" shadows an attribute',
+        category=UserWarning,
+    )
 
-    kind: Literal["field"] = "field"
-    register: str | None = Field(default=None, description="Model key of the owning register.")
-    lsb: int | None = Field(default=None, ge=0, description="Least-significant bit index.")
-    msb: int | None = Field(default=None, ge=0, description="Most-significant bit index.")
-    access: str | None = Field(default=None, description="Access mode, e.g. 'rw', 'ro', 'w1c'.")
-    reset_value: int | str | None = Field(default=None, description="Reset value.")
+    class FieldEntity(EntityBase):
+        """A bit field within a register."""
+
+        kind: Literal["field"] = "field"
+        register: str | None = Field(default=None, description="Model key of the owning register.")
+        lsb: int | None = Field(default=None, ge=0, description="Least-significant bit index.")
+        msb: int | None = Field(default=None, ge=0, description="Most-significant bit index.")
+        access: str | None = Field(default=None, description="Access mode, e.g. 'rw', 'ro', 'w1c'.")
+        reset_value: int | str | None = Field(default=None, description="Reset value.")
 
 
 class InterruptEntity(EntityBase):

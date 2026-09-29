@@ -23,3 +23,16 @@ def test_example_profile_is_valid(profile: Path, tmp_path: Path) -> None:
 
 def test_there_is_an_example() -> None:
     assert EXAMPLES
+
+
+def test_qsoc_example_declares_block_ids_and_infers_the_rest() -> None:
+    from chipgraph.core.config.loader import load
+
+    profile_path = Path(__file__).parent.parent / "docs" / "examples" / "qsoc.chipgraph.yml"
+    resolved = load(profile_path.parent, profile_path=profile_path)
+    assert resolved is not None
+    req = resolved.profile.spec.requirements
+    assert req.infer == "verification"
+    regex = req.id_regex("dma")
+    assert regex.fullmatch("DMA_001")
+    assert not regex.fullmatch("UART_001")
