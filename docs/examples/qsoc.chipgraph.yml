@@ -16,6 +16,15 @@ project: qsoc
 
 packs: []
 
+# Requirement IDs (DECISIONS D37). Seven MAS files tag each Verification item with an ID
+# like `DMA_001`; the other six (TIMER, PWM, RAM, SCRC, SYSDBG, Interrupt_Map) have none
+# yet, so `infer: verification` keys each of their numbered Verification items by block
+# and content hash. A declared ID always wins. Drop `infer` once every MAS has IDs.
+spec:
+  requirements:
+    id_pattern: '{BLOCK}_\d{3}'
+    infer: verification
+
 adapters:
   lint:
     use: cmd

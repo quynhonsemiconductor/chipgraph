@@ -207,3 +207,17 @@ def test_ext_entity_round_trips_a_pack_kind() -> None:
     assert restored == ext
     assert restored.kind == "pin_spec"
     assert restored.attrs["drive_strength"] == "8mA"
+
+
+def test_importing_entities_emits_no_warning() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-W", "error", "-c", "import chipgraph.core.model.entities"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
