@@ -193,11 +193,11 @@ class PyslangExtractor:
                 else:
                     args.append(f"+define+{name}")
 
-        # Add top modules if specified.
-        if opts.tops:
-            for top in opts.tops:
-                args.append("--top")
-                args.append(top)
+        # Top modules: the caller's, else the filelist's own `--top-module`. Without one,
+        # slang treats every uninstantiated module (vendored IP, test helpers) as a top.
+        for top in opts.tops or filelist.tops:
+            args.append("--top")
+            args.append(top)
 
         # Parse command line.
         cmdline = " ".join(args)
@@ -223,8 +223,7 @@ class PyslangExtractor:
             severity = "error" if diag.isError() else "warning"
             file = src_mgr.getFileName(diag.location) if diag.location else None
             line = src_mgr.getLineNumber(diag.location) if diag.location else None
-            # Get diagnostic message - just use the message string.
-            msg_str = diag.message if hasattr(diag, "message") else str(diag)
+            msg_str = str(driver.diagEngine.formatMessage(diag))
             diags.append(ParseDiagnostic(file=file, line=line, severity=severity, message=msg_str))
 
         root_sym = comp.getRoot()
@@ -241,7 +240,7 @@ class PyslangExtractor:
         """Walk the hierarchy and extract entities and relations."""
         entities: list[EntityBase] = []
         relations: list[Relation] = []
-        seen_modules: set[str] = set()
+        seen_modules: set[str] = set()  # module keys, plus clock/reset keys emitted
 
         # Compile clock and reset pattern matchers.
         clock_matchers = [re.compile(p) for p in opts.clock_patterns]
@@ -359,28 +358,34 @@ def _walk_instance(
             port_attrs: dict[str, bool] = {}
             is_clock = any(m.match(port_name) for m in clock_matchers)
             is_reset = any(m.match(port_name) for m in reset_matchers)
+            # Several top modules (e.g. vendored IP nobody instantiates yet) may each
+            # have a `clk_i`: the clock is one entity per name, from the first top seen.
             if is_clock and is_top:
                 clock_key = make_key("clock", port_name)
-                entities.append(
-                    ClockEntity(
-                        key=clock_key,
-                        name=port_name,
-                        source=Provenance(file=file, line=line, extractor="pyslang"),
+                if clock_key not in seen_modules:
+                    seen_modules.add(clock_key)
+                    entities.append(
+                        ClockEntity(
+                            key=clock_key,
+                            name=port_name,
+                            source=Provenance(file=file, line=line, extractor="pyslang"),
+                        )
                     )
-                )
             elif is_clock:
                 port_attrs["clock_like"] = True
             if is_reset and is_top:
                 active_low = "_n" in port_name or "_inv" in port_name
                 reset_key = make_key("reset", port_name)
-                entities.append(
-                    ResetEntity(
-                        key=reset_key,
-                        name=port_name,
-                        active_low=active_low,
-                        source=Provenance(file=file, line=line, extractor="pyslang"),
+                if reset_key not in seen_modules:
+                    seen_modules.add(reset_key)
+                    entities.append(
+                        ResetEntity(
+                            key=reset_key,
+                            name=port_name,
+                            active_low=active_low,
+                            source=Provenance(file=file, line=line, extractor="pyslang"),
+                        )
                     )
-                )
             elif is_reset:
                 port_attrs["reset_like"] = True
 
