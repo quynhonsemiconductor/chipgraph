@@ -7,11 +7,13 @@ point group (see `pyproject.toml`) and satisfies `chipgraph.core.plugin_api.Chec
 from chipgraph.checks.filelist import FilelistCheck
 from chipgraph.checks.generated import GeneratedCheck, stamp, verify
 from chipgraph.checks.layout import LayoutCheck
+from chipgraph.checks.naming import NamingCheck
 
 BUILTIN_CHECKS: dict[str, type] = {
     "layout": LayoutCheck,
     "filelist": FilelistCheck,
     "generated": GeneratedCheck,
+    "naming": NamingCheck,
 }
 """Maps a check's registered name to its class, for entry-point-free wiring in tests."""
 
@@ -20,6 +22,7 @@ __all__ = [
     "FilelistCheck",
     "GeneratedCheck",
     "LayoutCheck",
+    "NamingCheck",
     "stamp",
     "verify",
 ]

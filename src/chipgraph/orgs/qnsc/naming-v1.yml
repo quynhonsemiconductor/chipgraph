@@ -1,0 +1,113 @@
+# =============================================================================
+# QNSC naming rule, as data for chipgraph's `naming` check.
+#
+# Translated from QNSC_RTL_Design_Naming_Rule V1.1 as enforced by QSoC
+# `flow/lint/naming_rules.yml` at commit 7a917d1 (repository
+# quynhonsemiconductor/vlsi_deep_training, Apache-2.0). The rule ids and messages
+# keep the source document's section numbering ("2.1 module", "1.5 vocabulary", ...)
+# so a reviewer can compare this file with section 4.3 of the rule document.
+#
+# Unlike the source text checker, chipgraph classifies each identifier by its
+# SystemVerilog syntax node kind (pyslang), so the pattern for a `port` is only ever
+# applied to a real port declaration, never to a same-named signal or a reference.
+# =============================================================================
+
+schema_version: 1
+document: QNSC_RTL_Design_Naming_Rule
+version: "1.1"
+ignore_comment: "naming-check: ignore"
+
+# -----------------------------------------------------------------------------
+# Allowed-name pattern per object kind (section 2 -- module, instance, RTL).
+# The whole identifier must match the pattern.
+# -----------------------------------------------------------------------------
+identifiers:
+  module:
+    rule: "2.1 module"
+    # A QNSC functional module, a wrapper around an IP, or a generic QNSC module.
+    pattern: '^(?:m_qnsc_wrap_[a-z0-9_]+|m_qnsc_[a-z0-9_]+|qnsc_[a-z0-9_]+)$'
+    message: "must be m_qnsc_<function>, m_qnsc_wrap_<block> or qnsc_<function>"
+
+  port:
+    rule: "1.2 port prefix"
+    pattern: '^(?:i_|o_|io_)[a-z0-9_]+$'
+    message: "must start with i_, o_ or io_"
+
+  parameter:
+    rule: "2.4 parameter"
+    pattern: '^(?:P_|C_|S_)[A-Z0-9_]+$'
+    message: >-
+      must be P_<FUNCTION> (parameter), C_<FUNCTION> (constant) or S_<STATE>
+      (FSM state), uppercase
+
+  localparam:
+    rule: "2.4 parameter"
+    pattern: '^(?:P_|C_|S_)[A-Z0-9_]+$'
+    message: >-
+      must be P_<FUNCTION> (parameter), C_<FUNCTION> (constant) or S_<STATE>
+      (FSM state), uppercase
+
+  enum_value:
+    rule: "2.4 parameter"
+    pattern: '^S_[A-Z0-9_]+$'
+    message: "an FSM state must be S_<STATE>, uppercase"
+
+  instance:
+    rule: "2.2 instance"
+    pattern: '^u_[a-z0-9_]+$'
+    message: "must be u_<function>[_<index>]"
+
+  signal:
+    rule: "2.3 signal"
+    pattern: '^(?:r_|w_|mem_)[a-z0-9_]+$'
+    message: >-
+      must be r_<function> if registered, w_<function> if combinational, or
+      mem_<function> if a memory array
+
+  memory:
+    rule: "2.3 signal"
+    pattern: '^mem_[a-z0-9_]+$'
+    message: "a memory array must be mem_<function>"
+
+  genvar:
+    rule: "2.3 signal"
+    pattern: '^[a-z][a-z0-9_]*$'
+    message: "must be lowercase with _ only"
+
+# -----------------------------------------------------------------------------
+# Lexical rules (section 1), applied to every identifier declared in a file.
+# -----------------------------------------------------------------------------
+lexical:
+  - rule: "1.1 case"
+    forbid_pattern: '[a-z][A-Z]|[A-Z]{2,}[a-z]'
+    allow_if_matches: '^(?:P_|C_|S_)[A-Z0-9_]+$'   # uppercase constants are fine
+    message: >-
+      uses mixed case; identifiers are lowercase with _ (uppercase only for P_/C_/S_)
+
+  - rule: "1.3 active low"
+    forbid_pattern: '\b(?:rstn|resetn|reset_b|rst_bar)\b'
+    message: "active low is _n after the meaning, as in i_rst_n_sys"
+
+  - rule: "1.4 index"
+    forbid_pattern: '[a-z]\d+(?:_|$)'
+    allow_if_matches: '^(?:P_|C_|S_)[A-Z0-9_]+$'
+    message: "a numeric index takes an underscore, as in timer_0"
+
+# -----------------------------------------------------------------------------
+# Mandatory vocabulary (section 1.5): left is forbidden, right is the project term.
+# -----------------------------------------------------------------------------
+vocabulary:
+  rule: "1.5 vocabulary"
+  message: "the project term is"
+  replace:
+    irq: int
+    interrupt: int
+    clock: clk
+    reset: rst
+    config: cfg
+    debug: dbg
+    power: pwr
+    memory: mem
+    peripheral: peri
+    multiplexer: mux
+    analog: ana
