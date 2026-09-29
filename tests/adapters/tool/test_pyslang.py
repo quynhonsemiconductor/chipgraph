@@ -66,19 +66,19 @@ def test_extract_model_from_filelist_object(fixtures_dir: Path) -> None:
     assert len(model.entities) > 0
 
 
-def test_diagnostics_returned_not_raised(fixtures_dir: Path) -> None:
+def test_diagnostics_returned_not_raised(tmp_path: Path) -> None:
     """Parse errors are returned as diagnostics, not raised."""
-    # Create a filelist with a syntax error
-    bad_file = fixtures_dir / "bad.sv"
-    bad_file.write_text("module bad ( input logic invalid [[ [[ ] );")
+    # Write the broken source and its filelist under tmp_path, never into the source tree.
+    bad_file = tmp_path / "bad.sv"
+    bad_file.write_text("module bad ( input logic invalid [[ [[ ] );\n")
 
-    filelist_path = fixtures_dir / "bad.f"
+    filelist_path = tmp_path / "bad.f"
     filelist_path.write_text(str(bad_file) + "\n")
 
     _, diags = PyslangExtractor.extract_model(filelist_path)
     # Should return a model and diagnostics, never raise
-    assert diags is not None
     assert isinstance(diags, tuple)
+    assert any(d.severity == "error" for d in diags)
 
 
 def test_extract_ports_with_directions(fixtures_dir: Path) -> None:

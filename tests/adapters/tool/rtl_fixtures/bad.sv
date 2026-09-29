@@ -1,1 +1,0 @@
-module bad ( input logic invalid [[ [[ ] );
