@@ -10,5 +10,5 @@ def test_builtin_adapters_are_discovered() -> None:
     assert "local" in registry.names("runner")
     assert "cmd" in registry.names("tool")
     assert {"verilator", "verible"} <= set(registry.names("parser"))
-    assert {"layout", "filelist", "generated"} <= set(registry.names("check"))
+    assert {"layout", "filelist", "generated", "naming"} <= set(registry.names("check"))
     assert "file" in registry.names("review")

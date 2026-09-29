@@ -1,0 +1,5 @@
+# QNSC organization profile (D36): the shared rules a project inherits with
+# `extends: [org:qnsc]`. Kept minimal on purpose -- it points the `naming` check at the
+# organization's data-defined naming rule; a project overrides or adds the rest.
+naming:
+  rules: org:qnsc/naming-v1.yml
