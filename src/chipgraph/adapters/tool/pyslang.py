@@ -1,4 +1,4 @@
-"""RTL extractor using pyslang 11 as the parser.
+"""RTL extractor using pyslang 12 as the parser.
 
 Reads a Verilog/SystemVerilog design via filelists or source paths, extracts hierarchy,
 ports (with directions and widths), parameters, instances, clock/reset signals (detected
@@ -10,13 +10,15 @@ Diagnostics (parse errors, warnings) are returned alongside, never raised.
 
 from __future__ import annotations
 
-import importlib
 import re
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
+
+from pyslang import ast
+from pyslang.driver import CommandLineOptions, Driver
 
 from chipgraph.adapters.tool.filelist import Filelist, FilelistError, read_filelist
 from chipgraph.core.model.entities import (
@@ -31,13 +33,6 @@ from chipgraph.core.model.keys import make_key
 from chipgraph.core.model.model import DesignModel
 from chipgraph.core.model.provenance import Provenance
 from chipgraph.core.model.relations import Relation
-
-# pyslang 11 ships stubs that do not parse (a parameter named `with` in syntax.pyi), and
-# mypy reads any stub it can reach. Importing through importlib keeps it untyped (Any).
-ast: Any = importlib.import_module("pyslang.ast")
-_driver: Any = importlib.import_module("pyslang.driver")
-CommandLineOptions: Any = _driver.CommandLineOptions
-Driver: Any = _driver.Driver
 
 
 class ParseDiagnostic(NamedTuple):
@@ -76,7 +71,7 @@ class PyslangExtractorOptions:
 
 
 class PyslangExtractor:
-    """Extracts RTL facts from a filelist using pyslang 11 as the elaborator."""
+    """Extracts RTL facts from a filelist using pyslang 12 as the elaborator."""
 
     name = "pyslang"
 

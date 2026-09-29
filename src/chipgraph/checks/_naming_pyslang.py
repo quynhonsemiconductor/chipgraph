@@ -13,19 +13,12 @@ that we only name what we declare.
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# pyslang 11 ships stubs that do not parse under mypy (a parameter named `with`); mypy
-# reads any stub it can reach. Importing through importlib keeps pyslang untyped (Any),
-# the same technique as `chipgraph.adapters.tool.pyslang`.
-_syntax: Any = importlib.import_module("pyslang.syntax")
-SyntaxTree: Any = _syntax.SyntaxTree
-SyntaxKind: Any = _syntax.SyntaxKind
-SyntaxNode: Any = _syntax.SyntaxNode
+from pyslang.syntax import SyntaxKind, SyntaxNode, SyntaxTree
 
 
 @dataclass(frozen=True, slots=True)
