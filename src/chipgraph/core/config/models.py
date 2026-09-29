@@ -278,6 +278,21 @@ class EnvCfg(BaseModel):
     )
 
 
+class PolicyCfg(BaseModel):
+    """Organization/project policy switches (DESIGN 8.6 layer authority table).
+
+    `local_plugins` is tighten-only across layers: an outer layer (e.g. the organization)
+    may set `deny` and no later layer may re-`allow` it (enforced in the loader).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    local_plugins: Literal["allow", "deny"] = Field(
+        default="allow",
+        description="Whether the project may load local plugins from `.chipgraph/plugins/`.",
+    )
+
+
 class Profile(BaseModel):
     """A project's full, merged configuration (DESIGN 8.3-8.4, 8.6, 12.6)."""
 
@@ -332,6 +347,9 @@ class Profile(BaseModel):
     )
     plugins: tuple[str, ...] = Field(
         default=(), description="Local plugin script paths (DESIGN 8.6 V5)."
+    )
+    policy: PolicyCfg = Field(
+        default_factory=PolicyCfg, description="Organization/project policy switches (DESIGN 8.6)."
     )
     workspace: str | None = Field(
         default=None, description="Path to a workspace manifest, if part of one (DESIGN 8.7)."

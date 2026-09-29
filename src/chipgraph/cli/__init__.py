@@ -30,9 +30,11 @@ from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity, find_repo_root
 from chipgraph.app.errors import AppError
 from chipgraph.core.config.errors import ConfigError
+from chipgraph.core.config.loader import ConfigIssue
 from chipgraph.core.contracts import ArtifactRef, CheckResult, Finding, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
 from chipgraph.core.engine.scheduler import RunSummary
+from chipgraph.core.plugin_api.local import LocalPluginRecord
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state import trace as trace_mod
 from chipgraph.core.state.findings import FindingStore, effective_status, waiver_gate_id
@@ -219,21 +221,44 @@ def config_check(ctx: typer.Context) -> None:
     state: CliState = ctx.obj
     app_ctx = _load_ctx(state)
     resolved = app_ctx.require_profile()
-    issues = resolved.check()
+    # Drop the generic per-plugin info line from `check()`: the richer lines built from
+    # what actually loaded (below) replace it, keeping the "runs code" warning wording.
+    issues = [i for i in resolved.check() if not i.key.startswith("plugins[")]
+    plugins = [_plugin_issue(index, rec) for index, rec in enumerate(app_ctx.local_plugins)]
+
     if state.json_output:
-        typer.echo(
-            json.dumps(
-                [{"severity": i.severity, "key": i.key, "message": i.message} for i in issues],
-                indent=2,
-            )
-        )
+        payload = [
+            {"severity": i.severity, "key": i.key, "message": i.message}
+            for i in (*issues, *plugins)
+        ]
+        typer.echo(json.dumps(payload, indent=2))
     else:
-        if not issues:
+        if not issues and not plugins:
             typer.echo("no issues")
-        for issue in issues:
+        for issue in (*issues, *plugins):
             typer.echo(f"{issue.severity:7} {issue.key}: {issue.message}")
-    if any(issue.severity == "error" for issue in issues):
+    if any(issue.severity == "error" for issue in (*issues, *plugins)):
         raise typer.Exit(code=1)
+
+
+def _plugin_issue(index: int, record: LocalPluginRecord) -> ConfigIssue:
+    """One `config check` line per local plugin: loaded (with hash + registrations) or not."""
+    key = f"plugins[{index}]"
+    if not record.loaded:
+        return ConfigIssue(
+            severity="warning",
+            key=key,
+            message=f"{record.entry}: not loaded: {record.disabled_reason}",
+        )
+    registered = ", ".join(f"{kind}/{name}" for kind, name in record.registered) or "nothing"
+    return ConfigIssue(
+        severity="info",
+        key=key,
+        message=(
+            f"{record.path} (sha256 {(record.sha256 or '')[:8]}) registered {registered} "
+            "(runs code: review it like code)"
+        ),
+    )
 
 
 # --- check -------------------------------------------------------------------------
