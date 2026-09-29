@@ -9,8 +9,15 @@ from pathlib import Path
 import pytest
 from config_fakes import FakeFetcher
 
+import chipgraph
+from chipgraph.core.config import loader as loader_module
 from chipgraph.core.config.errors import ConfigError
-from chipgraph.core.config.loader import find_profile, load
+from chipgraph.core.config.loader import (
+    builtin_data_dir,
+    find_profile,
+    load,
+    resolve_data_ref,
+)
 
 
 def _write(path: Path, content: str) -> Path:
@@ -163,7 +170,10 @@ def test_extends_path_relative_to_referencing_file(tmp_path: Path) -> None:
     assert resolved.provenance["reviewers"].kind == "path"
 
 
-def test_extends_org_without_data_dir_is_clear_error(tmp_path: Path) -> None:
+def test_extends_org_without_data_dir_is_clear_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loader_module, "_default_data_dir", lambda: None)
     repo = tmp_path / "repo"
     _init_git(repo)
     _write(repo / ".chipgraph.yml", "project: qsoc\nextends: [org:qnsc]\n")
@@ -324,3 +334,44 @@ def test_profile_hash_changes_when_a_value_changes(tmp_path: Path) -> None:
     after = load(repo)
     assert after is not None
     assert before.profile_hash != after.profile_hash
+
+
+# --------------------------------------------------------------------------------------
+# built-in data dir and data references (D36)
+# --------------------------------------------------------------------------------------
+
+
+def test_builtin_data_dir_is_the_package_dir_or_none() -> None:
+    found = builtin_data_dir()
+    if found is not None:
+        assert found == Path(chipgraph.__file__).parent
+        assert (found / "orgs").is_dir() or (found / "presets").is_dir()
+
+
+def test_resolve_data_ref_org_and_preset(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    rules = _write(data / "orgs" / "acme" / "naming-v1.yml", "rules: []\n")
+    preset = _write(data / "presets" / "ip-block" / "extra.yml", "x: 1\n")
+    assert resolve_data_ref("org:acme/naming-v1.yml", tmp_path, data) == rules
+    assert resolve_data_ref("preset:ip-block/extra.yml", tmp_path, data) == preset
+
+
+def test_resolve_data_ref_relative_and_path_prefix(tmp_path: Path) -> None:
+    local = _write(tmp_path / "rules" / "naming.yml", "rules: []\n")
+    assert resolve_data_ref("rules/naming.yml", tmp_path) == local
+    assert resolve_data_ref("path:rules/naming.yml", tmp_path) == local
+
+
+@pytest.mark.parametrize(
+    "ref", ["org:acme", "org:/etc/passwd", "org:acme/../../secret.yml", "preset:x"]
+)
+def test_resolve_data_ref_rejects_malformed(tmp_path: Path, ref: str) -> None:
+    with pytest.raises(ConfigError, match="invalid reference"):
+        resolve_data_ref(ref, tmp_path, tmp_path)
+
+
+def test_resolve_data_ref_missing_file_is_clear_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="no file at"):
+        resolve_data_ref("org:acme/none.yml", tmp_path, tmp_path)
+    with pytest.raises(ConfigError, match="no file at"):
+        resolve_data_ref("none.yml", tmp_path)

@@ -147,7 +147,7 @@ Thêm hai thành phần:
 ### 3.4 Rule là dữ liệu
 
 ```yaml
-# packs/digital-rtl/rules/rtl_module.yml
+# src/chipgraph/packs/digital_rtl/rules/rtl_module.yml
 rule: rtl_module
 kind: agent
 role: author
@@ -588,11 +588,12 @@ mặc định tool → tổ chức (qnsc) → preset → dự án (.chipgraph.ym
 ```yaml
 # .chipgraph.yml của QSoC
 project: qsoc
-extends: [org:qnsc, preset:mcu-soc]   # org:<tên> = luật mở đi kèm tool (orgs/); luật riêng dùng git+https://…@tag
+extends: [org:qnsc, preset:mcu-soc]   # org:<tên> = luật mở đi kèm tool (src/chipgraph/orgs/); luật riêng dùng git+https://…@tag
 packs: [spec-core, lang-sv, digital-rtl, dv, assist, pm]
 spec:
   chip: { path: util/qsoc_contract.yml, format: qsoc-contract }
   ip_dir: doc/specs
+  requirements: { infer: verification }   # D37: tạm suy ra REQ từ mục Verification của MAS
 adapters:
   lint:  { use: make, cmd: "make lint BLOCK={block}", parser: verilator }
   sim:   { use: edalize, tool: verilator }
@@ -1070,11 +1071,12 @@ chipgraph/
     checks/                layout · filelist · generated · naming · hardcode · duplicate ...
     cli/                   typer app
     mcp/                   MCP server
-  packs/           mỗi pack một thư mục có pack.yml (dữ liệu + skill + rule + code nhỏ)
-    spec-core/ · lang-sv/ · digital-rtl/ · dv/ · assist/ · pm/
-  interfaces/      apb · ahb · axi4 · axi4-lite · wishbone ...
-  presets/         mcu-soc · ip-block · fpga-prototype
-  orgs/qnsc/       luật (naming-v1.yml), template, chính sách dữ liệu
+    packs/                 pack đi kèm tool, mỗi pack một thư mục có pack.yml (dữ liệu + skill
+                           + rule + code nhỏ); thư mục snake_case, tên pack có gạch (D36)
+      spec_core/ · lang_sv/ · digital_rtl/ · dv/ · assist/ · pm/
+    interfaces/            apb · ahb · axi4 · axi4-lite · wishbone ...
+    presets/               mcu-soc · ip-block · fpga-prototype
+    orgs/qnsc/             luật (naming-v1.yml), template, chính sách dữ liệu
   plugin/          Claude Code plugin: commands, skills, hooks, cấu hình MCP
   docker/          chipgraph-eda (OSS CAD Suite + Python 3.14 + CLI)
   examples/tinysoc/  dự án mẫu nhỏ, open-source, dùng cho test đầu-cuối

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 from conftest import init_git, write_profile
 
-from chipgraph.app.build import load_rules, make_scheduler
+import chipgraph.packs
+from chipgraph.app.build import builtin_packs_dir, load_rules, make_scheduler, pack_search_paths
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
 
@@ -110,3 +112,53 @@ def test_make_scheduler_foreach_other_than_blocks_needs_design_model(
     ctx = AppContext.load(tmp_path)
     with pytest.raises(AppError, match="Design Model"):
         make_scheduler(ctx, "*")
+
+
+def test_builtin_packs_dir_is_the_chipgraph_packs_package() -> None:
+    assert builtin_packs_dir() == Path(chipgraph.packs.__file__).parent
+
+
+def test_pack_search_paths_order_project_builtin_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    extra_a, extra_b = tmp_path / "a", tmp_path / "b"
+    monkeypatch.setenv("CHIPGRAPH_PACK_PATH", f"{extra_a}{os.pathsep}{extra_b}")
+    init_git(tmp_path)
+    write_profile(tmp_path, "project: demo\n")
+    ctx = AppContext.load(tmp_path)
+
+    assert pack_search_paths(ctx) == [
+        tmp_path / ".chipgraph" / "packs",
+        builtin_packs_dir(),
+        extra_a,
+        extra_b,
+    ]
+
+
+def test_load_rules_finds_a_builtin_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    builtin = tmp_path / "builtin"
+    _write_pack(builtin / "demo", _SIMPLE_RULE)
+    monkeypatch.setattr("chipgraph.app.build.builtin_packs_dir", lambda: builtin)
+    monkeypatch.delenv("CHIPGRAPH_PACK_PATH", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git(repo)
+    write_profile(repo, "project: demo\npacks: [demo]\n")
+
+    assert [rule.id for rule in load_rules(AppContext.load(repo))] == ["demo/gen_out"]
+
+
+def test_project_pack_with_builtin_name_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builtin = tmp_path / "builtin"
+    _write_pack(builtin / "demo", _SIMPLE_RULE)
+    monkeypatch.setattr("chipgraph.app.build.builtin_packs_dir", lambda: builtin)
+    monkeypatch.delenv("CHIPGRAPH_PACK_PATH", raising=False)
+    repo = tmp_path / "repo"
+    _write_pack(repo / ".chipgraph" / "packs" / "demo", _SIMPLE_RULE)
+    init_git(repo)
+    write_profile(repo, "project: demo\npacks: [demo]\n")
+
+    with pytest.raises(AppError, match="duplicate pack name"):
+        load_rules(AppContext.load(repo))
