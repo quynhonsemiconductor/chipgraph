@@ -35,6 +35,7 @@ from chipgraph.core.contracts import ArtifactRef, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.layout import StateLayout
+from chipgraph.mcp import model_tools
 
 __all__ = ["build_server", "run_stdio"]
 
@@ -229,6 +230,65 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
                 ]
             }
         return {"profile": resolved.profile.model_dump(mode="json")}
+
+    @server.tool(
+        description="Retrieve a block and what it contains: modules, ports, registers, interrupts."
+    )
+    @_guard
+    async def model_block(name: str) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_block(ctx, name)
+
+    @server.tool(description="Retrieve a module: ports, parameters, instances, instantiated_by.")
+    @_guard
+    async def model_module(name: str) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_module(ctx, name)
+
+    @server.tool(description="Find entities by kind, name (glob pattern), or attributes.")
+    @_guard
+    async def model_find(
+        kind: str | None = None,
+        name: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_find(ctx, kind=kind, name=name, limit=limit)
+
+    @server.tool(description="Trace a requirement or entity: implements, verifies, derives_from.")
+    @_guard
+    async def model_trace(key: str) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_trace(ctx, key)
+
+    @server.tool(description="Compute downstream impact from a change: reachable entities.")
+    @_guard
+    async def model_impact(key: str, max_depth: int = 5) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_impact(ctx, key, max_depth=max_depth)
+
+    @server.tool(description="Find adjacent entities (one-hop neighbors).")
+    @_guard
+    async def model_neighbors(
+        key: str,
+        kinds: list[str] | None = None,
+        relation: str | None = None,
+        direction: str = "out",
+    ) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_neighbors(
+            ctx, key, kinds=kinds, relation=relation, direction=direction
+        )
+
+    @server.tool(description="Full-text search over entities and documents.")
+    @_guard
+    async def model_search(
+        text: str,
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        ctx = _load_ctx()
+        return await model_tools.model_search(ctx, text, kinds=kinds, limit=limit)
 
     return server
 
