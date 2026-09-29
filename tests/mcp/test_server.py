@@ -17,7 +17,7 @@ def _run(coro: object) -> object:
     return asyncio.run(coro)  # type: ignore[arg-type]
 
 
-def test_list_tools_has_exactly_the_five_m0_tools(tmp_path: Path) -> None:
+def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
     init_git(tmp_path)
     server = build_server(tmp_path)
 
@@ -30,7 +30,22 @@ def test_list_tools_has_exactly_the_five_m0_tools(tmp_path: Path) -> None:
             return sorted(tool.name for tool in result.tools)
 
     names = _run(_list())
-    assert names == ["approve", "build", "check", "config_show", "status"]
+    # M0 tools: approve, build, check, config_show, status; M1-02: model_*
+    expected = [
+        "approve",
+        "build",
+        "check",
+        "config_show",
+        "model_block",
+        "model_find",
+        "model_impact",
+        "model_module",
+        "model_neighbors",
+        "model_search",
+        "model_trace",
+        "status",
+    ]
+    assert names == expected
 
 
 def test_config_show_on_tmp_profile(tmp_path: Path) -> None:
