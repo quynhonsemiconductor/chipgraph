@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from chipgraph.adapters.format._yaml_lines import LinedYaml
 from chipgraph.adapters.format.qsoc_contract import (
     Region,
+    _display_path,
     contains,
     duplicate_line_warnings,
     model_facts,
@@ -126,10 +127,14 @@ class ChipYamlAdapter:
         model, _ = self.load_model(path)
         return model_facts(model)
 
-    def load_model(self, path: Path) -> tuple[DesignModel, list[str]]:
-        """Load `path` into a `DesignModel`; raise `ValueError` naming file:line if invalid."""
+    def load_model(self, path: Path, root: Path | None = None) -> tuple[DesignModel, list[str]]:
+        """Load `path` into a `DesignModel`; raise `ValueError` naming file:line if invalid.
+
+        When `root` is given and `path` is under it, provenance `file` is written relative
+        to `root` (POSIX); otherwise it is `path.as_posix()` as before.
+        """
         doc = LinedYaml(path)
-        file = path.as_posix()
+        file = _display_path(path, root)
         try:
             chip = ChipYaml.model_validate(doc.data or {})
         except ValidationError as exc:

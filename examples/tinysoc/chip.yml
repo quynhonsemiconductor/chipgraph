@@ -1,0 +1,42 @@
+# chipgraph chip-level spec for the tinysoc example (schema: schemas/formats/chip.schema.json).
+#
+# True to examples/tinysoc/rtl/: one clock `clk`, one active-low reset `rst_n`, and three
+# blocks. `tiny_top` puts `timer` and `gpio` behind a 4-bit word-address register bus, the
+# top two bits selecting the block (so each block owns a 4-word / 16-byte window). Only
+# `timer` raises an interrupt (`timer_irq`).
+project: tinysoc
+data_width: 32
+addr_width: 4
+
+buses:
+  - name: regbus
+    protocol: reg
+    masters: [top]
+    slaves: [timer, gpio]
+
+blocks:
+  - name: timer
+    bus: regbus
+    base: 0x0
+    size: 4
+    clock: clk
+    reset: rst_n
+    interrupts:
+      - name: irq
+        line: 0
+  - name: gpio
+    bus: regbus
+    base: 0x4
+    size: 4
+    clock: clk
+    reset: rst_n
+  - name: top
+    clock: clk
+    reset: rst_n
+
+clocks:
+  - name: clk
+
+resets:
+  - name: rst_n
+    active_low: true

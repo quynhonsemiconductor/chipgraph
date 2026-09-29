@@ -55,11 +55,15 @@ class QSocContractAdapter:
         model, _ = self.load_model(path)
         return model_facts(model)
 
-    def load_model(self, path: Path) -> tuple[DesignModel, list[str]]:
-        """Load `path` into a `DesignModel`, with warnings for anything suspicious."""
+    def load_model(self, path: Path, root: Path | None = None) -> tuple[DesignModel, list[str]]:
+        """Load `path` into a `DesignModel`, with warnings for anything suspicious.
+
+        When `root` is given and `path` is under it, provenance `file` is written relative
+        to `root` (POSIX); otherwise it is `path.as_posix()` as before.
+        """
         doc = LinedYaml(path)
         data: dict[str, Any] = doc.data if isinstance(doc.data, dict) else {}
-        file = path.as_posix()
+        file = _display_path(path, root)
         warnings: list[str] = []
         entities: list[EntityBase] = []
         relations: list[Relation] = []
@@ -210,6 +214,16 @@ def model_facts(model: DesignModel) -> list[Mapping[str, object]]:
 
 def contains(src: str, dst: str, source: Provenance) -> Relation:
     return Relation(kind="contains", src=src, dst=dst, source=source)
+
+
+def _display_path(path: Path, root: Path | None) -> str:
+    """`path` relative to `root` (POSIX) when it is under it, else its POSIX form."""
+    if root is not None:
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            pass
+    return path.as_posix()
 
 
 def int_or_str(value: object) -> int | str | None:
