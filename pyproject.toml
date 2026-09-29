@@ -52,6 +52,7 @@ file = "chipgraph.adapters.review.file:FileReview"
 
 [project.entry-points."chipgraph.adapters.extractor"]
 pyslang = "chipgraph.adapters.tool.pyslang:PyslangExtractor"
+mas-markdown = "chipgraph.packs.spec_core.extract.mas:MasExtractor"
 
 [project.entry-points."chipgraph.adapters.format"]
 qsoc-contract = "chipgraph.adapters.format.qsoc_contract:QSocContractAdapter"

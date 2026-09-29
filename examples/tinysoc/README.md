@@ -8,6 +8,8 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
 
 - `rtl/` — `tiny_timer.sv` (counter + compare + IRQ), `tiny_gpio.sv` (in/out/dir
   registers), `tiny_top.sv` (instantiates both behind a 4-bit register bus).
+- `doc/specs/<BLOCK>_MAS.md` — a short MAS per block (`TINY_TIMER`, `TINY_GPIO`),
+  the seed for the `spec-core` `mas-markdown` extractor; kept truthful to `rtl/`.
 - `filelists/<block>.f` — one Verilator filelist per block (`timer`, `gpio`, `top`),
   paths relative to this directory.
 - `Makefile` — `make lint BLOCK=<block>` runs `verilator --lint-only -Wall`;
