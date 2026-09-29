@@ -45,6 +45,7 @@ verible = "chipgraph.adapters.parser.verible:VeribleParser"
 layout = "chipgraph.checks.layout:LayoutCheck"
 filelist = "chipgraph.checks.filelist:FilelistCheck"
 generated = "chipgraph.checks.generated:GeneratedCheck"
+naming = "chipgraph.checks.naming:NamingCheck"
 
 [project.entry-points."chipgraph.adapters.review"]
 file = "chipgraph.adapters.review.file:FileReview"

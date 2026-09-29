@@ -35,6 +35,7 @@ LAYER_BY_CHECK: Mapping[str, int] = {
     "lint": 4,
     "layout": 4,
     "synth": 4,
+    "naming": 4,
     # layer 5: process (traceability, staleness, gate/approval hygiene)
     "trace": 5,
 }
