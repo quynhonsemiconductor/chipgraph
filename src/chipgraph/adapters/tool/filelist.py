@@ -5,8 +5,9 @@ its own dialect of the same idea (a list of source files, plus a handful of opti
 This reader supports the common subset used across QSoC's filelists (see
 ``docs/spikes/S2.md``): source paths, ``+incdir+``, ``+define+NAME[=VALUE]``, nested
 ``-f``/``-F`` (recursive includes), ``-y``/``-v`` library directories (recorded, not
-searched), ``#``/``//`` comments, blank lines, and ``$VAR``/``${VAR}`` environment
-expansion. Anything else (e.g. Verilator's ``--top-module``, ``-Wno-*``) is skipped and
+searched), ``--top-module``/``--top``/``-top`` (recorded in ``tops``), ``#``/``//``
+comments, blank lines, and ``$VAR``/``${VAR}`` environment expansion. Anything else
+(e.g. ``-Wno-*``) is skipped and
 reported as a warning rather than raised, so a filelist written for another tool still
 loads: chipgraph reads the filelist itself instead of handing it to `slang` verbatim.
 """
@@ -42,6 +43,8 @@ class Filelist:
     defines: dict[str, str | None] = field(default_factory=dict)
     libdirs: tuple[Path, ...] = field(default_factory=tuple)
     libexts: tuple[str, ...] = field(default_factory=tuple)
+    tops: tuple[str, ...] = field(default_factory=tuple)
+    """Top modules named by ``--top-module``/``--top``/``-top``, in first-seen order."""
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -70,6 +73,7 @@ def read_filelist(
     defines: dict[str, str | None] = {}
     libdirs: list[Path] = []
     libexts: list[str] = []
+    tops: list[str] = []
     warnings: list[str] = []
     seen_filelists: set[Path] = set()
 
@@ -82,6 +86,7 @@ def read_filelist(
         defines=defines,
         libdirs=libdirs,
         libexts=libexts,
+        tops=tops,
         warnings=warnings,
         seen_filelists=seen_filelists,
     )
@@ -92,6 +97,7 @@ def read_filelist(
         defines=defines,
         libdirs=_dedup(libdirs),
         libexts=tuple(dict.fromkeys(libexts)),
+        tops=tuple(tops),
         warnings=tuple(warnings),
     )
 
@@ -99,10 +105,10 @@ def read_filelist(
 # Options this reader understands take an argument as a separate token (rather than
 # glued on, like `+incdir+` or `-Wno-foo`). Each is skipped-with-a-warning, since the
 # argument itself must not be mistaken for a source file.
+_TOP_OPTIONS = {"--top-module", "--top", "-top"}
+"""Options naming a top module; their argument is recorded in ``Filelist.tops``."""
+
 _KNOWN_VALUE_OPTIONS = {
-    "--top-module",
-    "--top",
-    "-top",
     "--timescale",
     "-o",
 }
@@ -118,6 +124,7 @@ def _read_one(
     defines: dict[str, str | None],
     libdirs: list[Path],
     libexts: list[str],
+    tops: list[str],
     warnings: list[str],
     seen_filelists: set[Path],
 ) -> None:
@@ -156,6 +163,7 @@ def _read_one(
                 defines=defines,
                 libdirs=libdirs,
                 libexts=libexts,
+                tops=tops,
                 warnings=warnings,
                 seen_filelists=seen_filelists,
             )
@@ -189,6 +197,14 @@ def _read_one(
             for ext in token[len("+libext+") :].split("+"):
                 if ext:
                     libexts.append(ext)
+            continue
+
+        if token in _TOP_OPTIONS:
+            if i < len(tokens):
+                top = tokens[i][1]
+                i += 1
+                if top not in tops:
+                    tops.append(top)
             continue
 
         if token in _KNOWN_VALUE_OPTIONS:

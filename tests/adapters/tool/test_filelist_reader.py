@@ -104,16 +104,27 @@ def test_read_with_cwd_relative_style(tmp_path: Path) -> None:
     assert len(result.sources) == 2
 
 
-def test_skip_unknown_option_with_warning(tmp_path: Path) -> None:
-    """Unknown options are skipped with a warning."""
+def test_top_module_options_are_recorded(tmp_path: Path) -> None:
+    """`--top-module`, `--top` and `-top` name tops; their argument is not a source."""
     f = tmp_path / "test.f"
-    f.write_text("--top-module mytop\na.sv\n")
+    f.write_text("--top-module mytop\n--top other\n-top mytop\na.sv\n")
     (tmp_path / "a.sv").write_text("")
 
     result = read_filelist(f)
-    assert result.sources[0].name == "a.sv"
-    assert len(result.warnings) > 0
-    assert "--top-module" in result.warnings[0] or "unsupported" in result.warnings[0]
+    assert [s.name for s in result.sources] == ["a.sv"]
+    assert result.tops == ("mytop", "other")
+    assert result.warnings == ()
+
+
+def test_skip_unknown_option_with_warning(tmp_path: Path) -> None:
+    """Options with a value that is not used are skipped with a warning."""
+    f = tmp_path / "test.f"
+    f.write_text("--timescale 1ns/1ps\na.sv\n")
+    (tmp_path / "a.sv").write_text("")
+
+    result = read_filelist(f)
+    assert [s.name for s in result.sources] == ["a.sv"]
+    assert "unsupported option '--timescale'" in result.warnings[0]
 
 
 def test_skip_unknown_flag_with_warning(tmp_path: Path) -> None:

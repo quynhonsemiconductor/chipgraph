@@ -332,3 +332,44 @@ def test_extract_protocol_returns_plain_facts(tinysoc_dir: Path) -> None:
     facts = list(PyslangExtractor().extract(tinysoc_dir / "rtl" / "tiny_timer.sv"))
     kinds = {f.get("kind") for f in facts}
     assert {"module", "port"} <= kinds
+
+
+def test_two_tops_with_the_same_clock_name_give_one_clock(tmp_path: Path) -> None:
+    """Uninstantiated modules are all tops; a shared `clk_i`/`rst_ni` must not conflict."""
+    a = tmp_path / "a.sv"
+    a.write_text("module a (input logic clk_i, input logic rst_ni, output logic o);\nendmodule\n")
+    b = tmp_path / "b.sv"
+    b.write_text("module b (input logic clk_i, input logic rst_ni, output logic o);\nendmodule\n")
+
+    model, _ = PyslangExtractor.extract_model(
+        [a, b], clock_patterns=(r"^clk",), reset_patterns=(r"^rst",)
+    )
+
+    assert [c.key for c in model.by_kind("clock")] == ["clock:clk_i"]
+    assert [r.key for r in model.by_kind("reset")] == ["reset:rst_ni"]
+    clocked = {p.key: p.clock for p in model.by_kind("port") if p.name == "clk_i"}
+    assert clocked == {"port:a.clk_i": "clock:clk_i", "port:b.clk_i": "clock:clk_i"}
+
+
+def test_filelist_top_module_limits_the_tops(tmp_path: Path) -> None:
+    """A filelist's `--top-module` is used when the caller gives no tops."""
+    (tmp_path / "a.sv").write_text("module a (input logic clk_i);\nendmodule\n")
+    (tmp_path / "b.sv").write_text("module b (input logic clk_b);\nendmodule\n")
+    filelist = tmp_path / "x.f"
+    filelist.write_text("--top-module a\na.sv\nb.sv\n")
+
+    model, _ = PyslangExtractor.extract_model(filelist, clock_patterns=(r"^clk",))
+
+    assert [m.name for m in model.by_kind("module")] == ["a"]
+    assert [c.key for c in model.by_kind("clock")] == ["clock:clk_i"]
+
+
+def test_diagnostic_messages_are_text(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.sv"
+    bad.write_text("module m; assign y = 1'b0 + ; endmodule\n")
+
+    _, diags = PyslangExtractor.extract_model([bad])
+
+    errors = [d for d in diags if d.severity == "error"]
+    assert errors
+    assert all("object at 0x" not in d.message and d.message for d in errors)
