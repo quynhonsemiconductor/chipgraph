@@ -21,7 +21,11 @@ adapters:
 (default: any path with a `vendor` segment) drop files that keep their upstream's
 conventions. A per-declaration exemption comment (`// naming-check: ignore`) on the
 declaration line suppresses that line. A parse error becomes an `error` issue for the
-file, never an exception; a missing rules file or bad rules ref is a whole-check `error`.
+file, never an exception, and the names pyslang recovered around it are still checked;
+a missing rules file or bad rules ref is a whole-check `error`.
+
+Code in an inactive `` `ifdef `` branch is not seen: the file is preprocessed without the
+project's defines, so names there are checked only when that branch is active.
 
 Regenerate `schemas/formats/naming-rules.schema.json` with `python -m chipgraph.checks.naming`.
 """
@@ -218,12 +222,10 @@ def _check_file(path: Path, rel: str, rules: _CompiledRules) -> list[Issue]:
     except OSError as exc:
         return [Issue(file=rel, rule="parse", severity="error", msg=f"cannot read file: {exc}")]
 
-    failures = parse_errors(tree)
-    if failures:
-        return [_parse_issue(rel, f) for f in failures]
-
+    # A parse error is reported, but the names pyslang still recovered are checked too:
+    # one unexpanded vendor macro must not hide every naming violation in the file.
+    issues: list[Issue] = [_parse_issue(rel, f) for f in parse_errors(tree)]
     exempt_lines = _exempt_lines(text, rules.ignore)
-    issues: list[Issue] = []
     for decl in declared_identifiers(tree):
         if decl.line in exempt_lines:
             continue

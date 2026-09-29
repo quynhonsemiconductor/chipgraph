@@ -251,3 +251,18 @@ def test_committed_schema_matches_generated() -> None:
 
 def make_ctx_block(root: Path, runner: FakeRunner, block: str) -> ToolContext:
     return ToolContext(repo_root=root, runner=runner, params={"block": block})
+
+
+def test_parse_error_does_not_hide_other_violations(tmp_path: Path, runner: FakeRunner) -> None:
+    write(
+        tmp_path,
+        "design/blk/rtl/partly.sv",
+        "module BadName (input logic i_a);\n  logic sig;\n  always_comb begin if end\nendmodule\n",
+    )
+    result = _run(
+        _spec(rules=_RULES, scope=["design/{block}/rtl/**/*.sv"]),
+        make_ctx_block(tmp_path, runner, "blk"),
+    )
+    rules = {issue.rule for issue in result.issues}
+    assert "parse" in rules
+    assert rules - {"parse"}, "names recovered around a parse error must still be checked"
