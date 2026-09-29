@@ -18,7 +18,7 @@
   <rect x="20" y="356" width="460" height="44" fill="#ffffff" stroke="#000000"/>
   <text x="250" y="372" text-anchor="middle">line 10: timer_0  (block timer_0)</text>
   <rect x="20" y="412" width="460" height="44" fill="#ffffff" stroke="#000000"/>
-  <text x="250" y="428" text-anchor="middle">unassigned</text>
+  <text x="250" y="428" text-anchor="middle">unassigned (no line, or no block in the model)</text>
   <rect x="20" y="468" width="460" height="44" fill="#ffffff" stroke="#000000"/>
   <text x="250" y="484" text-anchor="middle">dma  (line 0, block -)</text>
   <rect x="20" y="524" width="460" height="44" fill="#ffffff" stroke="#000000"/>

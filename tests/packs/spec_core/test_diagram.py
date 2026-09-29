@@ -154,6 +154,20 @@ def test_unassigned_interrupts_listed() -> None:
     assert "line 3: ovf" in svg
 
 
+def test_shared_interrupt_line_is_marked() -> None:
+    """Two sources on one line are marked in the marker colour, in both output formats."""
+    block = BlockEntity(key=make_key("block", "t"), name="t")
+    first = InterruptEntity(key=make_key("interrupt", "t", "a"), name="a", line=4, block=block.key)
+    second = InterruptEntity(key=make_key("interrupt", "t", "b"), name="b", line=4, block=block.key)
+    alone = InterruptEntity(key=make_key("interrupt", "t", "c"), name="c", line=5, block=block.key)
+    files = render(DesignModel.build([block, first, second, alone]), kinds=("interrupts",))
+    svg = files["interrupt_map.svg"].decode("utf-8")
+    assert svg.count("[line shared]") == 2
+    assert svg.count("#cc0000") == 2
+    assert "line 5: c  (block t)<" in svg
+    assert b"#cc0000" in files["interrupt_map.drawio"]
+
+
 def test_qsoc_real_data_unassigned_interrupts() -> None:
     """The real QSoC contract has unassigned interrupts named by peripheral."""
     svg = render(_qsoc_model())["interrupt_map.svg"].decode("utf-8")

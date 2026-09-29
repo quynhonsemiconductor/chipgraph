@@ -25,7 +25,7 @@
 <mxCell id="interrupt_timer_0" value="line 10: timer_0  (block timer_0)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
 <mxGeometry x="20" y="356" width="460" height="44" as="geometry"/>
 </mxCell>
-<mxCell id="irq_unassigned" value="unassigned" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
+<mxCell id="irq_unassigned" value="unassigned (no line, or no block in the model)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">
 <mxGeometry x="20" y="412" width="460" height="44" as="geometry"/>
 </mxCell>
 <mxCell id="interrupt_dma" value="dma  (line 0, block -)" style="rounded=0;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#000000;fontColor=#000000;fontSize=12" vertex="1" parent="1">

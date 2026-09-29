@@ -268,24 +268,63 @@ def interrupt_map(model: DesignModel) -> Scene:
         )
     )
     y += _ROW_H + _ROW_GAP
+    # Two sources on one line are bad data: mark them like overlapping memory regions.
+    line_counts: dict[int, int] = {}
+    for entity in interrupts:
+        number = line_of(entity)
+        if number is not None:
+            line_counts[number] = line_counts.get(number, 0) + 1
     for entity in assigned:
         line = line_of(entity)
         block = getattr(entity, "block", None)
         block_name = _block_name(model, block)
+        shared = line is not None and line_counts.get(line, 0) > 1
         text = f"line {line}: {entity.name}  (block {block_name})"
-        boxes.append(Box(id=escape_id(entity.key), x=_MARGIN, y=y, w=width, h=_ROW_H, text=text))
+        if shared:
+            text += "  [line shared]"
+        boxes.append(
+            Box(
+                id=escape_id(entity.key),
+                x=_MARGIN,
+                y=y,
+                w=width,
+                h=_ROW_H,
+                text=text,
+                overlap=shared,
+            )
+        )
         y += _ROW_H + _ROW_GAP
     if unassigned:
-        boxes.append(Box(id="irq_unassigned", x=_MARGIN, y=y, w=width, h=_ROW_H, text="unassigned"))
+        boxes.append(
+            Box(
+                id="irq_unassigned",
+                x=_MARGIN,
+                y=y,
+                w=width,
+                h=_ROW_H,
+                text="unassigned (no line, or no block in the model)",
+            )
+        )
         y += _ROW_H + _ROW_GAP
         for entity in unassigned:
             block = getattr(entity, "block", None)
             block_name = _block_name(model, block)
             line = line_of(entity)
             line_s = str(line) if line is not None else "-"
+            shared = line is not None and line_counts.get(line, 0) > 1
             text = f"{entity.name}  (line {line_s}, block {block_name})"
+            if shared:
+                text += "  [line shared]"
             boxes.append(
-                Box(id=escape_id(entity.key), x=_MARGIN, y=y, w=width, h=_ROW_H, text=text)
+                Box(
+                    id=escape_id(entity.key),
+                    x=_MARGIN,
+                    y=y,
+                    w=width,
+                    h=_ROW_H,
+                    text=text,
+                    overlap=shared,
+                )
             )
             y += _ROW_H + _ROW_GAP
 
