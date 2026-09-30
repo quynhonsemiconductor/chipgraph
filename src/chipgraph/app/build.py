@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from importlib import resources
 from pathlib import Path
 
+from chipgraph.adapters.runtime.claude_code import ClaudeCodeRuntime
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
@@ -17,9 +18,10 @@ from chipgraph.app.executors import HumanExecutor, RunExecutor
 from chipgraph.core.contracts import RuleSpec
 from chipgraph.core.engine.graph import ForeachResolver, GraphError, build_graph
 from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules
-from chipgraph.core.engine.scheduler import AgentStub, Scheduler
+from chipgraph.core.engine.scheduler import AgentStub, Executor, Scheduler
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
+from chipgraph.core.runtime import AgentRuntimeExecutor, TaskQueue
 from chipgraph.core.state.trace import Tracer
 
 
@@ -91,6 +93,18 @@ def _resolver_for(ctx: AppContext) -> ForeachResolver:
     return _ProfileForeach(ctx.require_profile().profile.blocks)
 
 
+def agent_executor(ctx: AppContext) -> Executor:
+    """The executor for `kind: agent` rules, chosen by the profile's `runtime` (D35).
+
+    `claude-code` queues each agent task for the user's Claude Code session (the plugin
+    command runs it and hands it back over MCP). The API runtimes arrive in M1-11b;
+    until then their agent rules fail with the scheduler's `AgentStub` message.
+    """
+    if ctx.require_profile().profile.runtime == "claude-code":
+        return AgentRuntimeExecutor(ClaudeCodeRuntime(TaskQueue(ctx.layout), ctx.store))
+    return AgentStub()
+
+
 def make_scheduler(
     ctx: AppContext, target: str, *, concurrency: int = 4, tracer: Tracer | None = None
 ) -> Scheduler:
@@ -108,7 +122,7 @@ def make_scheduler(
         "gen": run_executor,
         "import": run_executor,
         "human": HumanExecutor(ctx),
-        "agent": AgentStub(),
+        "agent": agent_executor(ctx),
     }
     return Scheduler(
         graph,
@@ -122,4 +136,4 @@ def make_scheduler(
     )
 
 
-__all__ = ["load_rules", "make_scheduler", "pack_search_paths"]
+__all__ = ["agent_executor", "load_rules", "make_scheduler", "pack_search_paths"]
