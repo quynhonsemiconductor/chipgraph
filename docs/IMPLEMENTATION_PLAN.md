@@ -91,7 +91,7 @@ Spike là thử nhanh để giảm rủi ro. Kết quả là một ghi chú ng�
 | S3 | Edalize 0.6 + cocotb 2.1 + Verilator 5.052 chạy một testbench trên macOS và Linux không? | M2-05 |
 | S4 | NVIDIA OpenShell 0.1 chạy được trên macOS của team không, hay dùng container? | D11, M1-11 |
 | S5 | MCP Python SDK 2.x: server stdio, và plugin Claude Code gọi được tool của nó | M0-14 |
-| S7 | **Runtime `claude-code`:** plugin lặp `next_task` → subagent của vai → `submit`; subagent giới hạn được tool và model; hook `PreToolUse` chặn ghi ngoài `outputs`; nhiều subagent chạy song song; đọc được token qua OpenTelemetry của Claude Code | M1-11 |
+| S7 | **Runtime `claude-code`:** plugin lặp `next_task` → subagent của vai → `submit`; subagent giới hạn được tool và model; hook `PreToolUse` chặn ghi ngoài `outputs`; nhiều subagent chạy song song; đọc được token và chi phí từ event `result` cuối của `claude -p` (`usage`, `total_cost_usd`, `modelUsage` theo model); không cần OpenTelemetry | M1-11 |
 | S6 | Model tự host (GLM open-weight, qua vLLM) cho tool calling ổn định tới mức nào? | D27, M5-06 |
 
 S1–S5 và S7 làm song song ngay đầu M0. S6 làm trước M5.
