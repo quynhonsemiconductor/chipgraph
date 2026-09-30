@@ -31,8 +31,9 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
 
     names = _run(_list())
     # M0 tools: approve, build, check, config_show, status; M1-02: model_*; M1-20: audit;
-    # M1-11: next_task, get_context, submit
+    # M1-11: next_task, get_context, submit; M1-12: pending_decisions, answer_decision
     expected = [
+        "answer_decision",
         "approve",
         "audit",
         "build",
@@ -47,6 +48,7 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
         "model_search",
         "model_trace",
         "next_task",
+        "pending_decisions",
         "status",
         "submit",
     ]

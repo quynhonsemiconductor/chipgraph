@@ -199,6 +199,124 @@ class DecisionsCfg(BaseModel):
     )
 
 
+DecideTier = Literal["small", "large"]
+"""A model tier `decide()` may ask: the small model first, the large one when unsure."""
+
+_DECIDE_TIER_ORDER: tuple[DecideTier, ...] = ("small", "large")
+
+
+def _check_tiers(value: tuple[DecideTier, ...] | None) -> tuple[DecideTier, ...] | None:
+    if value is None:
+        return None
+    if len(set(value)) != len(value):
+        raise ValueError(f"enabled_tiers lists a tier more than once: {list(value)}")
+    # Always ask in escalation order, whatever order the profile lists them in.
+    return tuple(t for t in _DECIDE_TIER_ORDER if t in value)
+
+
+class DecideOverride(BaseModel):
+    """`decide()` settings for the questions whose id starts with one prefix.
+
+    Only the fields that are set replace the project's (or a shorter prefix's) values.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    small_min_confidence: float | None = Field(
+        default=None, ge=0, le=1, description="Overrides `small_min_confidence`."
+    )
+    large_min_confidence: float | None = Field(
+        default=None, ge=0, le=1, description="Overrides `large_min_confidence`."
+    )
+    enabled_tiers: tuple[DecideTier, ...] | None = Field(
+        default=None, description="Overrides `enabled_tiers`."
+    )
+
+    @field_validator("enabled_tiers")
+    @classmethod
+    def _tiers_unique(cls, value: tuple[DecideTier, ...] | None) -> tuple[DecideTier, ...] | None:
+        return _check_tiers(value)
+
+
+class DecideSettings(BaseModel):
+    """The effective `decide()` settings for one question (see `DecideCfg.for_question`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    small_min_confidence: float = Field(ge=0, le=1)
+    large_min_confidence: float = Field(ge=0, le=1)
+    enabled_tiers: tuple[DecideTier, ...]
+
+    def threshold(self, tier: DecideTier) -> float:
+        """The confidence an answer from `tier` needs to be accepted without escalating."""
+        return self.small_min_confidence if tier == "small" else self.large_min_confidence
+
+
+class DecideCfg(BaseModel):
+    """Thresholds of the fast decision layer `decide()` (DESIGN 5.4).
+
+    A question no rule answers goes to the small model; an answer under
+    `small_min_confidence` goes on to the large model; a large answer under
+    `large_min_confidence` is still returned, but logged as low confidence (AI never
+    blocks: the caller decides). `overrides` adjust this per question-id prefix, e.g.
+    `overrides: { "triage.": { small_min_confidence: 0.9 } }`; every matching prefix
+    applies, shortest first, so the longest prefix wins.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    small_min_confidence: float = Field(
+        default=0.8,
+        ge=0,
+        le=1,
+        description="Confidence a small-model answer needs; under it, ask the large model.",
+    )
+    large_min_confidence: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Confidence under which a large-model answer is logged as low confidence.",
+    )
+    enabled_tiers: tuple[DecideTier, ...] = Field(
+        default=_DECIDE_TIER_ORDER,
+        description="Model tiers decide() may ask, e.g. ['small'] to never use the large one.",
+    )
+    overrides: dict[str, DecideOverride] = Field(
+        default_factory=dict,
+        description="Per question-id prefix overrides, e.g. 'triage.'.",
+    )
+
+    @field_validator("enabled_tiers")
+    @classmethod
+    def _tiers_unique(cls, value: tuple[DecideTier, ...]) -> tuple[DecideTier, ...]:
+        checked = _check_tiers(value)
+        return checked if checked is not None else ()
+
+    @field_validator("overrides")
+    @classmethod
+    def _prefixes_non_empty(cls, value: dict[str, DecideOverride]) -> dict[str, DecideOverride]:
+        if "" in value:
+            raise ValueError("an overrides prefix must not be empty; set the top-level fields")
+        return value
+
+    def for_question(self, question_id: str) -> DecideSettings:
+        """The settings for `question_id`: the defaults, then each matching prefix's override."""
+        small = self.small_min_confidence
+        large = self.large_min_confidence
+        tiers = self.enabled_tiers
+        for prefix in sorted(p for p in self.overrides if question_id.startswith(p)):
+            override = self.overrides[prefix]
+            if override.small_min_confidence is not None:
+                small = override.small_min_confidence
+            if override.large_min_confidence is not None:
+                large = override.large_min_confidence
+            if override.enabled_tiers is not None:
+                tiers = override.enabled_tiers
+        return DecideSettings(
+            small_min_confidence=small, large_min_confidence=large, enabled_tiers=tiers
+        )
+
+
 class PathRule(BaseModel):
     """An exception for one path glob: checks toggled off, writes denied, and why."""
 
@@ -396,6 +514,10 @@ class Profile(BaseModel):
     state: StateCfg = Field(default_factory=StateCfg, description="Where run state is kept.")
     decisions: DecisionsCfg = Field(
         default_factory=DecisionsCfg, description="Where gate/waiver decisions are kept."
+    )
+    decide: DecideCfg = Field(
+        default_factory=DecideCfg,
+        description="Thresholds of the fast decision layer decide(): rule, small, large model.",
     )
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Glob pattern to path-specific exception rule."
