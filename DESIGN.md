@@ -289,7 +289,11 @@ status: open                   # open | fixed | waived
 - **Phát hiện từ AI không bao giờ chặn build.** Nó ở mức `warning` hoặc `question`. Chỉ lớp
   deterministic (1, 5, lint, formal) mới được ở mức `error`.
 - **Waiver:** người có thể bỏ qua một phát hiện, kèm lý do. Waiver gắn với hash; artifact đổi
-  thì waiver hết hiệu lực và phát hiện được kiểm lại. Giống cách QSoC ghi "waived" cho
+  thì waiver hết hiệu lực và phát hiện được kiểm lại. Phát hiện không trỏ vào file nào (check không
+  chạy được vì thiếu dữ liệu) được waive bằng `--bind <file>`: waiver hết hiệu lực khi file đó
+  xuất hiện hoặc đổi.
+- **Mức độ theo check:** `adapters.<id>.severity: warning` hạ các phát hiện có file của check đó
+  xuống `warning` (ví dụ `trace` trước khi bắt đầu DV). Check không chạy được vẫn là `error`. Giống cách QSoC ghi "waived" cho
   CDC/RDC của INTMAP.
 - **Chạy khi nào:** check deterministic chạy ở mọi bước build và mọi PR; Critic chạy trên
   phần đã đổi; `/audit` chạy toàn bộ dự án, dùng khi mới áp dụng tool cho dự án có sẵn hoặc

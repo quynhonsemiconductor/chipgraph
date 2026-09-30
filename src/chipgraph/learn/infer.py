@@ -62,8 +62,8 @@ def learn(root: Path, *, threshold: float = DEFAULT_THRESHOLD) -> LearnResult:
     files = _bucket_files(all_files)
 
     blocks = _infer_blocks(files)
-    layout = _infer_layout(files, blocks)
-    naming = _infer_naming(root, files.rtl, threshold)
+    layout, layout_skipped = _infer_layout(files, blocks)
+    naming, naming_skipped = _infer_naming(root, files.rtl, threshold)
     filelist_obs, filelist_style = _observe_filelist(root, files.filelist)
     observations = [
         obs
@@ -75,6 +75,8 @@ def learn(root: Path, *, threshold: float = DEFAULT_THRESHOLD) -> LearnResult:
         if obs is not None
     ]
     observations.extend(_naming_observations(naming))
+    observations.extend(layout_skipped)
+    observations.extend(naming_skipped)
     vendor_paths = _vendor_paths(iter_repo_files(root))
 
     return LearnResult(
@@ -178,18 +180,38 @@ def _blocks_from_rtl(rtl: list[str]) -> list[str]:
 # --------------------------------------------------------------------------------------
 
 
-def _infer_layout(files: _Files, blocks: list[str]) -> list[LayoutRule]:
+MIN_SAMPLES = 2
+"""The fewest files (of one artifact kind) or identifiers (of one kind) a rule is learned
+from. One example says nothing about a convention: it would be "learned" at 100%."""
+
+
+def _infer_layout(files: _Files, blocks: list[str]) -> tuple[list[LayoutRule], list[Observation]]:
     out: list[LayoutRule] = []
+    skipped: list[Observation] = []
     for kind, paths in (
         ("rtl", files.rtl),
         ("filelist", files.filelist),
         ("spec", files.spec),
         ("tb", files.tb),
     ):
+        if 0 < len(paths) < MIN_SAMPLES:
+            skipped.append(_too_few("layout", kind, "file", paths))
+            continue
         rule = _layout_rule_for(kind, paths, blocks)
         if rule is not None:
             out.append(rule)
-    return out
+    return out, skipped
+
+
+def _too_few(topic: str, kind: str, noun: str, samples: list[str]) -> Observation:
+    shown = ", ".join(f"`{s}`" for s in sorted(samples)[:3])
+    return Observation(
+        topic=topic,
+        summary=(
+            f"{kind}: only {len(samples)} {noun}(s) ({shown}); at least {MIN_SAMPLES} are "
+            "needed to learn a rule, so none was emitted"
+        ),
+    )
 
 
 def _layout_rule_for(kind: str, paths: list[str], blocks: list[str]) -> LayoutRule | None:
@@ -215,7 +237,14 @@ def _best_template(paths: list[str], blocks: list[str]) -> str:
     representative = min(paths, key=lambda p: (len(Path(p).parts), len(p)))
     if not blocks:
         return _glob_template(representative)
-    return _blockify(representative, blocks)
+    template = _blockify(representative, blocks)
+    directory, _, name = template.rpartition("/")
+    if "{block}" in name or "{BLOCK}" in name:
+        return template
+    # The file name does not carry the block, so it is one file's own name (e.g.
+    # `qnsc_pkg.sv`), not a convention: keep the directory, glob the name.
+    star = f"*{Path(name).suffix}"
+    return f"{directory}/{star}" if directory else star
 
 
 def _blockify(path: str, blocks: list[str]) -> str:
@@ -290,7 +319,9 @@ _LOWER_SNAKE = r"^[a-z][a-z0-9_]*$"
 _SNAKE_ANY = r"^[A-Za-z][A-Za-z0-9_]*$"
 
 
-def _infer_naming(root: Path, rtl: list[str], threshold: float) -> list[NamingRule]:
+def _infer_naming(
+    root: Path, rtl: list[str], threshold: float
+) -> tuple[list[NamingRule], list[Observation]]:
     by_kind: dict[str, list[str]] = {}
     for rel in rtl:
         try:
@@ -301,12 +332,17 @@ def _infer_naming(root: Path, rtl: list[str], threshold: float) -> list[NamingRu
             by_kind.setdefault(decl.kind, []).append(decl.name)
 
     out: list[NamingRule] = []
+    skipped: list[Observation] = []
     for kind in sorted(by_kind):
         names = by_kind[kind]
+        if len(set(names)) < MIN_SAMPLES:
+            if kind in _NAMING_KINDS:
+                skipped.append(_too_few("naming", kind, "identifier", sorted(set(names))))
+            continue
         rule = _naming_rule_for(kind, names, threshold)
         if rule is not None:
             out.append(rule)
-    return out
+    return out, skipped
 
 
 def _safe_decls(tree: object) -> list[Decl]:

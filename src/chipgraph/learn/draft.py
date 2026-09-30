@@ -122,6 +122,21 @@ def _scope_glob(template: str) -> str:
     return template.replace("{block}", "*").replace("{BLOCK}", "*")
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """A safe dumper that writes repeated values out in full, never as `&id001`/`*id001`.
+
+    The draft is read and edited by people, and YAML anchors make it hard to follow.
+    """
+
+    def ignore_aliases(self, data: object) -> bool:
+        return True
+
+
+def dump_yaml(data: object) -> str:
+    """`data` as block-style YAML, sorted keys, no anchors or aliases."""
+    return yaml.dump(data, Dumper=_NoAliasDumper, sort_keys=True, default_flow_style=False)
+
+
 def dump_profile_yaml(result: LearnResult, *, naming_rules_ref: str | None) -> str:
     """The draft profile rendered as a YAML document string."""
     header = (
@@ -130,18 +145,14 @@ def dump_profile_yaml(result: LearnResult, *, naming_rules_ref: str | None) -> s
         # The directory name only: this file is committed, so no machine-local path.
         f"# Learned from: {Path(result.root).name}/\n"
     )
-    body = yaml.safe_dump(
-        build_profile_dict(result, naming_rules_ref=naming_rules_ref),
-        sort_keys=True,
-        default_flow_style=False,
-    )
+    body = dump_yaml(build_profile_dict(result, naming_rules_ref=naming_rules_ref))
     return header + body
 
 
 def dump_naming_rules_yaml(rules: NamingRules) -> str:
     """The learned naming rules rendered as a YAML document string."""
     header = "# chipgraph naming rules inferred by `chipgraph learn`. Review before use.\n"
-    body = yaml.safe_dump(rules.model_dump(mode="json"), sort_keys=True, default_flow_style=False)
+    body = dump_yaml(rules.model_dump(mode="json"))
     return header + body
 
 

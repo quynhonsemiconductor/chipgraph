@@ -19,8 +19,39 @@ from chipgraph.core.state.artifacts import hash_inputs
 from chipgraph.core.state.findings import FindingStore
 from chipgraph.core.state.idempotency import IdempotencyStore, make_key
 
-_RUNNER_KEYS = frozenset({"use", "per_block"})
+_RUNNER_KEYS = frozenset({"use", "per_block", "severity"})
 """Adapter-config keys the runner itself reads; they are not passed to the plugin."""
+
+
+_SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
+
+
+def _cap_severity(result: CheckResult, cap: object) -> CheckResult:
+    """Apply a profile's `adapters.<id>.severity` cap to `result` (DESIGN.md 4.8).
+
+    A project may run a check at a lower severity while it is not yet expected to pass
+    (e.g. `trace: { severity: warning }` before DV starts). Every issue that points at a
+    file and is above the cap is lowered to it, and a `fail` with no `error` issue left
+    becomes `pass`, so the check reports but does not block. An issue with no file says
+    the check itself could not run (a missing `make` target, an unreadable input); it is
+    not lowered, and neither is a check that returned `error`. A cap that is not one of
+    `error`/`warning`/`info` is ignored.
+    """
+    if not isinstance(cap, str) or cap not in _SEVERITY_RANK or cap == "error":
+        return result
+    if result.status == "error":
+        return result
+    limit = _SEVERITY_RANK[cap]
+    issues = tuple(
+        issue.model_copy(update={"severity": cap})
+        if issue.file is not None and _SEVERITY_RANK[issue.severity] > limit
+        else issue
+        for issue in result.issues
+    )
+    status = result.status
+    if status == "fail" and not any(i.severity == "error" for i in issues):
+        status = "pass"
+    return result.model_copy(update={"issues": issues, "status": status})
 
 
 class ProfileCheckRunner:
@@ -107,14 +138,16 @@ class ProfileCheckRunner:
             )
             cached = store.get(cache_key)
             if cached is not None and cached.ok:
-                return self._record(check_id, cached)
+                return self._record(
+                    check_id, _cap_severity(cached, cfg.model_dump().get("severity"))
+                )
 
         result = await plugin.run(spec, tool_ctx)
 
         if store is not None and cache_key is not None and result.ok:
             store.put(result.model_copy(update={"idempotency_key": cache_key}))
 
-        return self._record(check_id, result)
+        return self._record(check_id, _cap_severity(result, cfg.model_dump().get("severity")))
 
     def _record(self, check_id: str, result: CheckResult) -> CheckResult:
         """Record `result`'s issues as findings, never failing the check for it.

@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
 from chipgraph.learn.draft import (
     DRAFT_NAMING_RULES_NAME,
     DRAFT_PROFILE_NAME,
@@ -22,6 +20,7 @@ from chipgraph.learn.draft import (
     build_profile_dict,
     dump_naming_rules_yaml,
     dump_profile_yaml,
+    dump_yaml,
     write_draft,
 )
 from chipgraph.learn.infer import DEFAULT_THRESHOLD, learn
@@ -71,9 +70,7 @@ def init_from_learn(
         "# chipgraph project profile written by `chipgraph init --from-learn` (DESIGN.md 8.6).\n"
         "# Review it: each rule was inferred from the repo. Edit freely.\n"
     )
-    profile_path.write_text(
-        header + yaml.safe_dump(data, sort_keys=True, default_flow_style=False), encoding="utf-8"
-    )
+    profile_path.write_text(header + dump_yaml(data), encoding="utf-8")
     return profile_path, naming_path
 
 
