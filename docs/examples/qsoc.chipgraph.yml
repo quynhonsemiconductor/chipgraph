@@ -69,6 +69,21 @@ adapters:
     use: hardcode
     scope: ["design/**/rtl/**/*.sv"]
     generated: ["design/top/rtl/qnsc_pkg.sv"]  # generated from the contract
+  # Structural CDC (M1-19): a signal crossing between two clock domains must go through a
+  # declared synchroniser. `qnsc_sync` is QSoC's own two-flop level synchroniser
+  # (design/common/rtl/qnsc_sync.sv, "every such crossing in QSOC goes through this
+  # cell"); the `prim_*_sync` cells are the vendored OpenTitan synchronisers CPU/CDC paths
+  # use. Only cells that exist in the tree are listed.
+  cdc_struct:
+    use: cdc_struct
+    sync_cells:
+      - qnsc_sync
+      - prim_flop_2sync
+      - prim_pulse_sync
+      - prim_multibit_sync
+      - prim_lc_sync
+      - prim_sync_reqack
+      - prim_fifo_async
 
 # One entry per directory under design/ that has a <block>.f filelist, plus syscsr, whose
 # design directory is still in an open PR (ingest warns about its missing filelist until

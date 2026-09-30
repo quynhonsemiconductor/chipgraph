@@ -4,6 +4,7 @@ See DESIGN.md 7.3. Each check is registered under the `chipgraph.adapters.check`
 point group (see `pyproject.toml`) and satisfies `chipgraph.core.plugin_api.Check`.
 """
 
+from chipgraph.checks.cdc_struct import CdcStructCheck
 from chipgraph.checks.connect import ConnectCheck
 from chipgraph.checks.cross_chip import CrossChipCheck
 from chipgraph.checks.duplicate import DuplicateCheck
@@ -28,11 +29,13 @@ BUILTIN_CHECKS: dict[str, type] = {
     "trace": TraceCheck,
     "connect": ConnectCheck,
     "hardcode": HardcodeCheck,
+    "cdc_struct": CdcStructCheck,
 }
 """Maps a check's registered name to its class, for entry-point-free wiring in tests."""
 
 __all__ = [
     "BUILTIN_CHECKS",
+    "CdcStructCheck",
     "ConnectCheck",
     "CrossChipCheck",
     "DuplicateCheck",
