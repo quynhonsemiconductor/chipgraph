@@ -31,9 +31,11 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
 
     names = _run(_list())
     # M0 tools: approve, build, check, config_show, status; M1-02: model_*; M1-20: audit;
-    # M1-11: next_task, get_context, submit
+    # M1-11: next_task, get_context, submit; M1-13: ask_context, ask_check
     expected = [
         "approve",
+        "ask_check",
+        "ask_context",
         "audit",
         "build",
         "check",

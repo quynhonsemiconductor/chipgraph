@@ -345,6 +345,39 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
         ctx = _load_ctx()
         return await model_tools.model_search(ctx, text, kinds=kinds, limit=limit)
 
+    # --- /ask (M1-13): retrieval and the citation check the asker subagent uses ----------
+
+    @server.tool(
+        description=(
+            "The sources for one /ask question: typed Design Model lookups and full-text "
+            "hits in the project's documents, each with the exact citation to use "
+            "('model:<key>' or 'path:line'). Answer only from these; none means unknown."
+        )
+    )
+    @_guard
+    async def ask_context(question: str, limit: int = 12) -> dict[str, Any]:
+        from chipgraph.packs.assist.ask import ask_context as run_ask_context
+
+        result = run_ask_context(_load_ctx(), question, limit)
+        return result.model_dump(mode="json")
+
+    @server.tool(
+        description=(
+            "Check an /ask answer before it is shown: every citation must be an indexed "
+            "'path:line' or a 'model:<key>', and an answer that is not unknown needs at "
+            "least one. Returns ok and the verified answer, or the reasons to fix."
+        )
+    )
+    @_guard
+    async def ask_check(
+        answer: str, citations: list[str] | None = None, unknown: bool = False
+    ) -> dict[str, Any]:
+        from chipgraph.packs.assist.ask import AskAnswer
+        from chipgraph.packs.assist.ask import ask_check as run_ask_check
+
+        submitted = AskAnswer(answer=answer, citations=tuple(citations or ()), unknown=unknown)
+        return run_ask_check(_load_ctx(), submitted).model_dump(mode="json")
+
     return server
 
 

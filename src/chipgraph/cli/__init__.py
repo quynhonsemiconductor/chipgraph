@@ -623,6 +623,12 @@ def _print_ingest_text(stats: object, report: object) -> None:
         typer.echo(f"issues: {summary}   conflicts: {stats.conflicts}")
     else:
         typer.echo(f"issues: none   conflicts: {stats.conflicts}")
+    if report.documents is not None:
+        nda = len(report.documents.nda_skipped)
+        typer.echo(
+            f"documents indexed for /ask: {len(report.documents.indexed)} "
+            f"({report.documents.lines} lines; {nda} nda file(s) not indexed)"
+        )
     shown = [i for i in report.issues if i.severity in ("warning", "error")][:20]
     for issue in shown:
         loc = f"{issue.file or '-'}:{issue.line or '-'}"
@@ -1241,6 +1247,65 @@ def agents_md_cmd(
         typer.echo(f"wrote {path}")
     else:
         typer.echo(content, nl=False)
+
+
+# --- ask ---------------------------------------------------------------------------
+
+
+@app.command("ask")
+@_handle_errors
+def ask_cmd(
+    ctx: typer.Context,
+    question: Annotated[str, typer.Argument(help="The question, in quotes.")],
+    limit: Annotated[
+        int, typer.Option("--limit", min=1, max=50, help="At most this many sources.")
+    ] = 12,
+    provider: Annotated[
+        str | None,
+        typer.Option("--provider", help="The models.providers entry to use (if several)."),
+    ] = None,
+) -> None:
+    """Answer a question from the Design Model and the project's documents, with citations.
+
+    Every citation is checked (an indexed `path:line` or a `model:<key>`); an answer that
+    cannot be verified is not shown. Uses the profile's `models.providers` (API runtime);
+    with none configured it prints the sources: in Claude Code, use `/chipgraph:ask`.
+    Exit 1 when the model's answer was rejected.
+    """
+    from chipgraph.packs.assist.ask import run_ask
+
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    app_ctx.require_profile()
+    result = run_ask(app_ctx, question, limit=limit, provider_name=provider)
+
+    if state.json_output:
+        typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+    elif result.status == "no_provider":
+        sources = result.context.sources
+        typer.echo(f"sources for: {question}" if sources else "no source matches the question")
+        for source in sources:
+            typer.echo(f"  {source.citation}  {source.text}")
+        typer.echo(
+            "no model provider is configured (models.providers); in Claude Code, run "
+            f'/chipgraph:ask "{question}" for a checked answer'
+        )
+    elif result.answer is not None:
+        typer.echo(result.answer.answer)
+        checks = {c.normalized: c for c in (result.check.citations if result.check else ())}
+        if result.answer.citations:
+            typer.echo("sources:")
+        for citation in result.answer.citations:
+            cited = checks.get(citation)
+            snippet = cited.text.splitlines()[0] if cited and cited.text else ""
+            typer.echo(f"  {citation}  {snippet}")
+        if result.status == "rejected" and result.check is not None:
+            typer.echo("the model's answer was rejected:", err=True)
+            for reason in result.check.reasons:
+                typer.echo(f"  {reason}", err=True)
+
+    if result.status == "rejected":
+        raise typer.Exit(code=1)
 
 
 # --- mcp ---------------------------------------------------------------------------
