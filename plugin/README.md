@@ -57,6 +57,34 @@ subagents never write or use a shell. Its state and log are under
 **Tokens and cost** come from the final `result` event of `claude -p` (`usage`,
 `total_cost_usd`, `modelUsage` per model, so per role); OpenTelemetry is not needed.
 
+## Ask about the project: `/chipgraph:ask <question>` (M1-13)
+
+`/chipgraph:ask` answers a question about the project from its Design Model and its
+documents, and only with citations the engine has checked:
+
+- `ask_context(question, limit)` returns the sources: typed model lookups (the blocks,
+  registers, ports, requirements... the question names) and FTS5 hits in the documents
+  `chipgraph ingest` indexed (its inputs plus `README.md`, `AGENTS.md`, `doc/**/*.md`,
+  `docs/**/*.md`; never an `nda` file). Each source carries the citation to use:
+  `model:<key>` or `path:line`.
+- `ask_check(answer, citations, unknown)` verifies every citation (an indexed line, or a
+  model key); an answer that is not `unknown` needs at least one valid citation.
+
+The command starts the `chipgraph:asker` subagent (haiku; tools: only those two, no file
+tools, DESIGN 4.5), which answers from the sources and fixes what the check rejects; the
+main session checks the final answer again and prints only a verified one, or "I don't
+know". Run `chipgraph ingest` first. Outside Claude Code, `chipgraph ask "<question>"`
+does the same with the profile's `models.providers` (API runtime), or prints the sources
+when none is configured.
+
+The acceptance run asks the 20 questions of `evals/ask/tinysoc.yml` on a tinysoc copy and
+grades the answers (`evals/ask/grade.py`: at least 90 % with a correct citation, no
+invented answer):
+
+```bash
+MAIN_MODEL=opus docs/ask-claude-code/run.sh /tmp/cg-ask-opus
+```
+
 ## Requirements
 
 - `uv` (and therefore `uvx`) on `PATH`. The plugin launches the server with

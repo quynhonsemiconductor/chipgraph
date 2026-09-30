@@ -1,0 +1,181 @@
+# /ask evals on examples/tinysoc (task M1-13). The M1-17 evals framework reuses this file.
+#
+# Each question has either `expected` (the citations that support a correct answer: a
+# correct answer cites at least one of them) or `unknown: true` (tinysoc has no source
+# for it: the only correct answer is "I don't know").
+#
+# - `cite`: `path:line`, `path:start-end` (an answer citing any line in the range
+#   matches) or `model:<key>`. Paths are relative to examples/tinysoc.
+# - `has`: for a file citation, text that must appear in those lines. The test
+#   tests/evals/test_ask_grader.py checks every `cite` exists and every `has` is found,
+#   so the expectations stay true when the files change.
+# - `facts`: optional; each entry is a list of alternatives, and the answer text must
+#   contain one of them (case-insensitive).
+#
+# Graded by evals/ask/grade.py; run for real by docs/ask-claude-code/run.sh.
+schema_version: 1
+project: examples/tinysoc
+questions:
+  # --- registers, fields, reset values ------------------------------------------------
+  - id: q01
+    question: What is the reset value of the timer COMPARE register?
+    expected:
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:60", has: "`COMPARE`" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:53", has: "All registers reset to 0" }
+      - { cite: "rtl/tiny_timer.sv:29", has: "compare_q <= 32'd0" }
+      - { cite: "model:register:timer.COMPARE" }
+      - { cite: "model:field:timer.COMPARE.COMPARE" }
+    facts: [["0", "zero"]]
+
+  - id: q02
+    question: At which offset is the GPIO DIR register, and what is its access type?
+    expected:
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:64", has: "`DIR`" }
+      - { cite: "rtl/tiny_gpio.sv:10", has: "DIR      (RW)" }
+      - { cite: "model:register:gpio.DIR" }
+      - { cite: "model:field:gpio.DIR.DIR" }
+    facts: [["0x2", "offset 2", "2"], ["rw", "read/write", "read-write", "read and write"]]
+
+  - id: q03
+    question: What happens when software writes 1 to CTRL.IRQ_CLR?
+    expected:
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:78", has: "Writing 1 to `CTRL.IRQ_CLR`" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:62", has: "`IRQ_CLR`" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:122", has: "`CTRL.IRQ_CLR` drops `irq`" }
+      - { cite: "rtl/tiny_timer.sv:8", has: "clear a pending IRQ" }
+      - { cite: "rtl/tiny_timer.sv:43-45", has: "irq_q <= 1'b0" }
+      - { cite: "model:field:timer.CTRL.IRQ_CLR" }
+      - { cite: "model:requirement:REQ-TIM-004" }
+    facts: [["clear"]]
+
+  - id: q04
+    question: Which block owns the DATA_IN register, and does it have a reset value?
+    expected:
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:63", has: "`DATA_IN`" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:56", has: "`DATA_IN` has no reset" }
+      - { cite: "rtl/tiny_gpio.sv:9", has: "DATA_IN" }
+      - { cite: "model:register:gpio.DATA_IN" }
+      - { cite: "model:field:gpio.DATA_IN.DATA_IN" }
+    facts: [["gpio"]]
+
+  # --- ports and widths ---------------------------------------------------------------
+  - id: q05
+    question: How wide is the pin_out port of tiny_gpio?
+    expected:
+      - { cite: "rtl/tiny_gpio.sv:22", has: "output logic [7:0]   pin_out" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:51", has: "`pin_out` | out | 8" }
+      - { cite: "model:port:tiny_gpio.pin_out" }
+      - { cite: "model:port:spec.gpio.pin_out" }
+    facts: [["8"]]
+
+  - id: q06
+    question: How many bits of wdata does tiny_gpio actually use?
+    expected:
+      - { cite: "rtl/tiny_gpio.sv:18", has: "only wdata[7:0] is meaningful" }
+      - { cite: "rtl/tiny_gpio.sv:35-36", has: "wdata[7:0]" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:48", has: "only `[7:0]` is meaningful" }
+      - { cite: "model:port:spec.gpio.wdata" }
+    facts: [["7:0", "8"]]
+
+  - id: q07
+    question: What is the address width of the tinysoc register bus?
+    expected:
+      - { cite: "chip.yml:9", has: "addr_width: 4" }
+      - { cite: "rtl/tiny_top.sv:11", has: "input  logic [3:0]    addr" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:27", has: "4-bit word address bus" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:28", has: "4-bit word address bus" }
+      - { cite: "README.md:10", has: "4-bit register bus" }
+      - { cite: "model:project:tinysoc" }
+      - { cite: "model:port:tiny_top.addr" }
+    facts: [["4"]]
+
+  # --- interrupts, memory map, clock and reset ----------------------------------------
+  - id: q08
+    question: Which interrupt line does the timer use?
+    expected:
+      - { cite: "chip.yml:24-26", has: "line: 0" }
+      - { cite: "model:interrupt:timer.irq" }
+    facts: [["0"]]
+
+  - id: q09
+    question: What is the base address of the gpio block in the memory map?
+    expected:
+      - { cite: "chip.yml:29", has: "base: 0x4" }
+      - { cite: "model:memory_region:gpio" }
+    facts: [["0x4", "4"]]
+
+  - id: q10
+    question: What clock and reset does tinysoc use?
+    expected:
+      - { cite: "chip.yml:37-42", has: "name: rst_n" }
+      - { cite: "chip.yml:22-23", has: "clock: clk" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:27", has: "`clk`/`rst_n`" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:28", has: "`clk`/`rst_n`" }
+      - { cite: "model:clock:clk" }
+      - { cite: "model:reset:rst_n" }
+    facts: [["clk"], ["rst_n"]]
+
+  - id: q11
+    question: Is the tinysoc reset active high or active low?
+    expected:
+      - { cite: "chip.yml:40-42", has: "active_low: true" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:44", has: "active-low" }
+      - { cite: "doc/specs/TINY_GPIO_MAS.md:45", has: "active-low" }
+      - { cite: "rtl/tiny_timer.sv:27", has: "if (!rst_n)" }
+      - { cite: "model:reset:rst_n" }
+    facts: [["low"]]
+
+  # --- hierarchy, requirements, open items --------------------------------------------
+  - id: q12
+    question: Which module instantiates tiny_timer, and under what instance name?
+    expected:
+      - { cite: "rtl/tiny_top.sv:45", has: "tiny_timer u_timer" }
+      - { cite: "model:module:tiny_timer" }
+      - { cite: "model:module:tiny_top" }
+    facts: [["tiny_top"], ["u_timer"]]
+
+  - id: q13
+    question: What does requirement REQ-TIM-004 say?
+    expected:
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:78", has: "`REQ-TIM-004`" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:122", has: "(`REQ-TIM-004`)" }
+      - { cite: "model:requirement:REQ-TIM-004" }
+    facts: [["IRQ_CLR"], ["clear"]]
+
+  - id: q14
+    question: Which requirement covers reading the CTRL register?
+    expected:
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:82", has: "`REQ-TIM-005` Reading `CTRL`" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:123", has: "(`REQ-TIM-005`)" }
+      - { cite: "model:requirement:REQ-TIM-005" }
+    facts: [["REQ-TIM-005"]]
+
+  - id: q15
+    question: What are the open items for the timer block?
+    expected:
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:113", has: "Open: interrupt vector assignment" }
+      - { cite: "doc/specs/TINY_TIMER_MAS.md:111", has: "bus owner" }
+      - { cite: "model:open_item:timer.hb77b5782" }
+      - { cite: "model:open_item:timer.h90c33ab8" }
+    facts: [["interrupt vector"]]
+
+  # --- no source in tinysoc: the answer must be "I don't know" ------------------------
+  - id: q16
+    question: What is the baud rate of the tinysoc UART?
+    unknown: true
+
+  - id: q17
+    question: At what frequency, in MHz, is the tinysoc clock clk specified to run?
+    unknown: true
+
+  - id: q18
+    question: Which PDK or process node is tinysoc designed for?
+    unknown: true
+
+  - id: q19
+    question: What is the maximum power consumption of tiny_timer, in milliwatts?
+    unknown: true
+
+  - id: q20
+    question: How many gates, or how much area, does tiny_gpio take after synthesis?
+    unknown: true

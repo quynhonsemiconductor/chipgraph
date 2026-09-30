@@ -16,6 +16,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from chipgraph.adapters.tool.filelist import Filelist, FilelistError, read_filelist
 from chipgraph.adapters.tool.pyslang import ParseDiagnostic, PyslangExtractor
@@ -34,6 +35,9 @@ from chipgraph.core.model.store import ModelStore, default_model_db_path
 from chipgraph.core.plugin_api.registry import PluginError, Registry
 from chipgraph.packs.spec_core.extract.mas import MasDiagnostic, MasExtractor
 
+if TYPE_CHECKING:
+    from chipgraph.packs.assist.ask.documents import DocumentIndexReport
+
 
 @dataclass(frozen=True, slots=True)
 class IngestReport:
@@ -42,6 +46,8 @@ class IngestReport:
     model: DesignModel
     result: IngestResult
     db_path: Path
+    documents: DocumentIndexReport | None = None
+    """The documents indexed for `/ask` full-text search (and the ones skipped)."""
 
     @property
     def issues(self) -> tuple[IngestIssue, ...]:
@@ -78,7 +84,29 @@ def run_ingest(ctx: AppContext) -> IngestReport:
     db_path = default_model_db_path(root)
     store = ModelStore(db_path)
     store.write(model, build_inputs_hash=result.build_inputs_hash)
-    return IngestReport(model=model, result=result, db_path=db_path)
+    # `write()` rebuilds the database and drops every document: re-index the `/ask`
+    # documents (inputs read above plus the project's Markdown docs) right after it.
+    # Imported here: the `assist` pack imports this module (its `/audit` runs ingest).
+    from chipgraph.packs.assist.ask.documents import index_documents
+
+    documents = index_documents(
+        root, store, [f.rel_path for f in builder.input_files], ctx.store.labels
+    )
+    result = _with_extra_issues(result, _document_issues(documents))
+    return IngestReport(model=model, result=result, db_path=db_path, documents=documents)
+
+
+def _document_issues(documents: DocumentIndexReport) -> list[IngestIssue]:
+    """One `info` issue per `nda` file that was not indexed for `/ask`."""
+    return [
+        IngestIssue(
+            severity="info",
+            code="ask.nda_not_indexed",
+            message=f"{path} is labelled 'nda': not indexed for /ask (it may use a cloud model)",
+            file=path,
+        )
+        for path in documents.nda_skipped
+    ]
 
 
 @dataclass(slots=True)
