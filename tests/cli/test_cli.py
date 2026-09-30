@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 from conftest import git_status, init_git, write_profile
 from typer.testing import CliRunner
@@ -280,3 +282,33 @@ def test_no_profile_read_only_works_write_commands_exit_2(tmp_path: Path) -> Non
     assert "chipgraph init" in build_result.output
 
     assert git_status(tmp_path) == before == ""
+
+
+def test_doctor_checks_python3_for_the_write_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    init_git(tmp_path)
+    write_profile(tmp_path, "project: demo\n")  # runtime defaults to claude-code
+    ok = runner.invoke(app, ["--json", "-C", str(tmp_path), "doctor"])
+    rows = {r["check"]: r for r in json.loads(ok.output)}
+    assert rows["python3 for the write guard"]["ok"] is True
+
+    real_which = shutil.which
+    monkeypatch.setattr(
+        "chipgraph.cli.shutil.which", lambda n: None if n == "python3" else real_which(n)
+    )
+    missing = runner.invoke(app, ["--json", "-C", str(tmp_path), "doctor"])
+    assert missing.exit_code == 1
+    rows = {r["check"]: r for r in json.loads(missing.output)}
+    assert rows["python3 for the write guard"]["ok"] is False
+    assert "write guard cannot run" in rows["python3 for the write guard"]["detail"]
+
+
+def test_doctor_skips_python3_for_an_api_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    init_git(tmp_path)
+    write_profile(tmp_path, "project: demo\nruntime: generic\n")
+    monkeypatch.setattr("chipgraph.cli.shutil.which", lambda n: None if n == "python3" else "/x")
+    result = runner.invoke(app, ["--json", "-C", str(tmp_path), "doctor"])
+    assert "python3 for the write guard" not in {r["check"] for r in json.loads(result.output)}

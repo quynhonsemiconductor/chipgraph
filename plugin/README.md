@@ -73,6 +73,30 @@ subagents never write or use a shell. Its state and log are under
   Without it, a plugin MCP server's own working directory defaults to the plugin's
   install directory, not your project — so `-C` is required here, not optional.
 
+## Try the current version before a release (dev plugin)
+
+The published plugin runs `uvx chipgraph@0.0.1`, which predates the runtime tools
+(`next_task`, `get_context`, `submit`). Until the next release, run the plugin from a
+checkout. The plugin's agents and commands call the server by its plugin-scoped name
+(`mcp__plugin_chipgraph_chipgraph__*`), so the server must come from the plugin itself:
+make a copy of `plugin/` whose `.mcp.json` runs the checkout, and load that copy.
+
+```bash
+git clone https://github.com/quynhonsemiconductor/chipgraph.git ~/src/chipgraph
+cd ~/src/chipgraph && uv sync
+cp -R plugin /tmp/chipgraph-plugin-dev
+cat > /tmp/chipgraph-plugin-dev/.mcp.json <<JSON
+{"mcpServers": {"chipgraph": {"command": "uv",
+  "args": ["run", "--project", "$HOME/src/chipgraph", "chipgraph", "-C", "\${CLAUDE_PROJECT_DIR}", "mcp"]}}}
+JSON
+cd /path/to/your/project          # a repo with a .chipgraph.yml
+claude --plugin-dir /tmp/chipgraph-plugin-dev
+```
+
+Then run `/chipgraph:run` in Claude Code. Run `chipgraph doctor` in the project first: it
+checks that `python3` is there for the write guard. If the marketplace plugin is also
+installed, disable it for this session (`/plugin`), so the two copies do not both run.
+
 ## Local development (no PyPI)
 
 Point the plugin at your checkout instead of PyPI by editing `.mcp.json` (or adding a

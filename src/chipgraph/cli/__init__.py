@@ -14,6 +14,7 @@ import functools
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -980,6 +981,35 @@ def _first_word(cmd: object) -> str | None:
     return None
 
 
+_GUARD_MIN_PYTHON = (3, 9)
+
+
+def _guard_python() -> tuple[bool, str]:
+    """Whether the plugin's write guard can start: a `python3` >= 3.9 on PATH.
+
+    Claude Code runs the guard as `python3 guard.py`. Without it the hook cannot start and
+    Claude Code lets the tool call through, so the write guard would be off without any
+    warning (`submit` still rejects changes outside a task's outputs afterwards).
+    """
+    found = shutil.which("python3")
+    if found is None:
+        return False, "not found on PATH: the plugin's write guard cannot run"
+    try:
+        out = subprocess.run(
+            [found, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+        major, minor = (int(x) for x in out.split("."))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False, f"{found} does not run: the plugin's write guard cannot run"
+    if (major, minor) < _GUARD_MIN_PYTHON:
+        return False, f"{found} is {out}; the write guard needs 3.9 or newer"
+    return True, f"{found} ({out})"
+
+
 @app.command()
 @_handle_errors
 def doctor(ctx: typer.Context) -> None:
@@ -1004,6 +1034,10 @@ def doctor(ctx: typer.Context) -> None:
             lines.append(("profile", True, str(app_ctx.root / ".chipgraph.yml")))
         else:
             lines.append(("profile", False, "no .chipgraph.yml found"))
+
+    runtime = app_ctx.profile.runtime if app_ctx is not None and app_ctx.profile else None
+    if runtime in (None, "claude-code"):
+        lines.append(("python3 for the write guard", *_guard_python()))
 
     if app_ctx is not None and app_ctx.profile is not None:
         state_dir = app_ctx.layout.state_dir
