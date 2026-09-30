@@ -50,6 +50,9 @@ spec_schema = "chipgraph.checks.spec_schema:SpecSchemaCheck"
 cross_chip = "chipgraph.checks.cross_chip:CrossChipCheck"
 ports_diff = "chipgraph.checks.ports_diff:PortsDiffCheck"
 duplicate = "chipgraph.checks.duplicate:DuplicateCheck"
+trace = "chipgraph.checks.trace:TraceCheck"
+connect = "chipgraph.checks.connect:ConnectCheck"
+hardcode = "chipgraph.checks.hardcode:HardcodeCheck"
 
 [project.entry-points."chipgraph.adapters.review"]
 file = "chipgraph.adapters.review.file:FileReview"

@@ -52,6 +52,11 @@ def copy_tinysoc(dest: Path) -> Path:
     assert result.exit_code == 0, result.output
     subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=dest, check=True)
+    # Build the Design Model the cross checks (`trace`/`connect`/`hardcode`, M1-07) read;
+    # `chipgraph check` runs every configured adapter, and these error without a model
+    # (the README documents `ingest` before `check`). The model is state, not committed.
+    ingest = CliRunner().invoke(app, ["-C", str(dest), "ingest"])
+    assert ingest.exit_code == 0, ingest.output
     return dest
 
 
