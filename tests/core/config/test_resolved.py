@@ -136,6 +136,41 @@ def test_check_reports_local_plugins_as_info(tmp_path: Path) -> None:
     assert any(i.severity == "info" and "layout_rules.py" in i.message for i in issues)
 
 
+def test_check_flags_same_instance_under_two_blocks(tmp_path: Path) -> None:
+    resolved = _load(
+        tmp_path,
+        """\
+        project: qsoc
+        blocks:
+          timer:
+            instances: [timer_0, shared]
+          uart:
+            instances: [uart_0, shared]
+        """,
+    )
+    issues = resolved.check()
+    dup = [i for i in issues if "shared" in i.message]
+    assert len(dup) == 1
+    assert dup[0].severity == "error"
+    assert dup[0].key == "blocks.uart.instances"
+
+
+def test_check_allows_distinct_instances(tmp_path: Path) -> None:
+    resolved = _load(
+        tmp_path,
+        """\
+        project: qsoc
+        blocks:
+          timer:
+            instances: [timer_0, timer_1]
+          uart:
+            instances: [uart_0, uart_1]
+        """,
+    )
+    issues = resolved.check()
+    assert not any("instance" in i.message for i in issues)
+
+
 # --------------------------------------------------------------------------------------
 # for_path
 # --------------------------------------------------------------------------------------

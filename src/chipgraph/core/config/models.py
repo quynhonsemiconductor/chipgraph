@@ -237,7 +237,13 @@ class PathRule(BaseModel):
 
 
 class BlockOverride(BaseModel):
-    """Per-block overrides: only adapters, layout, autonomy and paths may be overridden."""
+    """Per-block overrides: only adapters, layout, autonomy, paths and instances may be set.
+
+    `instances` names the memory-map instances of this block, treated as an IP (D38):
+    e.g. `blocks.timer.instances: [timer_0, timer_1]`. Each name is a single model-key
+    part (non-empty, no ':' or '.') and must be unique within the block. With no
+    `instances`, the block matches only a same-named instance in the chip contract.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -253,6 +259,27 @@ class BlockOverride(BaseModel):
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Per-block path rule overrides."
     )
+    instances: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Memory-map instances of this block-as-IP (D38); each a valid model-key part "
+            "(non-empty, no ':' or '.'), unique within the block."
+        ),
+    )
+
+    @field_validator("instances")
+    @classmethod
+    def _check_instances(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        seen: set[str] = set()
+        for name in value:
+            if not name:
+                raise ValueError("an instance name must not be empty")
+            if ":" in name or "." in name:
+                raise ValueError(f"instance name {name!r} must not contain ':' or '.'")
+            if name in seen:
+                raise ValueError(f"instance {name!r} is listed more than once")
+            seen.add(name)
+        return value
 
     @model_validator(mode="after")
     def _check_autonomy(self) -> Self:
