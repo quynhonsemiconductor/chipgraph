@@ -19,6 +19,7 @@ from chipgraph.core.config.loader import (
 from chipgraph.core.config.models import (
     AdapterCfg,
     BlockOverride,
+    BlockSpecOverride,
     DataCfg,
     DecisionsCfg,
     EnvCfg,
@@ -42,6 +43,7 @@ __all__ = [
     "DEFAULT_PROFILE",
     "AdapterCfg",
     "BlockOverride",
+    "BlockSpecOverride",
     "ConfigError",
     "ConfigIssue",
     "DataCfg",

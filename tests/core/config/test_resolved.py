@@ -234,3 +234,26 @@ def test_for_block_overrides_only_that_block(tmp_path: Path) -> None:
     spi = resolved.for_block("spi")
     assert spi.autonomy["rtl"] == "L3"
     assert spi is base or spi.autonomy == base.autonomy
+
+
+def test_block_spec_requirements_override_only_what_is_set(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".chipgraph.yml").write_text(
+        "project: p\n"
+        "spec:\n"
+        "  requirements: { id_pattern: '{BLOCK}_\\d{3}', infer: verification }\n"
+        "blocks:\n"
+        "  rom:\n"
+        "    spec: { requirements: { id_pattern: '(?:ROM|BOOT)_\\d{3}' } }\n"
+        "  pwm: {}\n",
+        encoding="utf-8",
+    )
+    resolved = load(tmp_path)
+    assert resolved is not None
+    rom = resolved.for_block("rom").spec.requirements
+    assert rom.id_pattern == r"(?:ROM|BOOT)_\d{3}"
+    assert rom.infer == "verification"  # not reset to the default by the block override
+    assert rom.id_regex("rom").fullmatch("BOOT_001")
+    pwm = resolved.for_block("pwm").spec.requirements
+    assert pwm.id_regex("pwm").fullmatch("PWM_001")
+    assert not pwm.id_regex("pwm").fullmatch("BOOT_001")
