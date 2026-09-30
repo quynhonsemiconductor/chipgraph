@@ -298,7 +298,11 @@ class _PartBuilder:
         requirements = block_profile.spec.requirements
         try:
             model, diags = MasExtractor.extract_model(
-                mas_path, block=block, requirements=requirements, root=self.root
+                mas_path,
+                block=block,
+                requirements=requirements,
+                root=self.root,
+                access_modes=block_profile.spec.register_access,
             )
         except Exception as exc:
             self.issues.append(
