@@ -27,6 +27,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from chipgraph import __version__
+from chipgraph.adapters.runtime.claude_code import service as cc_service
 from chipgraph.app.build import make_scheduler
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity
@@ -246,6 +247,44 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
                 ]
             }
         return {"profile": resolved.profile.model_dump(mode="json")}
+
+    # --- runtime claude-code (M1-11): the task loop the plugin command drives ----------
+    # One lock for the three tools: the stdio session may run calls concurrently, and
+    # each reads and writes the same task queue.
+    runtime_lock = asyncio.Lock()
+
+    @server.tool(
+        description=(
+            "Run the build and hand out the agent tasks that are ready: tasks (start one "
+            "role subagent per task, in parallel), in_progress, and done or waiting."
+        )
+    )
+    @_guard
+    async def next_task(target: str = "*") -> dict[str, Any]:
+        async with runtime_lock:
+            return await cc_service.next_task(_load_ctx(), target)
+
+    @server.tool(
+        description=(
+            "The context of one dispatched task, for its role subagent: inputs as text, "
+            "outputs (the only files it may write), role, skills, checks."
+        )
+    )
+    @_guard
+    async def get_context(task_id: str) -> dict[str, Any]:
+        async with runtime_lock:
+            return await cc_service.get_context(_load_ctx(), task_id)
+
+    @server.tool(
+        description=(
+            "Hand a task back: the engine checks that only its outputs changed, that they "
+            "exist, and runs the rule's checks; then accepts or rejects it."
+        )
+    )
+    @_guard
+    async def submit(task_id: str, result: cc_service.SubmitReport | None = None) -> dict[str, Any]:
+        async with runtime_lock:
+            return await cc_service.submit(_load_ctx(), task_id, result)
 
     @server.tool(
         description="Retrieve a block and what it contains: modules, ports, registers, interrupts."

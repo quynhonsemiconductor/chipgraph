@@ -30,13 +30,15 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
             return sorted(tool.name for tool in result.tools)
 
     names = _run(_list())
-    # M0 tools: approve, build, check, config_show, status; M1-02: model_*; M1-20: audit
+    # M0 tools: approve, build, check, config_show, status; M1-02: model_*; M1-20: audit;
+    # M1-11: next_task, get_context, submit
     expected = [
         "approve",
         "audit",
         "build",
         "check",
         "config_show",
+        "get_context",
         "model_block",
         "model_find",
         "model_impact",
@@ -44,7 +46,9 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
         "model_neighbors",
         "model_search",
         "model_trace",
+        "next_task",
         "status",
+        "submit",
     ]
     assert names == expected
 

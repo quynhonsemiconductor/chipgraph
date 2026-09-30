@@ -399,7 +399,8 @@ subagent ──MCP──▶ engine.submit(T03): engine chạy check, ghi journal
   Claude Code chỉ là nơi chạy model. Task độc lập được Claude Code chạy song song bằng
   nhiều subagent.
 - **Chi phí** nằm trong gói Claude của người dùng hoặc công ty. Engine đếm số lượt và thời
-  gian; số token lấy từ telemetry OpenTelemetry của Claude Code nếu được bật.
+  gian; số token và chi phí lấy từ event `result` cuối của `claude -p` (`usage`,
+  `total_cost_usd`, `modelUsage` theo model; S7), OpenTelemetry chỉ là tùy chọn.
 - **Tuân thủ điều khoản:** chipgraph là plugin chạy bên trong Claude Code (sản phẩm của
   Anthropic), và không tự làm đăng nhập claude.ai. Theo tài liệu Agent SDK, bên thứ ba
   không được đưa đăng nhập claude.ai vào sản phẩm riêng khi chưa được Anthropic duyệt, nên
