@@ -181,14 +181,39 @@ def init(
     force: Annotated[
         bool, typer.Option("--force", help="Overwrite an existing .chipgraph.yml.")
     ] = False,
+    from_learn: Annotated[
+        bool,
+        typer.Option(
+            "--from-learn",
+            help="Infer the profile from this repo (like `chipgraph learn`) instead of a stub.",
+        ),
+    ] = False,
 ) -> None:
-    """Write a minimal `.chipgraph.yml` at the repo root."""
+    """Write a `.chipgraph.yml` at the repo root (a stub, or inferred with `--from-learn`)."""
     state: CliState = ctx.obj
     root = find_repo_root(state.start)
     path = root / ".chipgraph.yml"
     if path.is_file() and not force:
         typer.echo(f"{path} already exists; pass --force to overwrite", err=True)
         raise typer.Exit(code=2)
+
+    if from_learn:
+        from chipgraph.learn import InitFromLearnError, init_from_learn
+
+        if path.is_file() and force:
+            path.unlink()
+        try:
+            profile_path, naming_path = init_from_learn(root)
+        except InitFromLearnError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo(f"wrote {profile_path} (inferred from {root})")
+        if naming_path is not None:
+            typer.echo(f"wrote {naming_path}")
+        typer.echo("review it, then:")
+        typer.echo("  chipgraph config check     # validate the profile")
+        return
+
     name = project or root.name
     path.write_text(_init_content(name, preset), encoding="utf-8")
     typer.echo(f"wrote {path}")
@@ -196,6 +221,138 @@ def init(
     typer.echo("  chipgraph config check     # validate the profile")
     typer.echo("  chipgraph doctor           # check tools are on PATH")
     typer.echo("  chipgraph learn            # fill this in from an existing repo (task M1-21)")
+
+
+# --- learn / try --------------------------------------------------------------------
+
+
+def _learn_json(result: object) -> str:
+    from chipgraph.learn import LearnResult
+
+    assert isinstance(result, LearnResult)
+    return json.dumps(result.model_dump(mode="json"), indent=2)
+
+
+def _print_learn_text(result: object) -> None:
+    from chipgraph.learn import LearnResult
+
+    assert isinstance(result, LearnResult)
+    typer.echo(f"# learned {result.project} from {result.root}")
+    typer.echo(f"# blocks: {', '.join(result.blocks) or '(none, single block)'}")
+    typer.echo("")
+    typer.echo("layout (kind: template  coverage):")
+    for lrule in result.layout:
+        typer.echo(f"  {lrule.kind:9} {lrule.template:34} {lrule.coverage.percent:3}%")
+    typer.echo("naming (kind: pattern  coverage  emitted):")
+    for nrule in result.naming:
+        mark = "rule" if nrule.emitted else "obs "
+        typer.echo(
+            f"  {mark} {nrule.kind:11} {nrule.pattern:30} {nrule.coverage.percent:3}% "
+            f"({nrule.coverage.matched}/{nrule.coverage.total})"
+        )
+    if result.observations:
+        typer.echo("observations:")
+        for obs in result.observations:
+            typer.echo(f"  {obs.topic:9} {obs.summary}")
+    if result.vendor_paths:
+        typer.echo("vendor paths (checks off, learned):")
+        for glob in result.vendor_paths:
+            typer.echo(f"  {glob}")
+
+
+@app.command()
+@_handle_errors
+def learn(
+    ctx: typer.Context,
+    path: Annotated[
+        Path | None, typer.Argument(help="Repo to learn (default: the current directory).")
+    ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Write chipgraph.draft.yml (+ naming rules) into this dir."),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", min=0.0, max=1.0, help="Min coverage to emit a naming rule."),
+    ] = 0.9,
+) -> None:
+    """Infer a draft profile from an existing repo, with per-rule coverage (DESIGN 8.6 V1)."""
+    from chipgraph.learn import dump_profile_yaml, write_draft
+    from chipgraph.learn import learn as run_learn
+    from chipgraph.learn.draft import DRAFT_NAMING_RULES_NAME, build_naming_rules
+
+    state: CliState = ctx.obj
+    root = (path if path is not None else state.start).resolve()
+    if not root.is_dir():
+        typer.echo(f"not a directory: {root}", err=True)
+        raise typer.Exit(code=2)
+
+    result = run_learn(root, threshold=threshold)
+
+    if state.json_output:
+        typer.echo(_learn_json(result))
+    else:
+        _print_learn_text(result)
+        naming_ref = DRAFT_NAMING_RULES_NAME if build_naming_rules(result) is not None else None
+        typer.echo("")
+        typer.echo("draft profile:")
+        typer.echo(dump_profile_yaml(result, naming_rules_ref=naming_ref))
+
+    if out is not None:
+        profile_path, naming_path = write_draft(result, out)
+        typer.echo(f"wrote {profile_path}")
+        if naming_path is not None:
+            typer.echo(f"wrote {naming_path}")
+
+
+@app.command("try")
+@_handle_errors
+def try_cmd(
+    ctx: typer.Context,
+    path: Annotated[
+        Path | None, typer.Argument(help="Repo to try (default: the current directory).")
+    ] = None,
+    profile: Annotated[
+        Path | None,
+        typer.Option("--profile", help="Use this draft profile (from `learn --out`) instead."),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", min=0.0, max=1.0, help="Min coverage to emit a naming rule."),
+    ] = 0.9,
+) -> None:
+    """Run chipgraph read-only against a repo (ingest/check/audit), writing nothing into it."""
+    from chipgraph.learn.try_run import try_run
+
+    state: CliState = ctx.obj
+    root = (path if path is not None else state.start).resolve()
+    if not root.is_dir():
+        typer.echo(f"not a directory: {root}", err=True)
+        raise typer.Exit(code=2)
+
+    report = try_run(root, profile_path=profile, threshold=threshold)
+
+    if state.json_output:
+        payload = {
+            "project": report.result.project,
+            "ingest_ok": report.ingest_ok,
+            "ingest": report.ingest_summary,
+            "audit_available": report.audit_available,
+            "audit": report.audit_summary,
+            "files_with_issues": report.check_files_with_issues,
+            "checks": [
+                {"check": cid, "block": blk, "status": res.status, "issues": len(res.issues)}
+                for cid, blk, res in report.checks
+            ],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"try {report.result.project} (read-only; nothing written to the repo)")
+        typer.echo(f"  ingest: {report.ingest_summary}")
+        for cid, blk, res in report.checks:
+            typer.echo(f"  {res.status.upper():6} {cid} {blk or '-'} {len(res.issues)} issues")
+        typer.echo(f"  {report.audit_summary}")
+        typer.echo(f"files with issues: {report.check_files_with_issues}")
 
 
 # --- config show / config check -----------------------------------------------------
