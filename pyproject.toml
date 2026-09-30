@@ -24,6 +24,9 @@ otel = [
     "opentelemetry-sdk>=1.45",
     "opentelemetry-exporter-otlp-proto-http>=1.45",
 ]
+llm = [
+    "anthropic>=1.9,<2",
+]
 
 [project.scripts]
 chipgraph = "chipgraph.cli:app"
@@ -55,6 +58,11 @@ connect = "chipgraph.checks.connect:ConnectCheck"
 hardcode = "chipgraph.checks.hardcode:HardcodeCheck"
 cdc_struct = "chipgraph.checks.cdc_struct:CdcStructCheck"
 
+[project.entry-points."chipgraph.adapters.llm"]
+fake = "chipgraph.adapters.llm.fake:FakeProvider"
+anthropic = "chipgraph.adapters.llm.anthropic:AnthropicProvider"
+anthropic-compatible = "chipgraph.adapters.llm.anthropic:anthropic_compatible"
+
 [project.entry-points."chipgraph.adapters.review"]
 file = "chipgraph.adapters.review.file:FileReview"
 
@@ -78,6 +86,7 @@ dev = [
     "types-PyYAML",
     "import-linter>=2.15",
     "opentelemetry-sdk>=1.45",
+    "anthropic>=1.9,<2",
 ]
 
 [tool.hatch.build.targets.wheel]
