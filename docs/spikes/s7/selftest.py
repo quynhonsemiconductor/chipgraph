@@ -116,18 +116,26 @@ async def run(out: Path) -> None:
     print("selftest ok: setup.sh tree, stdio server, hook allow/deny/fail-closed, submit")
 
 
-def _refuses(out: str) -> bool:
-    proc = subprocess.run([str(HERE / "setup.sh"), out], capture_output=True, text=True)
-    return (proc.returncode == 2 and "refusing" in proc.stderr + proc.stdout) or (
-        proc.returncode == 2 and "inside the repo" in proc.stderr
+def _refuses(out: str, env: dict[str, str] | None = None) -> bool:
+    proc = subprocess.run(
+        [str(HERE / "setup.sh"), out],
+        capture_output=True,
+        text=True,
+        env={**os.environ, **(env or {})},
     )
+    return proc.returncode == 2 and "refusing" in proc.stderr
 
 
 def main() -> None:
-    assert _refuses("/Users/nobody/important"), "setup.sh must refuse a dir outside /tmp"
-    assert _refuses(str(HERE.parents[2] / "s7-out")), "setup.sh must refuse a dir in the repo"
+    repo = HERE.parents[2]
+    for bad in ("/Users/nobody/important", str(repo / "s7-out"), "/tmp/other", "/tmp/s7-"):
+        assert _refuses(bad), f"setup.sh must refuse {bad}"
+    # An empty or unset TMPDIR must not widen the allowed set to every path.
+    assert _refuses("/home/x/project", {"TMPDIR": ""})
+    assert _refuses("/home/x/s7-project", {"TMPDIR": ""})
+    assert _refuses("/", {"TMPDIR": ""})
     with tempfile.TemporaryDirectory(prefix="s7-") as tmp:
-        out = Path(tmp) / "run"
+        out = Path(tmp)  # <$TMPDIR>/s7-<random>: the one shape setup.sh accepts there
         subprocess.run([str(HERE / "setup.sh"), str(out)], check=True)
         asyncio.run(run(out))
 

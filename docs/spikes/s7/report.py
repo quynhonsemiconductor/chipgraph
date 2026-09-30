@@ -53,6 +53,25 @@ def main(out: Path) -> None:
         "== timing",
         (out / "timing.txt").read_text().strip() if (out / "timing.txt").exists() else "",
     )
+    # Which tools each subagent really called: from the hook log (every tool, with
+    # agent_id) and from the stream (tool_use blocks carrying parent_tool_use_id).
+    by_agent: dict[str, dict[str, int]] = {}
+    for h in hook:
+        who = f"{h.get('agent_type') or 'main'}:{(h.get('agent_id') or '-')[:8]}"
+        tools = by_agent.setdefault(who, {})
+        tools[str(h.get("tool"))] = tools.get(str(h.get("tool")), 0) + 1
+    print("== tools per agent (hook log)")
+    for who, tools in sorted(by_agent.items()):
+        print(f"  {who:24} {json.dumps(tools, sort_keys=True)}")
+    sub_bash = [
+        e
+        for e in events
+        if e.get("parent_tool_use_id")
+        for b in ((e.get("message") or {}).get("content") or [])
+        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
+    ]
+    hook_bash = [h for h in hook if h.get("agent_id") and h.get("tool") == "Bash"]
+    print(f"== subagent Bash calls: stream={len(sub_bash)} hook={len(hook_bash)}")
     agents = [c for c in tool_calls if c[0] == "Agent"]
     denied = [h for h in hook if h["decision"] == "deny"]
     print(

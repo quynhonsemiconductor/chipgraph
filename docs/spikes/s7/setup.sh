@@ -14,13 +14,22 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 OUT="${1:?usage: setup.sh OUT_DIR}"
 SUB_MODEL="${SUB_MODEL:-haiku}"
 
-# Refuse anything but a fresh /tmp/s7-* (or the system temp dir) outside the repo: the
-# directory is deleted first.
-case "$(cd "$(dirname "$OUT")" 2>/dev/null && pwd -P)/$(basename "$OUT")" in
-  /tmp/s7-*|/private/tmp/s7-*|"${TMPDIR%/}"/*|/private/var/folders/*) ;;
-  *) echo "setup.sh: refusing OUT_DIR=$OUT (use /tmp/s7-<name>)" >&2; exit 2 ;;
-esac
-case "$OUT" in "$REPO"*) echo "setup.sh: OUT_DIR is inside the repo" >&2; exit 2 ;; esac
+# The directory is deleted first, so accept only <tmp>/s7-<name>, where <tmp> is /tmp or
+# a non-empty $TMPDIR, compared after resolving symlinks. Anything else is refused.
+parent="$(cd "$(dirname "$OUT")" 2>/dev/null && pwd -P || true)"
+name="$(basename "$OUT")"
+ok=0
+if [ -n "$parent" ] && [[ "$name" == s7-?* ]]; then
+  for tmp in /tmp "${TMPDIR:-}"; do
+    [ -n "$tmp" ] || continue
+    resolved_tmp="$(cd "$tmp" 2>/dev/null && pwd -P || true)"
+    if [ -n "$resolved_tmp" ] && [ "$parent" = "$resolved_tmp" ]; then ok=1; fi
+  done
+fi
+if [ "$ok" -ne 1 ]; then
+  echo "setup.sh: refusing OUT_DIR=$OUT (use /tmp/s7-<name>)" >&2
+  exit 2
+fi
 
 PROJ="$OUT/tinysoc"
 rm -rf "$OUT"
@@ -41,13 +50,15 @@ task_id you were given, read the example RTL it names, then write only the files
 in its outputs. If a write is refused, do not retry it elsewhere: report it and finish.
 EOF
 
-# The write guard, for the main session and every subagent.
+# The write guard, for the main session and every subagent. It sees every tool call
+# (matcher "*") so .s7/hook.log records which tools each agent_id actually used;
+# only file-writing tools can be denied.
 cat > "$PROJ/.claude/settings.json" <<EOF
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "*",
         "hooks": [
           {"type": "command", "command": "python3", "args": ["$HERE/hook_guard.py"]}
         ]

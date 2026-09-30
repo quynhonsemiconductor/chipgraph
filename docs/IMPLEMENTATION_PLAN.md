@@ -163,6 +163,15 @@ rồi resume đúng chỗ; import-linter xanh.
 | M1-23 | Plugin cục bộ của dự án (`.chipgraph/plugins/`) nạp qua plugin API; tắt được bằng cấu hình tổ chức | A | M0-03 | `core/plugin_api/local.py`, `core/config/models.py`, `core/config/loader.py`, `app/context.py`, `cli/` | Plugin mẫu đổi được luật layout; `config check` liệt kê plugin cục bộ đang chạy |
 | M1-24 | `chipgraph baseline` (DESIGN 6.4): liệt kê artifact trên nhánh chính kèm hash và lịch sử merge; lead xác nhận; ghi quyết định `baseline`; finding có sẵn được ghi nhận, không chặn build | A+E | M0-11, 06 | `core/engine/baseline.py`, `app/baseline.py`, `cli/`, `examples/tinysoc/` | Trên tinysoc có MAS sẵn: sau `baseline`, `build rtl:<block>` không dừng ở gate spec; sửa MAS thì gate về "chờ" |
 
+**Ghi chú từ spike S7 cho M1-11** (`docs/spikes/S7.md`):
+- `--max-turns` chỉ đếm lượt của phiên chính, không đếm lượt của subagent. Engine phải tự
+  giới hạn ngân sách cho từng task.
+- Hook `PreToolUse` nhận `agent_id`/`agent_type`, nên quyền ghi (`outputs`) được cấp riêng
+  cho từng task và từng subagent, không gộp chung.
+- Guard chặn ghi đặt trong `hooks/hooks.json` của plugin, không đặt trong frontmatter của
+  agent (hook trong frontmatter không chạy ở chế độ `-p`). Guard phải chặn khi có lỗi (fail
+  closed), vì Claude Code cho lệnh chạy tiếp khi hook thoát với mã khác 0 và 2.
+
 **Thoát M1 khi:** `ingest` + `baseline` + check chéo chạy trên QSoC (lead xác nhận); `/ask` và `/triage`
 đạt ngưỡng evals; plugin cài được.
 
