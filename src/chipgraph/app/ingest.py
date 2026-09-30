@@ -70,6 +70,7 @@ def run_ingest(ctx: AppContext) -> IngestReport:
         builder.parts,
         input_files=builder.input_files,
         profile_digest=_profile_digest(resolved.profile),
+        ip_blocks={name: override.instances for name, override in resolved.profile.blocks.items()},
     )
     # Fold the builder's own file-level issues (missing files, adapter exceptions) in.
     result = _with_extra_issues(result, builder.issues)

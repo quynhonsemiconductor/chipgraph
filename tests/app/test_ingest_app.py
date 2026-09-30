@@ -160,3 +160,43 @@ def test_spec_matching_the_template_but_unread_is_a_warning(tinysoc: Path) -> No
     report = run_ingest(AppContext.load(tinysoc))
     unread = [i.file for i in report.issues if i.code == "unread_spec"]
     assert unread == ["doc/specs/TINY_UART_MAS.md"]
+
+
+def test_ingest_wires_instances_to_ip_blocks(tinysoc: Path) -> None:
+    # A chip spec with two timer instances and a gpio; the profile declares the timer IP
+    # has instances timer_0/timer_1 (so block:timer is created), gpio maps by same name,
+    # and an extra `mystery` block is unmapped.
+    chip = tinysoc / "chip.yml"
+    chip.write_text(
+        "project: tinysoc\n"
+        "data_width: 32\n"
+        "addr_width: 8\n"
+        "blocks:\n"
+        "  - { name: timer_0, base: 0x0, size: 4, clock: clk, reset: rst_n }\n"
+        "  - { name: timer_1, base: 0x4, size: 4, clock: clk, reset: rst_n }\n"
+        "  - { name: gpio, base: 0x8, size: 4, clock: clk, reset: rst_n }\n"
+        "  - { name: mystery, base: 0xc, size: 4, clock: clk, reset: rst_n }\n"
+        "clocks:\n  - name: clk\n"
+        "resets:\n  - { name: rst_n, active_low: true }\n",
+        encoding="utf-8",
+    )
+    profile = (tinysoc / ".chipgraph.yml").read_text(encoding="utf-8")
+    profile = profile.replace(
+        "  timer: {}\n",
+        "  timer:\n    instances: [timer_0, timer_1]\n    layout: { spec: [] }\n",
+    )
+    _set_profile(tinysoc, profile)
+
+    report = run_ingest(AppContext.load(tinysoc))
+    model = report.model
+
+    ip = model.get("block:timer")
+    assert ip is not None
+    assert ip.attrs["role"] == "ip"
+    rels = {(r.src, r.dst) for r in model.relations if r.kind == "instance_of"}
+    assert rels == {("block:timer_0", "block:timer"), ("block:timer_1", "block:timer")}
+
+    # gpio maps by same name (no self relation); mystery is unmapped.
+    unmapped = [i for i in report.issues if i.code == "instance_unmapped"]
+    assert [i.key for i in unmapped] == ["block:mystery"]
+    assert not [i for i in report.issues if i.code == "instance_unknown"]

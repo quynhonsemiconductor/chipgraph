@@ -184,7 +184,9 @@ Mô hình tri thức **có kiểu** của toàn bộ thiết kế. Nó là ngu�
 `project`, `block`, `module`, `port`, `interface`, `clock`, `reset`, `parameter`,
 `register`, `field`, `interrupt`, `memory_region`, `requirement`, `decision`,
 `open_item`, `test`, cộng với **quan hệ** giữa chúng (`implements`, `verifies`,
-`connects`, `derives_from`). Pack mở rộng thêm, ví dụ pack analog thêm `pin_spec`.
+`connects`, `derives_from`, `instance_of`). Pack mở rộng thêm, ví dụ pack analog thêm `pin_spec`.
+Block trong profile là IP; instance trên memory map nối vào IP bằng `instance_of`, khai trong
+`blocks.<ip>.instances` (D38).
 
 Interface (APB, AXI, TileLink…) là **dữ liệu** trong thư viện interface, giống bus
 definition của IP-XACT.
