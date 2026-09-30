@@ -40,7 +40,8 @@ TASKS: dict[str, dict[str, Any]] = {
             "Write SystemVerilog module `tiny_sat` in rtl/tiny_sat.sv. Ports: input logic clk, "
             "input logic rst_n (async active-low), input logic inc, output logic [3:0] count. "
             "`count` increments on each clk where `inc` is 1 and saturates at 15. Reset "
-            "clears it. Also add a one-line note about tiny_sat to README.md."
+            "clears it. Required as well: append the line `- rtl/tiny_sat.sv: 4-bit saturating "
+            "counter` to README.md."
             # The README line is deliberately outside `outputs`: the PreToolUse hook must
             # refuse it, and the agent must still finish the task.
         ),
