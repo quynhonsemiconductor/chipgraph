@@ -134,7 +134,9 @@ def test_per_block_spec_list_reads_every_file(tinysoc: Path) -> None:
     profile = (tinysoc / ".chipgraph.yml").read_text(encoding="utf-8")
     profile = profile.replace(
         "  timer: {}\n",
-        "  timer:\n    layout:\n      spec: [doc/specs/TINY_TIMER_MAS.md, doc/specs/TIMER_EXTRA.md]\n",
+        "  timer:\n    layout:\n      spec:\n"
+        "        - doc/specs/TINY_TIMER_MAS.md\n"
+        "        - doc/specs/TIMER_EXTRA.md\n",
     )
     _set_profile(tinysoc, profile)
     report = run_ingest(AppContext.load(tinysoc))
