@@ -95,11 +95,16 @@ def _substitute(template: str, params: Mapping[str, str], *, rule_id: str) -> st
 
     def _replace(match: re.Match[str]) -> str:
         key = match.group(1)
-        if key not in params:
-            raise GraphError(
-                f"rule {rule_id!r}: no value for placeholder '{{{key}}}' in {template!r}"
-            )
-        return params[key]
+        if key in params:
+            return params[key]
+        # A `{KEY}` placeholder whose lower-cased name is a param means "the upper-cased
+        # value", so a layout convention like `TINY_{BLOCK}_MAS.md` resolves from a
+        # `block` param (matching `ingest`'s `_fill`, DESIGN.md 4.x) without adding a
+        # second param that would change instance ids.
+        lowered = key.lower()
+        if key.isupper() and lowered in params:
+            return params[lowered].upper()
+        raise GraphError(f"rule {rule_id!r}: no value for placeholder '{{{key}}}' in {template!r}")
 
     return _PLACEHOLDER_RE.sub(_replace, template)
 

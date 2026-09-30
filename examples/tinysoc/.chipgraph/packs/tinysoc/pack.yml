@@ -2,7 +2,9 @@
 #
 # Two rules:
 #   tinysoc/rtl           a `human` rule: a person writes each block's RTL
-#                         (`rtl/tiny_{block}.sv`); other rules depend on it.
+#                         (`rtl/tiny_{block}.sv`), gated by `spec:{block}` over the
+#                         block's reviewed inputs (its MAS, for timer/gpio, and its
+#                         filelist); other rules depend on it.
 #   tinysoc/lint_manifest a `gen` rule: for each block, writes a small deterministic
 #                         manifest (`scripts/gen_manifest.py`) and then runs the `lint`
 #                         check (Verilator, via `.chipgraph.yml`'s `adapters.lint`)

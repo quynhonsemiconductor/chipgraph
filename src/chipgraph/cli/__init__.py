@@ -25,6 +25,12 @@ import yaml
 
 from chipgraph import __version__
 from chipgraph.app import findings as findings_app
+from chipgraph.app.baseline import (
+    current_branch,
+    main_branch,
+    plan_project_baseline,
+    run_baseline,
+)
 from chipgraph.app.build import make_scheduler
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity, find_repo_root
@@ -582,6 +588,142 @@ def approve(
         typer.echo(approval.model_dump_json())
     else:
         typer.echo(f"{decision} recorded for gate {gate_id!r} by {who!r}")
+
+
+# --- baseline ------------------------------------------------------------------------
+
+
+def _baseline_plan_json(plan: object) -> dict[str, object]:
+    from chipgraph.core.engine.baseline import BaselineArtifact, BaselineGate, BaselinePlan
+
+    assert isinstance(plan, BaselinePlan)
+
+    def _artifact(a: BaselineArtifact) -> dict[str, object]:
+        commit = (
+            {
+                "short_sha": a.last_commit.short_sha,
+                "date": a.last_commit.date,
+                "subject": a.last_commit.subject,
+                "is_merge": a.last_commit.is_merge,
+            }
+            if a.last_commit is not None
+            else None
+        )
+        return {
+            "path": a.path,
+            "sha256": a.sha256,
+            "short_sha256": a.short_sha256,
+            "status": a.status,
+            "baselineable": a.baselineable,
+            "last_commit": commit,
+        }
+
+    def _gate(g: BaselineGate) -> dict[str, object]:
+        return {
+            "gate_id": g.gate_id,
+            "instance_id": g.instance_id,
+            "already_decided": g.already_decided,
+            "will_baseline": g.will_baseline,
+            "artifacts": [_artifact(a) for a in g.artifacts],
+        }
+
+    return {
+        "gates": [_gate(g) for g in plan.gates],
+        "gates_to_baseline": [g.gate_id for g in plan.gates_to_baseline],
+        "skipped_gates": [g.gate_id for g in plan.skipped_gates],
+        "dirty_artifacts": [_artifact(a) for a in plan.dirty_artifacts],
+        "open_findings": plan.open_findings,
+    }
+
+
+def _print_baseline_text(plan: object) -> None:
+    from chipgraph.core.engine.baseline import BaselinePlan
+
+    assert isinstance(plan, BaselinePlan)
+    if not plan.gates:
+        typer.echo("no gates found: nothing to baseline")
+    for gate in plan.gates:
+        state = "decided (skipped)" if gate.already_decided else "waiting"
+        typer.echo(f"gate {gate.gate_id}  [{gate.instance_id}]  {state}")
+        for artifact in gate.artifacts:
+            commit = artifact.last_commit
+            where = (
+                f"{commit.short_sha} {commit.date} {commit.subject}"
+                if commit is not None
+                else "(no commit)"
+            )
+            typer.echo(f"    {artifact.status:9} {artifact.short_sha256}  {artifact.path}  {where}")
+    if plan.dirty_artifacts:
+        typer.echo("not baselined (modified or untracked in the working tree):")
+        for artifact in plan.dirty_artifacts:
+            typer.echo(f"    {artifact.status:9} {artifact.path}")
+    typer.echo(f"open findings: {plan.open_findings}")
+    to_do = plan.gates_to_baseline
+    if to_do:
+        typer.echo(f"would baseline {len(to_do)} gate(s): {', '.join(g.gate_id for g in to_do)}")
+    else:
+        typer.echo("would baseline 0 gates")
+
+
+@app.command("baseline")
+@_handle_errors
+def baseline_cmd(
+    ctx: typer.Context,
+    confirm: Annotated[
+        bool, typer.Option("--confirm", help="Record the baseline decisions (default: dry run).")
+    ] = False,
+    by: Annotated[str | None, typer.Option("--by")] = None,
+    note: Annotated[str, typer.Option("--note")] = "",
+    allow_branch: Annotated[
+        bool,
+        typer.Option("--allow-branch", help="Allow running on a branch other than main."),
+    ] = False,
+) -> None:
+    """List the artifacts on the main branch and, with --confirm, baseline them (DESIGN 6.4)."""
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    app_ctx.require_profile()
+
+    branch = current_branch(app_ctx.root)
+    main = main_branch(app_ctx.root)
+    if not allow_branch and branch is not None and branch != main:
+        typer.echo(
+            f"refusing to baseline on branch {branch!r}: not the main branch {main!r} "
+            "(pass --allow-branch to override)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    plan, refs_by_path = plan_project_baseline(app_ctx)
+
+    if not confirm:
+        if state.json_output:
+            typer.echo(json.dumps(_baseline_plan_json(plan), indent=2))
+        else:
+            _print_baseline_text(plan)
+        return
+
+    who = by or default_identity()
+    outcome = run_baseline(app_ctx, plan, refs_by_path, by=who, note=note)
+    if state.json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "recorded_gates": [a.gate_id for a in outcome.approvals],
+                    "findings_baselined": list(outcome.findings_baselined),
+                },
+                indent=2,
+            )
+        )
+    else:
+        if outcome.approvals:
+            typer.echo(f"recorded baseline for {len(outcome.approvals)} gate(s):")
+            for approval in outcome.approvals:
+                typer.echo(f"    {approval.gate_id}")
+        else:
+            typer.echo("recorded baseline for 0 gates (nothing new)")
+        if outcome.findings_baselined:
+            typer.echo(f"baselined {len(outcome.findings_baselined)} open finding(s)")
 
 
 # --- doctor ----------------------------------------------------------------------
