@@ -24,4 +24,6 @@ adapters:
 blocks:
   timer: {}
   gpio: {}
-  top: {}
+  # The top has no MAS of its own: say so, so ingest does not report it missing.
+  top:
+    layout: { spec: [] }

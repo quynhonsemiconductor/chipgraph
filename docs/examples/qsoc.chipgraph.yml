@@ -56,24 +56,40 @@ adapters:
     cmd: "make contract-tags BLOCK={block}"
     regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
 
-# One entry per directory under design/ that has a <block>.f filelist.
+# One entry per directory under design/ that has a <block>.f filelist, plus syscsr, whose
+# design directory is still in an open PR (ingest warns about its missing filelist until
+# then). A block whose spec file is not QNSC_<BLOCK>_MAS.md maps it with its own
+# `layout.spec`; a list reads several files, and `[]` would say it has none.
 blocks:
   bus: {}
   common: {}
   cpu: {}
   dma: {}
-  dsram: {}
+  dsram:
+    layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
   gpio: {}
   i2c: {}
-  intmap: {}
+  intmap:
+    layout: { spec: "doc/specs/QNSC_Interrupt_Map_MAS.md" }
   iomux: {}
-  isram: {}
+  isram:
+    layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
   pwm: {}
-  rom: {}
+  rom:
+    # The bootloader in ROM has its own spec. Its ids are BOOT_NNN, not ROM_NNN, so with
+    # `{BLOCK}_\d{3}` its Verification items are inferred (keyed rom.h<hash>).
+    layout: { spec: ["doc/specs/QNSC_ROM_MAS.md", "doc/specs/QNSC_BOOT_SPEC.md"] }
   scrc: {}
   spi: {}
+  syscsr: {}
   sysdbg: {}
   timer: {}
   top: {}
   uart: {}
   wdt: {}
+
+# The MAS template matches the spec pattern but is not a block's spec.
+paths:
+  "doc/specs/QNSC_TEMPLATE_MAS.md":
+    checks: { ingest: off }
+    reason: "the team's MAS template, not the spec of a block"
