@@ -23,7 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from chipgraph.core.model.entities import BlockEntity, EntityBase, ModuleEntity
+from chipgraph.core.model.entities import BlockEntity, EntityBase, InterruptEntity, ModuleEntity
 from chipgraph.core.model.json_value import JSONValue
 from chipgraph.core.model.model import DesignModel
 from chipgraph.core.model.relations import Relation
@@ -450,6 +450,7 @@ def _add_instance_relations(state: _MergeState, ip_blocks: Mapping[str, tuple[st
     in the merged model and differs from the IP. Instances/blocks that cannot be mapped
     are reported as deterministic warnings.
     """
+    interrupt_names = _assign_interrupt_blocks(state, ip_blocks)
     instance_to_ip: dict[str, str] = {}
     for ip in sorted(ip_blocks):
         declared = ip_blocks[ip]
@@ -462,8 +463,9 @@ def _add_instance_relations(state: _MergeState, ip_blocks: Mapping[str, tuple[st
         for instance in instances:
             instance_key = _block_key(instance)
             if instance_key not in state.entities:
-                # A declared instance with no matching block in the model.
-                if instance != ip:
+                # A declared instance with no matching block in the model, unless it names
+                # an interrupt source the contract lists without a block (mapped above).
+                if instance != ip and instance not in interrupt_names:
                     state.issues.append(
                         IngestIssue(
                             severity="warning",
@@ -485,6 +487,42 @@ def _add_instance_relations(state: _MergeState, ip_blocks: Mapping[str, tuple[st
 
     _report_unmapped_instances(state, ip_blocks, instance_to_ip)
     _report_unknown_blocks(state)
+
+
+def _assign_interrupt_blocks(
+    state: _MergeState, ip_blocks: Mapping[str, tuple[str, ...]]
+) -> set[str]:
+    """Give a block to each interrupt the chip spec lists without one (D38).
+
+    A contract may name an interrupt by its peripheral (`dma`, `spi_host`, `wdt_wakeup`)
+    rather than by a memory-map block. Such an interrupt belongs to the IP whose name is
+    that peripheral, or whose declared `instances` list it; nothing is guessed from the
+    name otherwise. The target is `block:<name>` when that block exists, else the IP's
+    block. The interrupt records `attrs.block_from = "profile"`. Returns the names that
+    matched, so they are not also reported as unknown instances.
+    """
+    owner_of: dict[str, str] = {}
+    for ip in sorted(ip_blocks):
+        owner_of.setdefault(ip, ip)
+        for name in ip_blocks[ip]:
+            owner_of.setdefault(name, ip)
+
+    matched: set[str] = set()
+    for key in sorted(state.entities):
+        entity = state.entities[key]
+        if not isinstance(entity, InterruptEntity) or entity.block:
+            continue
+        peripheral = entity.attrs.get("peripheral")
+        name = peripheral if isinstance(peripheral, str) and peripheral else _block_name(key)
+        owner = owner_of.get(name)
+        if owner is None:
+            continue
+        target = _block_key(name) if _block_key(name) in state.entities else _block_key(owner)
+        attrs: dict[str, JSONValue] = dict(entity.attrs)
+        attrs["block_from"] = "profile"
+        state.entities[key] = entity.model_copy(update={"block": target, "attrs": attrs})
+        matched.add(name)
+    return matched
 
 
 def _report_unmapped_instances(

@@ -21,6 +21,7 @@ from chipgraph.core.model.entities import (
     BlockEntity,
     InterruptEntity,
     MemoryRegionEntity,
+    ModuleEntity,
     PortEntity,
 )
 from chipgraph.core.model.relations import Relation
@@ -88,9 +89,14 @@ def test_clock_unknown(tmp_path: Path) -> None:
     assert "nope_clk" in issue.msg
 
 
-def _ip_with_interrupt(want_width: int, instance_lines: int) -> list[object]:
-    """An IP `foo` whose spec declares `want_width` int lines, with one instance `foo_0`
-    the contract gives `instance_lines` sources on one line."""
+def _ip_with_interrupt(
+    want_width: int, instance_lines: int, ports: list[str] | None = None, desc: str = ""
+) -> list[object]:
+    """An IP `foo` whose spec declares `want_width` interrupt outputs, with one instance
+    `foo_0` the contract gives `instance_lines` sources (and optionally `ports`)."""
+    irq_attrs: dict[str, object] = {"sources": instance_lines}
+    if ports is not None:
+        irq_attrs["ports"] = ports
     return [
         BlockEntity(key="block:foo", name="foo", attrs={"role": "ip"}),
         BlockEntity(key="block:foo_0", name="foo_0"),
@@ -99,13 +105,14 @@ def _ip_with_interrupt(want_width: int, instance_lines: int) -> list[object]:
             name="o_int_foo",
             direction="output",
             width=want_width,
+            attrs={"description": desc} if desc else {},
         ),
         InterruptEntity(
             key="interrupt:foo_0",
             name="foo_0",
             block="block:foo_0",
             line=0,
-            attrs={"sources": instance_lines},
+            attrs=irq_attrs,
         ),
         MemoryRegionEntity(
             key="memory_region:foo_0", name="foo_0", block="block:foo_0", base=0, size=16
@@ -113,22 +120,57 @@ def _ip_with_interrupt(want_width: int, instance_lines: int) -> list[object]:
     ]
 
 
-def test_interrupt_count_mismatch(tmp_path: Path) -> None:
-    entities = _ip_with_interrupt(want_width=2, instance_lines=1)
-    relations = [Relation(kind="instance_of", src="block:foo_0", dst="block:foo")]
-    stage_model(tmp_path, entities, relations)
+_FOO_OF = [Relation(kind="instance_of", src="block:foo_0", dst="block:foo")]
+_TIMER_DESC = "`[0]` = `irq_lo_o`, `[1]` = `irq_hi_o`, to `INTMAP`"
+
+
+def test_instance_using_fewer_outputs_than_its_ip_passes(tmp_path: Path) -> None:
+    # QSoC timer_0: the IP has irq_lo_o and irq_hi_o; the contract routes irq_lo_o only.
+    entities = _ip_with_interrupt(2, 1, ports=["irq_lo_o"], desc=_TIMER_DESC)
+    stage_model(tmp_path, entities, _FOO_OF)
+    assert run_check(CrossChipCheck(), tmp_path).status == "pass"
+
+
+def test_more_sources_than_ip_outputs_is_an_error(tmp_path: Path) -> None:
+    stage_model(tmp_path, _ip_with_interrupt(want_width=2, instance_lines=3), _FOO_OF)
     result = run_check(CrossChipCheck(), tmp_path)
     assert rules(result) == ["interrupt.count"]
-    assert "block:foo_0" in result.issues[0].msg
-    assert "declares 2" in result.issues[0].msg
+    assert "3 interrupt source(s)" in result.issues[0].msg
+    assert "2 interrupt output(s)" in result.issues[0].msg
 
 
 def test_interrupt_count_matches_when_sources_equal_width(tmp_path: Path) -> None:
-    entities = _ip_with_interrupt(want_width=4, instance_lines=4)
-    relations = [Relation(kind="instance_of", src="block:foo_0", dst="block:foo")]
-    stage_model(tmp_path, entities, relations)
+    stage_model(tmp_path, _ip_with_interrupt(want_width=4, instance_lines=4), _FOO_OF)
+    assert run_check(CrossChipCheck(), tmp_path).status == "pass"
+
+
+def _foo_rtl() -> list[object]:
+    """The IP `foo` in RTL: a module it owns, with the IP's two interrupt outputs."""
+    return [
+        ModuleEntity(key="module:foo_ip", name="foo_ip", block="block:foo"),
+        PortEntity(key="port:foo_ip.irq_lo_o", name="irq_lo_o", module="module:foo_ip"),
+        PortEntity(key="port:foo_ip.irq_hi_o", name="irq_hi_o", module="module:foo_ip"),
+    ]
+
+
+def test_contract_port_the_ip_rtl_has_passes(tmp_path: Path) -> None:
+    entities = [*_ip_with_interrupt(2, 1, ports=["irq_lo_o"]), *_foo_rtl()]
+    stage_model(tmp_path, entities, _FOO_OF)
+    assert run_check(CrossChipCheck(), tmp_path).status == "pass"
+
+
+def test_contract_port_the_ip_does_not_have_is_an_error(tmp_path: Path) -> None:
+    entities = [*_ip_with_interrupt(2, 1, ports=["irq_mid_o[1:0]"]), *_foo_rtl()]
+    stage_model(tmp_path, entities, _FOO_OF)
     result = run_check(CrossChipCheck(), tmp_path)
-    assert result.status == "pass"
+    assert rules(result) == ["interrupt.port_unknown"]
+    assert "'irq_mid_o'" in result.issues[0].msg
+
+
+def test_contract_port_is_not_checked_without_rtl(tmp_path: Path) -> None:
+    # No RTL for the IP: the spec describes the wrapper, so the IP's port names are unknown.
+    stage_model(tmp_path, _ip_with_interrupt(1, 1, ports=["INT"], desc=_TIMER_DESC), _FOO_OF)
+    assert run_check(CrossChipCheck(), tmp_path).status == "pass"
 
 
 def test_interrupt_no_block_suggests_exact_match(tmp_path: Path) -> None:
