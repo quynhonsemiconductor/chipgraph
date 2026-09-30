@@ -86,7 +86,9 @@ blocks:
   dma:
     instances: [dma_cfg]  # dma_cfg needs the owner's confirmation
   dsram:
-    layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
+    # ISRAM and DSRAM are "two blocks with one design" (QNSC_RAM_MAS.md 1). The shared
+    # spec is read once, under isram, so its requirements are not counted twice.
+    layout: { spec: [] }
   gpio:
     instances: [gpio_0, gpio_1, gpio_2]
   i2c: {}
@@ -94,13 +96,14 @@ blocks:
     layout: { spec: "doc/specs/QNSC_Interrupt_Map_MAS.md" }
   iomux: {}
   isram:
-    layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
+    layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }  # also dsram's spec, read once here
     instances: [isram, isram_dbg]  # isram_dbg needs the owner's confirmation
   pwm: {}
   rom:
-    # The bootloader in ROM has its own spec. Its ids are BOOT_NNN, not ROM_NNN, so with
-    # `{BLOCK}_\d{3}` its Verification items are inferred (keyed rom.h<hash>).
+    # The bootloader in ROM has its own spec, whose ids are BOOT_NNN, not ROM_NNN.
     layout: { spec: ["doc/specs/QNSC_ROM_MAS.md", "doc/specs/QNSC_BOOT_SPEC.md"] }
+    spec:
+      requirements: { id_pattern: '(?:ROM|BOOT)_\d{3}' }
   scrc: {}
   spi:
     # The contract names spi's two interrupts by peripheral (D38).

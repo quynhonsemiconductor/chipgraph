@@ -236,8 +236,23 @@ class PathRule(BaseModel):
         return self
 
 
+class BlockSpecOverride(BaseModel):
+    """The part of `spec` a block may override: how its requirement IDs are found.
+
+    Only the fields that are set replace the project's, e.g. a block whose spec also
+    carries another prefix: `blocks.rom.spec.requirements.id_pattern: '(?:ROM|BOOT)_\\d{3}'`
+    keeps the project's `infer` mode.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    requirements: RequirementsCfg | None = Field(
+        default=None, description="Requirement-ID settings for this block (D37)."
+    )
+
+
 class BlockOverride(BaseModel):
-    """Per-block overrides: only adapters, layout, autonomy, paths and instances may be set.
+    """Per-block overrides: adapters, layout, autonomy, paths, spec requirements, instances.
 
     `instances` names the memory-map instances of this block, treated as an IP (D38):
     e.g. `blocks.timer.instances: [timer_0, timer_1]`. Each name is a single model-key
@@ -258,6 +273,10 @@ class BlockOverride(BaseModel):
     )
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Per-block path rule overrides."
+    )
+    spec: BlockSpecOverride = Field(
+        default_factory=BlockSpecOverride,
+        description="Per-block requirement-ID settings; only the fields set override.",
     )
     instances: tuple[str, ...] = Field(
         default=(),

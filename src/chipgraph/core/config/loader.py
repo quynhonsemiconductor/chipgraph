@@ -461,14 +461,17 @@ class ResolvedProfile:
     def for_block(self, name: str) -> Profile:
         """The profile with `blocks[name]` merged over it, if any.
 
-        `instances` is a block-level fact (D38), not a `Profile` field, so it is dropped
-        from the overlay here; it is consumed directly from `profile.blocks` by ingest.
+        Only the fields the block sets are merged. `instances` is a block-level fact (D38),
+        not a `Profile` field, so it is dropped from the overlay here; it is consumed
+        directly from `profile.blocks` by ingest.
         """
         override = self.profile.blocks.get(name)
         if override is None:
             return self.profile
         base = self.profile.model_dump(mode="python")
-        overlay = override.model_dump(mode="python")
+        # Only what the block sets: an unset nested field (say `spec.requirements.infer`)
+        # must not reset the project's value to the model default.
+        overlay = override.model_dump(mode="python", exclude_unset=True)
         overlay.pop("instances", None)
         dummy_source = SourceRef(kind="project", location="", version="")
         merged = _merge(base, overlay, dummy_source, {})
