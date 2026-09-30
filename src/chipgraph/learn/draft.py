@@ -127,7 +127,8 @@ def dump_profile_yaml(result: LearnResult, *, naming_rules_ref: str | None) -> s
     header = (
         "# chipgraph draft profile inferred by `chipgraph learn` (DESIGN.md 8.6 V1).\n"
         "# Review before use: each rule was inferred from the repo with a coverage figure.\n"
-        f"# Learned from: {result.root}\n"
+        # The directory name only: this file is committed, so no machine-local path.
+        f"# Learned from: {Path(result.root).name}/\n"
     )
     body = yaml.safe_dump(
         build_profile_dict(result, naming_rules_ref=naming_rules_ref),

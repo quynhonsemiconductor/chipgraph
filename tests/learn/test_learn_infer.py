@@ -103,3 +103,14 @@ def test_learn_exempts_vendored_directories(tmp_path: Path) -> None:
     module = _naming(result, "module")
     assert module is not None
     assert all("Acme" not in ex for ex in module.examples)  # type: ignore[attr-defined]
+
+
+def test_draft_profile_holds_no_machine_path(tmp_path: Path) -> None:
+    from chipgraph.learn import dump_profile_yaml, learn
+
+    repo = tmp_path / "some" / "deep" / "proj"
+    repo.mkdir(parents=True)
+    (repo / "a.sv").write_text("module a; endmodule\n")
+    text = dump_profile_yaml(learn(repo), naming_rules_ref=None)
+    assert str(tmp_path) not in text
+    assert "# Learned from: proj/" in text
