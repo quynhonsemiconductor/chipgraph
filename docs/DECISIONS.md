@@ -425,6 +425,10 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
   - Chỗ chưa map được thì báo, không im lặng: instance trong contract không thuộc IP nào; IP
     khai một instance không có trong contract; entity tham chiếu một block không tồn tại.
     `ingest` báo thành warning; check chéo (M1-07) biến chúng thành finding.
+  - Interrupt mà contract đặt tên theo peripheral, không theo block (`dma`, `spi_host`,
+    `wdt_wakeup`), thuộc IP có tên đó, hoặc IP khai tên đó trong `instances`
+    (`spi: [spi, spi_device, spi_host]`). `ingest` gán block và ghi
+    `attrs.block_from = profile`; tên đó không bị báo là instance lạ. (Bổ sung 2026-09-30.)
 - **Lý do:** tên không đủ tin để suy ra quan hệ; khai một lần trong profile là rõ và kiểm được.
   MAS mô tả IP, contract mô tả instance, nên hai tầng cần một cạnh nối rõ ràng.
 - **Bỏ:** đoán theo tiền tố hoặc hậu tố tên; đổi tên block trong profile cho khớp contract (mất

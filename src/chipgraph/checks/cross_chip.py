@@ -39,6 +39,7 @@ from chipgraph.core.model.entities import (
     EntityBase,
     InterruptEntity,
     MemoryRegionEntity,
+    ModuleEntity,
     PortEntity,
 )
 from chipgraph.core.model.model import DesignModel
@@ -192,49 +193,52 @@ def _interrupt_line_shared(model: DesignModel, scope: set[str] | None) -> list[I
 def _interrupt_count(
     model: DesignModel, scope: set[str] | None, port_regex: re.Pattern[str]
 ) -> list[Issue]:
-    """Compare an IP's declared interrupt-output width to its instances' contract lines."""
+    """Check each contract interrupt against the outputs of the IP it belongs to.
+
+    The IP's interrupt outputs are its spec output ports matching `port_regex` (width
+    summed). Using fewer of them than the IP has is valid (an instance may leave an
+    output unconnected, e.g. a timer in 64-bit mode). Two things are errors:
+
+    - `interrupt.count`: the contract gives the instance more interrupt sources than the
+      IP has outputs;
+    - `interrupt.port_unknown`: the contract names a port (`attrs.ports`) that the IP does
+      not have. The IP's port names are the RTL ports of the modules it owns (its wrapper
+      and the vendored IP). Without RTL in the model the name is not checked: a spec
+      describes the wrapper, not every port of the IP inside it.
+    """
     issues: list[Issue] = []
-    # Declared count per IP: sum of the widths of its spec interrupt output ports.
-    declared: dict[str, int] = {}
-    declared_prov: dict[str, tuple[str | None, int | None]] = {}
+    outputs: dict[str, int] = {}
+    output_prov: dict[str, tuple[str | None, int | None]] = {}
     for port in model.by_kind("port"):
         assert isinstance(port, PortEntity)
         ip = _spec_port_block(port)
-        if ip is None or port.direction != "output" or not port_regex.search(port.name):
+        if ip is None:
             continue
-        if not isinstance(port.width, int):
+        if port.direction != "output" or not port_regex.search(port.name):
             continue
-        declared[ip] = declared.get(ip, 0) + port.width
-        declared_prov.setdefault(ip, _prov(port))
+        if isinstance(port.width, int):
+            outputs[ip] = outputs.get(ip, 0) + port.width
+            output_prov.setdefault(ip, _prov(port))
 
-    # Instances per IP, and the number of interrupt lines the contract gives each.
-    for ip, want in sorted(declared.items()):
-        ip_key = block_key(ip)
-        instance_keys = sorted(r.src for r in model.get_relations(dst=ip_key, kind="instance_of"))
-        if not instance_keys:
-            instance_keys = [ip_key]  # same-name rule (D38): the IP is its own instance
-        # Compare per instance: each instance of the IP should carry `want` interrupt
-        # lines. An interrupt entity may aggregate several sources (`attrs.sources`), so
-        # count sources when the contract states them, else one line per interrupt entity.
-        for inst_key in instance_keys:
-            lines = 0
-            known = False
-            for irq in model.by_kind("interrupt"):
-                assert isinstance(irq, InterruptEntity)
-                if _entity_block(irq) != inst_key or irq.line is None:
-                    continue
-                known = True
-                sources = irq.attrs.get("sources")
-                lines += sources if isinstance(sources, int) and sources > 0 else 1
-            if not known:
-                continue  # the contract side is unknown for this instance; skip
-            if lines == want:
-                continue
-            if not _in_scope(scope, ip_key, inst_key):
-                continue
-            file, line = declared_prov[ip]
-            same_name = inst_key == ip_key
-            where = "its spec" if same_name else f"the spec of its IP {ip_key!r}"
+    rtl_names = _rtl_port_names_by_block(model)
+    ip_of = {r.src: r.dst for r in model.get_relations(kind="instance_of")}
+
+    for irq in sorted(model.by_kind("interrupt"), key=lambda e: e.key):
+        assert isinstance(irq, InterruptEntity)
+        inst_key = _entity_block(irq)
+        if inst_key is None or irq.line is None:
+            continue
+        ip_key = ip_of.get(inst_key, inst_key)
+        ip = _block_name_of(ip_key)
+        if not _in_scope(scope, ip_key, inst_key):
+            continue
+        file, line = _prov(irq)
+
+        sources = irq.attrs.get("sources")
+        count = sources if isinstance(sources, int) and sources > 0 else 1
+        have = outputs.get(ip)
+        if have is not None and count > have:
+            spec_file, spec_line = output_prov[ip]
             issues.append(
                 Issue(
                     file=file,
@@ -242,12 +246,55 @@ def _interrupt_count(
                     rule="interrupt.count",
                     severity="error",
                     msg=(
-                        f"instance {inst_key!r} has {lines} interrupt line(s) in the contract, "
-                        f"but {where} declares {want}"
+                        f"{irq.key!r} gives {inst_key!r} {count} interrupt source(s), but its IP "
+                        f"{ip_key!r} has {have} interrupt output(s) "
+                        f"({spec_file or '?'}:{spec_line or '-'})"
                     ),
                 )
             )
+
+        known = rtl_names.get(ip_key, set())
+        if not known:
+            continue  # no RTL for this IP in the model: its port names are unknown
+        ports = irq.attrs.get("ports")
+        for raw in ports if isinstance(ports, list) else []:
+            if not isinstance(raw, str):
+                continue
+            name = raw.split("[", 1)[0].strip()
+            if name and name not in known:
+                issues.append(
+                    Issue(
+                        file=file,
+                        line=line,
+                        rule="interrupt.port_unknown",
+                        severity="error",
+                        msg=(
+                            f"{irq.key!r} names port {name!r}, which IP {ip_key!r} does not "
+                            "have (not a port of any RTL module it owns)"
+                        ),
+                    )
+                )
     return issues
+
+
+def _block_name_of(block: str) -> str:
+    return block.partition(":")[2]
+
+
+def _rtl_port_names_by_block(model: DesignModel) -> dict[str, set[str]]:
+    """RTL port names of every module, grouped by the block that owns the module."""
+    owner = {
+        m.key: m.block
+        for m in model.by_kind("module")
+        if isinstance(m, ModuleEntity) and isinstance(m.block, str)
+    }
+    names: dict[str, set[str]] = {}
+    for port in model.by_kind("port"):
+        assert isinstance(port, PortEntity)
+        block = owner.get(port.module or "")
+        if block is not None:
+            names.setdefault(block, set()).add(port.name)
+    return names
 
 
 def _interrupt_no_block(model: DesignModel, scope: set[str] | None) -> list[Issue]:

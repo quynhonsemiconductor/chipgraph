@@ -177,3 +177,33 @@ def test_relate_module_owned_by_instance_still_referenced() -> None:
     rtl = _part("rtl", "block:timer_0", mod)
     _, result = ingest([chip, rtl], ip_blocks={"timer": ("timer_0",)})
     assert not [i for i in result.issues if i.code == "block_unknown"]
+
+
+def test_interrupts_named_by_peripheral_get_a_block_from_the_profile() -> None:
+    from chipgraph.core.model.entities import InterruptEntity
+
+    chip = SourcePart(
+        source="chip",
+        block=None,
+        model=DesignModel.build(
+            [
+                BlockEntity(key="block:spi", name="spi"),
+                BlockEntity(key="block:gpio_0", name="gpio_0"),
+                InterruptEntity(
+                    key="interrupt:spi_host",
+                    name="spi_host",
+                    line=2,
+                    attrs={"peripheral": "spi_host"},
+                ),
+                InterruptEntity(key="interrupt:gpio", name="gpio", line=9),
+                InterruptEntity(key="interrupt:mystery", name="mystery", line=3),
+            ]
+        ),
+    )
+    model, result = ingest([chip], ip_blocks={"spi": ("spi", "spi_host"), "gpio": ("gpio_0",)})
+    spi_host = model.get("interrupt:spi_host")
+    gpio = model.get("interrupt:gpio")
+    assert spi_host.block == "block:spi" and spi_host.attrs["block_from"] == "profile"
+    assert gpio.block == "block:gpio"  # the IP's own name
+    assert model.get("interrupt:mystery").block is None  # never guessed
+    assert not [i for i in result.issues if i.code == "instance_unknown"]

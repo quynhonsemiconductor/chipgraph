@@ -102,7 +102,9 @@ blocks:
     # `{BLOCK}_\d{3}` its Verification items are inferred (keyed rom.h<hash>).
     layout: { spec: ["doc/specs/QNSC_ROM_MAS.md", "doc/specs/QNSC_BOOT_SPEC.md"] }
   scrc: {}
-  spi: {}
+  spi:
+    # The contract names spi's two interrupts by peripheral (D38).
+    instances: [spi, spi_device, spi_host]
   syscsr: {}
   sysdbg: {}
   timer:
@@ -110,7 +112,8 @@ blocks:
   top: {}
   uart:
     instances: [uart_0, uart_1]
-  wdt: {}
+  wdt:
+    instances: [wdt, wdt_wakeup]  # the wakeup interrupt, named by peripheral
 
 # The MAS template matches the spec pattern but is not a block's spec.
 paths:
