@@ -35,7 +35,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def _copy_tinysoc(dest: Path) -> Path:
     shutil.copytree(_EXAMPLE_ROOT, dest)
     shutil.rmtree(dest / ".chipgraph" / "decisions", ignore_errors=True)
-    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, check=True)
     _git(dest, "config", "user.email", "t@example.invalid")
     _git(dest, "config", "user.name", "t")
     _git(dest, "add", "-A")
