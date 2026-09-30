@@ -76,7 +76,10 @@ def _changed_files(root: Path) -> list[str]:
         text=True,
         check=True,
     ).stdout
-    files = [line[3:] for line in out.splitlines() if line[3:] and not line[3:].startswith(".s7/")]
+    # .s7/ is the harness's own state; .claude/ is Claude Code's (committed at setup, but
+    # it may add files such as settings.local.json during a run). Neither is agent work.
+    ignored = (".s7/", ".claude/")
+    files = [line[3:] for line in out.splitlines() if line[3:] and not line[3:].startswith(ignored)]
     return sorted(files)
 
 
