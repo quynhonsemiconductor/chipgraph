@@ -12,6 +12,10 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
   domain, the three blocks, and `timer`'s one interrupt. Read by `chipgraph ingest`.
 - `doc/specs/<BLOCK>_MAS.md` — a short MAS per block (`TINY_TIMER`, `TINY_GPIO`),
   the seed for the `spec-core` `mas-markdown` extractor; kept truthful to `rtl/`.
+- `dv/test_tiny_<block>.py` — testbench *stubs*, one per block with a MAS. They are
+  **not run by anything yet** (there is no simulator wired to tinysoc's `dv/`); each
+  test function names, in a `# verifies: <REQ-ID>` comment, the requirement it stands
+  in for, so the `trace` cross check has a test that references every declared REQ-ID.
 - `filelists/<block>.f` — one Verilator filelist per block (`timer`, `gpio`, `top`),
   paths relative to this directory.
 - `Makefile` — `make lint BLOCK=<block>` runs `verilator --lint-only -Wall`;
