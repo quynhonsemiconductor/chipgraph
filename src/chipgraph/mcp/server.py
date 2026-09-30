@@ -27,6 +27,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from chipgraph import __version__
+from chipgraph.adapters.runtime.claude_code import decisions as cc_decisions
 from chipgraph.adapters.runtime.claude_code import service as cc_service
 from chipgraph.app.build import make_scheduler
 from chipgraph.app.checks import ProfileCheckRunner
@@ -285,6 +286,37 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
     async def submit(task_id: str, result: cc_service.SubmitReport | None = None) -> dict[str, Any]:
         async with runtime_lock:
             return await cc_service.submit(_load_ctx(), task_id, result)
+
+    # --- decide() in runtime claude-code (M1-12): questions for the decider subagent ---
+
+    @server.tool(
+        description=(
+            "Questions decide() queued for a model: for each, start one decider subagent "
+            "(agent, model, prompt as given) and pass its JSON answer to answer_decision."
+        )
+    )
+    @_guard
+    async def pending_decisions() -> dict[str, Any]:
+        async with runtime_lock:
+            return cc_decisions.pending_decisions(_load_ctx().layout)
+
+    @server.tool(
+        description=(
+            "Record the decider's answer to a pending question: value (one of its "
+            "choices), confidence from 0 to 1, and a short reason."
+        )
+    )
+    @_guard
+    async def answer_decision(
+        question_id: str, value: str, confidence: float, reason: str = ""
+    ) -> dict[str, Any]:
+        async with runtime_lock:
+            try:
+                return cc_decisions.answer_decision(
+                    _load_ctx().layout, question_id, value, confidence, reason
+                )
+            except cc_decisions.DecisionStateError as exc:
+                raise ToolError(str(exc)) from exc
 
     @server.tool(
         description="Retrieve a block and what it contains: modules, ports, registers, interrupts."
