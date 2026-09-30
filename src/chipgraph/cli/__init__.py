@@ -340,6 +340,73 @@ def check(
         raise typer.Exit(code=1)
 
 
+# --- audit --------------------------------------------------------------------------
+
+
+def _print_audit_text(report: object) -> None:
+    from chipgraph.packs.assist.audit import AuditReport
+
+    assert isinstance(report, AuditReport)
+    if report.ingest.ran:
+        by_sev = report.ingest.by_severity
+        summary = ", ".join(f"{sev}={by_sev[sev]}" for sev in sorted(by_sev)) or "none"
+        typer.echo(f"ingest issues: {summary}")
+        for message in report.ingest.errors:
+            typer.echo(f"  error  {message}")
+
+    typer.echo("checks:")
+    for check in report.checks:
+        typer.echo(
+            f"  {check.status.upper():6} {check.check_id} {check.block or '-'} "
+            f"L{check.layer} {check.issues} issues"
+        )
+
+    if not report.layers:
+        typer.echo("findings: none")
+    for layer in report.layers:
+        sev = ", ".join(f"{s}={layer.by_severity[s]}" for s in sorted(layer.by_severity))
+        st = ", ".join(f"{s}={layer.by_status[s]}" for s in sorted(layer.by_status))
+        typer.echo(f"layer {layer.layer}: {sev}   [{st}]")
+        for finding in layer.findings:
+            mark = "BLOCK" if finding.blocking else "     "
+            typer.echo(
+                f"  {mark} {finding.id}  {finding.severity:9}{finding.status:10}"
+                f"{finding.source:16}{finding.evidence:40}{finding.claim}"
+            )
+    typer.echo(report.summary_line())
+
+
+@app.command()
+@_handle_errors
+def audit(
+    ctx: typer.Context,
+    block: Annotated[
+        list[str], typer.Option("--block", help="Audit only this block (repeatable).")
+    ] = [],  # noqa: B006
+    no_ingest: Annotated[
+        bool, typer.Option("--no-ingest", help="Skip the ingest step (reuse the model cache).")
+    ] = False,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit 1 if any blocking finding exists.")
+    ] = False,
+) -> None:
+    """Run every deterministic check over the whole project, grouped by layer (DESIGN 4.8)."""
+    from chipgraph.packs.assist.audit import run_audit
+
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    app_ctx.require_profile()
+    report = run_audit(app_ctx, ingest=not no_ingest, blocks=list(block) if block else None)
+
+    if state.json_output:
+        typer.echo(json.dumps(report.model_dump(mode="json"), indent=2))
+    else:
+        _print_audit_text(report)
+
+    if strict and report.has_blocking:
+        raise typer.Exit(code=1)
+
+
 # --- ingest -------------------------------------------------------------------------
 
 
