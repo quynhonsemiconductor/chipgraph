@@ -380,7 +380,6 @@ class ResolvedProfile:
     def check(self) -> list[ConfigIssue]:
         """Consistency problems: user overreach, duplicate layout templates, local plugins."""
         issues: list[ConfigIssue] = []
-
         for area, user_level in self.user.autonomy.items():
             project_level = self.profile.autonomy.get(area)
             if project_level is not None and _LEVEL_ORDER[user_level] > _LEVEL_ORDER[project_level]:
@@ -420,6 +419,24 @@ class ResolvedProfile:
                 )
             seen[name] = template
 
+        instance_owner: dict[str, str] = {}
+        for block_name in sorted(self.profile.blocks):
+            override = self.profile.blocks[block_name]
+            for instance in override.instances:
+                other = instance_owner.get(instance)
+                if other is not None:
+                    issues.append(
+                        ConfigIssue(
+                            severity="error",
+                            key=f"blocks.{block_name}.instances",
+                            message=(
+                                f"instance {instance!r} is already an instance of block {other!r}"
+                            ),
+                        )
+                    )
+                else:
+                    instance_owner[instance] = block_name
+
         for index, plugin in enumerate(self.profile.plugins):
             issues.append(
                 ConfigIssue(
@@ -442,12 +459,17 @@ class ResolvedProfile:
         )
 
     def for_block(self, name: str) -> Profile:
-        """The profile with `blocks[name]` merged over it, if any."""
+        """The profile with `blocks[name]` merged over it, if any.
+
+        `instances` is a block-level fact (D38), not a `Profile` field, so it is dropped
+        from the overlay here; it is consumed directly from `profile.blocks` by ingest.
+        """
         override = self.profile.blocks.get(name)
         if override is None:
             return self.profile
         base = self.profile.model_dump(mode="python")
         overlay = override.model_dump(mode="python")
+        overlay.pop("instances", None)
         dummy_source = SourceRef(kind="project", location="", version="")
         merged = _merge(base, overlay, dummy_source, {})
         return Profile.model_validate(merged)

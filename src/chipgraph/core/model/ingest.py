@@ -23,7 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from chipgraph.core.model.entities import EntityBase, ModuleEntity
+from chipgraph.core.model.entities import BlockEntity, EntityBase, ModuleEntity
 from chipgraph.core.model.json_value import JSONValue
 from chipgraph.core.model.model import DesignModel
 from chipgraph.core.model.relations import Relation
@@ -130,12 +130,19 @@ def ingest(
     *,
     input_files: Sequence[InputFile] = (),
     profile_digest: str | None = None,
+    ip_blocks: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[DesignModel, IngestResult]:
     """Merge `parts` into one model, plus stats, issues and a build-inputs hash.
 
     Deterministic: the returned model, stats and issues do not depend on the order of
     `parts`, and the module-ownership rule breaks every tie the same way each time. Never
     raises on conflicting content: a content conflict is kept-one-and-recorded.
+
+    `ip_blocks` maps an IP block name to the names of its declared memory-map instances
+    (D38). When given, ingest ensures a `block:<ip>` entity exists (with `attrs.role =
+    "ip"` if it had to create it), links each existing instance to its IP with an
+    `instance_of` relation, and reports instances/blocks it cannot map as warnings. Passing
+    `None` leaves behaviour unchanged.
     """
     ordered = _order_parts(parts)
     owners = _assign_ownership(ordered)
@@ -145,6 +152,8 @@ def ingest(
         _merge_part(state, part, owners)
 
     _add_ownership_relations(state, owners)
+    if ip_blocks is not None:
+        _add_instance_relations(state, ip_blocks)
     model = DesignModel(entities=dict(state.entities), relations=tuple(state.relations))
 
     for message in model.validate_relations():
@@ -423,6 +432,131 @@ def _add_ownership_relations(state: _MergeState, owners: Mapping[str, _Ownership
             continue
         seen.add(pair)
         state.relations.append(Relation(kind="contains", src=ownership.owner, dst=module_key))
+
+
+# --- instances (D38) ---------------------------------------------------------------
+
+
+def _block_key(name: str) -> str:
+    return f"block:{name}"
+
+
+def _add_instance_relations(state: _MergeState, ip_blocks: Mapping[str, tuple[str, ...]]) -> None:
+    """Ensure IP blocks exist and link each memory-map instance to its IP (D38).
+
+    For each IP its instance set is the declared instances, or `(ip,)` when none is
+    declared (the same-name rule). A `block:<ip>` entity is created (with `attrs.role =
+    "ip"`) when missing. An `instance_of` relation is added for every instance that exists
+    in the merged model and differs from the IP. Instances/blocks that cannot be mapped
+    are reported as deterministic warnings.
+    """
+    instance_to_ip: dict[str, str] = {}
+    for ip in sorted(ip_blocks):
+        declared = ip_blocks[ip]
+        instances = declared if declared else (ip,)
+
+        ip_key = _block_key(ip)
+        if ip_key not in state.entities:
+            state.entities[ip_key] = BlockEntity(key=ip_key, name=ip, attrs={"role": "ip"})
+
+        for instance in instances:
+            instance_key = _block_key(instance)
+            if instance_key not in state.entities:
+                # A declared instance with no matching block in the model.
+                if instance != ip:
+                    state.issues.append(
+                        IngestIssue(
+                            severity="warning",
+                            code="instance_unknown",
+                            message=(
+                                f"block {ip!r} declares instance {instance!r}, but there is "
+                                f"no {instance_key!r} in the model"
+                            ),
+                            key=instance_key,
+                            block=ip_key,
+                        )
+                    )
+                continue
+            instance_to_ip[instance] = ip
+            if instance == ip:
+                # Same-name rule: the IP is its own instance; do not relate it to itself.
+                continue
+            state.relations.append(Relation(kind="instance_of", src=instance_key, dst=ip_key))
+
+    _report_unmapped_instances(state, ip_blocks, instance_to_ip)
+    _report_unknown_blocks(state)
+
+
+def _report_unmapped_instances(
+    state: _MergeState,
+    ip_blocks: Mapping[str, tuple[str, ...]],
+    instance_to_ip: Mapping[str, str],
+) -> None:
+    """Warn about every block in the model that is neither an IP nor an instance of one."""
+    ips = set(ip_blocks)
+    mapped = set(instance_to_ip)
+    for key in sorted(state.entities):
+        entity = state.entities[key]
+        if not isinstance(entity, BlockEntity):
+            continue
+        name = _block_name(key)
+        if name in ips or name in mapped:
+            continue
+        state.issues.append(
+            IngestIssue(
+                severity="warning",
+                code="instance_unmapped",
+                message=(
+                    f"block {key!r} is neither a declared IP nor an instance of one; "
+                    "declare it under blocks.<ip>.instances"
+                ),
+                key=key,
+            )
+        )
+
+
+def _report_unknown_blocks(state: _MergeState) -> None:
+    """Warn once per `block:<x>` referenced but absent from the model.
+
+    Checks the typed `block` field of modules, registers, interrupts and memory regions,
+    an `attrs.block` on any entity, and every relation endpoint. Each distinct missing
+    block is reported once, with a count and one example key.
+    """
+    referrers: dict[str, list[str]] = {}
+
+    def record(block_ref: str, referrer: str) -> None:
+        if not block_ref.startswith("block:"):
+            return
+        if block_ref in state.entities:
+            return
+        referrers.setdefault(block_ref, []).append(referrer)
+
+    for key in sorted(state.entities):
+        entity = state.entities[key]
+        typed_block = getattr(entity, "block", None)
+        if isinstance(typed_block, str) and typed_block:
+            record(typed_block, key)
+        attr_block = entity.attrs.get("block")
+        if isinstance(attr_block, str) and attr_block:
+            record(attr_block, key)
+
+    for index, relation in enumerate(state.relations):
+        for endpoint in (relation.src, relation.dst):
+            record(endpoint, f"relation[{index}]:{relation.kind}")
+
+    for block_ref in sorted(referrers):
+        examples = sorted(referrers[block_ref])
+        state.issues.append(
+            IngestIssue(
+                severity="warning",
+                code="block_unknown",
+                message=(
+                    f"{block_ref!r} is referenced by {len(examples)} entity/relation(s) "
+                    f"but is not in the model (e.g. {examples[0]!r})"
+                ),
+                key=block_ref,
+            )
+        )
 
 
 # --- stats and hashing -------------------------------------------------------------

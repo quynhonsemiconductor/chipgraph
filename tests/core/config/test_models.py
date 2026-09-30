@@ -93,6 +93,33 @@ def test_block_override_rejects_autonomy_l5() -> None:
         _minimal_profile(blocks={"uart": {"autonomy": {"rtl": "L5"}}})
 
 
+def test_block_override_accepts_instances() -> None:
+    profile = _minimal_profile(blocks={"timer": {"instances": ["timer_0", "timer_1"]}})
+    assert profile.blocks["timer"].instances == ("timer_0", "timer_1")
+
+
+def test_block_override_instances_default_empty() -> None:
+    profile = _minimal_profile(blocks={"pwm": {}})
+    assert profile.blocks["pwm"].instances == ()
+
+
+def test_block_override_rejects_empty_instance_name() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        _minimal_profile(blocks={"timer": {"instances": [""]}})
+
+
+def test_block_override_rejects_instance_name_with_colon_or_dot() -> None:
+    with pytest.raises(ValidationError, match="must not contain"):
+        _minimal_profile(blocks={"timer": {"instances": ["block:timer_0"]}})
+    with pytest.raises(ValidationError, match="must not contain"):
+        _minimal_profile(blocks={"timer": {"instances": ["timer.0"]}})
+
+
+def test_block_override_rejects_duplicate_instance_within_block() -> None:
+    with pytest.raises(ValidationError, match="more than once"):
+        _minimal_profile(blocks={"timer": {"instances": ["timer_0", "timer_0"]}})
+
+
 def test_user_config_defaults() -> None:
     user = UserConfig()
     assert user.autonomy == {}

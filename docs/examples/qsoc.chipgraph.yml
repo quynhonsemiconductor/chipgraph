@@ -60,20 +60,28 @@ adapters:
 # design directory is still in an open PR (ingest warns about its missing filelist until
 # then). A block whose spec file is not QNSC_<BLOCK>_MAS.md maps it with its own
 # `layout.spec`; a list reads several files, and `[]` would say it has none.
+#
+# Each block is an IP (D38). The chip contract's memory map names instances, not IPs;
+# `instances:` lists an IP's instances so ingest links `block:<instance>` -> `block:<ip>`
+# with `instance_of`. Blocks with no `instances:` match a same-named instance in the
+# contract. `dma_cfg` and `isram_dbg` still need the owner's confirmation.
 blocks:
   bus: {}
   common: {}
   cpu: {}
-  dma: {}
+  dma:
+    instances: [dma_cfg]  # dma_cfg needs the owner's confirmation
   dsram:
     layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
-  gpio: {}
+  gpio:
+    instances: [gpio_0, gpio_1, gpio_2]
   i2c: {}
   intmap:
     layout: { spec: "doc/specs/QNSC_Interrupt_Map_MAS.md" }
   iomux: {}
   isram:
     layout: { spec: "doc/specs/QNSC_RAM_MAS.md" }
+    instances: [isram, isram_dbg]  # isram_dbg needs the owner's confirmation
   pwm: {}
   rom:
     # The bootloader in ROM has its own spec. Its ids are BOOT_NNN, not ROM_NNN, so with
@@ -83,9 +91,11 @@ blocks:
   spi: {}
   syscsr: {}
   sysdbg: {}
-  timer: {}
+  timer:
+    instances: [timer_0, timer_1]
   top: {}
-  uart: {}
+  uart:
+    instances: [uart_0, uart_1]
   wdt: {}
 
 # The MAS template matches the spec pattern but is not a block's spec.
