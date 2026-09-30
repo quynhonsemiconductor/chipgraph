@@ -9,7 +9,7 @@ importable. It guarantees three things the tests pin:
   goes to a private working copy under a temp directory, so the repo is only ever read;
 - local plugins are disabled (`CHIPGRAPH_LOCAL_PLUGINS=0`): an untrusted repo must not run
   its own code during a `try`;
-- it works whether or not the `assist` pack's audit API is present yet.
+- it runs the `assist` pack's audit over the temporary state (no second ingest).
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class TryReport:
     ingest_summary: str
     checks: list[tuple[str, str | None, CheckResult]] = field(default_factory=list)
     audit_available: bool = False
-    audit_summary: str = "audit not available yet"
+    audit_summary: str = ""
 
     @property
     def check_files_with_issues(self) -> int:
@@ -150,23 +150,18 @@ def _instance(check_id: str, block: str | None) -> RuleInstance:
 
 
 def _try_audit(ctx: AppContext) -> tuple[bool, str]:
-    """Run the `assist` pack's audit API if it is importable, else report it is not there.
+    """Run the `assist` pack's audit over what `try` already ingested; its one-line summary.
 
-    `/audit` (task M1-20) is not on main yet, so `try` must work without it. The audit API
-    is discovered by import; any import or attribute error means it is not available.
+    Ingest has already run into the temporary state, so the audit does not repeat it. An
+    audit that fails is reported, not raised: `try` is a first look at a repo.
     """
+    from chipgraph.packs.assist import run_audit
+
     try:
-        from chipgraph.packs.assist import audit as audit_mod  # type: ignore[import-not-found]
-    except Exception:
-        return False, "audit not available yet"
-    runner = getattr(audit_mod, "run_audit", None)
-    if not callable(runner):
-        return False, "audit not available yet"
-    try:
-        summary = runner(ctx)
+        report = run_audit(ctx, ingest=False)
     except Exception as exc:
         return True, f"audit ran with errors: {exc}"
-    return True, f"audit: {summary}"
+    return True, f"audit: {report.summary_line()}"
 
 
 # --------------------------------------------------------------------------------------

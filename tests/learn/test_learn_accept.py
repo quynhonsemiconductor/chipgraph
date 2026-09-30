@@ -116,13 +116,13 @@ def test_try_disables_local_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert os.environ.get("CHIPGRAPH_LOCAL_PLUGINS") is None
 
 
-def test_try_works_without_the_audit_api(tmp_path: Path) -> None:
-    # The assist pack's audit API is not on main yet; try must still succeed and say so.
+def test_try_runs_the_audit(tmp_path: Path) -> None:
+    # try runs the assist pack's audit over its temporary state and reports one line.
     repo = make_prefixed_repo(tmp_path / "repo")
     git_init(repo)
     report = try_run(repo)
-    assert report.audit_available is False
-    assert report.audit_summary == "audit not available yet"
+    assert report.audit_available is True
+    assert report.audit_summary.startswith("audit: ")
 
 
 def test_try_from_a_written_draft_profile(tmp_path: Path) -> None:

@@ -87,8 +87,8 @@ def test_try_json_reports_audit_status(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["--json", "try", str(repo)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["audit_available"] is False
-    assert payload["audit"] == "audit not available yet"
+    assert payload["audit_available"] is True
+    assert payload["audit"].startswith("audit: ")
 
 
 def test_init_from_learn_writes_profile(tmp_path: Path) -> None:
