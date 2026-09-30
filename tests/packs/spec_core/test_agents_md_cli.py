@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -156,9 +157,13 @@ def test_no_profile_is_an_error(tmp_path: Path) -> None:
 
 
 def test_help_says_a_pr_is_out_of_scope() -> None:
-    result = runner.invoke(app, ["agents-md", "--help"], env={"TERMINAL_WIDTH": "200"})
+    # CI may force colour (rich splits option names with ANSI codes): strip them.
+    result = runner.invoke(
+        app, ["agents-md", "--help"], env={"TERMINAL_WIDTH": "200", "NO_COLOR": "1"}
+    )
     assert result.exit_code == 0
-    flat = " ".join(result.stdout.replace("\u2502", " ").split())
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    flat = " ".join(plain.replace("\u2502", " ").split())
     assert "Opening a PR is out of scope" in flat
     for option in ("--write", "--check", "--path"):
         assert option in flat
