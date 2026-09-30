@@ -27,11 +27,11 @@ def test_spec_schema_passes_on_tinysoc(tmp_path: Path) -> None:
     assert result.status == "pass", [i.msg for i in result.issues]
 
 
-def test_skips_when_model_is_missing(tmp_path: Path) -> None:
+def test_errors_when_model_is_missing(tmp_path: Path) -> None:
     (tmp_path / ".chipgraph").mkdir()
     result = run_check(SpecSchemaCheck(), tmp_path)
-    assert result.status == "skipped"
-    assert result.ok
+    assert result.status == "error"
+    assert not result.ok
     assert "ingest" in result.issues[0].msg
 
 

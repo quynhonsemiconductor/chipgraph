@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from chipgraph.checks._common import compute_idempotency_key
+from chipgraph.checks._common import compute_idempotency_key, error_result
 from chipgraph.checks._model import LoadedModel, ModelUnavailable, block_param, load_model
 from chipgraph.core.contracts import CheckResult, CheckSpec, Issue
 from chipgraph.core.contracts.types import CheckStatus
@@ -21,18 +21,16 @@ from chipgraph.core.plugin_api.types import ToolContext
 def load_model_or_skip(
     spec: CheckSpec, ctx: ToolContext, start: float
 ) -> LoadedModel | CheckResult:
-    """Load the Design Model, or return a `skipped` `CheckResult` when it is missing.
+    """Load the Design Model, or return an `error` `CheckResult` when it is missing.
 
     The cross checks never build the model themselves (`_model.py` docstring); a missing
-    store means `chipgraph ingest` has not run yet. Rather than fail a `check` a user ran
-    before ingesting (e.g. `chipgraph check` on a fresh tree, before `ingest`), the check
-    skips with a message naming the command to run. A `skipped` result is `ok`, so it
-    never blocks a build or a gate; once `ingest` has run, the check runs for real.
+    store means `chipgraph ingest` has not run yet, and the message says so. The same
+    rule holds for every model-based check (`trace`, `connect`, `hardcode` too).
     """
     try:
         return load_model(ctx.repo_root)
     except ModelUnavailable as exc:
-        return _skipped(spec, str(exc), start, rule="model")
+        return error_result(spec, str(exc), start, rule="model")
 
 
 def result_from_issues(
@@ -64,16 +62,6 @@ def result_from_issues(
 def sort_issues(issues: list[Issue]) -> list[Issue]:
     """Return `issues` in a stable, deterministic order."""
     return sorted(issues, key=lambda i: (i.file or "", i.line or 0, i.rule, i.msg))
-
-
-def _skipped(spec: CheckSpec, msg: str, start: float, *, rule: str) -> CheckResult:
-    return CheckResult(
-        check_id=spec.id,
-        status="skipped",
-        issues=(Issue(msg=msg, severity="info", rule=rule),),
-        duration_s=time.monotonic() - start,
-        idempotency_key=compute_idempotency_key(spec.id, spec.args, ()),
-    )
 
 
 def block_key(name: str) -> str:

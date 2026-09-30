@@ -29,11 +29,11 @@ def test_ports_diff_passes_on_tinysoc(tmp_path: Path) -> None:
     assert result.status == "pass", [i.msg for i in result.issues]
 
 
-def test_skips_when_model_is_missing(tmp_path: Path) -> None:
+def test_errors_when_model_is_missing(tmp_path: Path) -> None:
     (tmp_path / ".chipgraph").mkdir()
     result = run_check(PortsDiffCheck(), tmp_path, args=_TOP)
-    assert result.status == "skipped"
-    assert result.ok
+    assert result.status == "error"
+    assert not result.ok
 
 
 def test_missing_in_spec_when_a_port_is_removed(tmp_path: Path) -> None:

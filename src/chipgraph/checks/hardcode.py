@@ -65,6 +65,7 @@ class HardcodeCheck:
 
     id = "hardcode"
     name = "Hardcode"
+    per_block = False  # chip-wide: `chipgraph check` runs it once, not per block
 
     async def run(self, spec: CheckSpec, ctx: ToolContext) -> CheckResult:
         start = time.monotonic()
