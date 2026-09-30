@@ -27,6 +27,7 @@ from pathlib import Path
 from chipgraph.app.build import load_rules
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
+from chipgraph.app.findings import finding_current_hashes
 from chipgraph.core.contracts import Approval, ArtifactRef, Finding, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
 from chipgraph.core.engine.baseline import (
@@ -246,7 +247,7 @@ def _open_findings(ctx: AppContext) -> list[Finding]:
     open_rows: list[Finding] = []
     for finding in store.list():
         waivers = ctx.review.approvals(waiver_gate_id(finding.id))
-        current_hashes = ctx.store.current_hashes(finding.artifacts)
+        current_hashes = finding_current_hashes(ctx.store, finding, waivers)
         if effective_status(finding, waivers, current_hashes) == "open":
             open_rows.append(finding)
     return open_rows

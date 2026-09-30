@@ -8,7 +8,8 @@ waiver decision through the `ReviewAdapter` (`chipgraph.adapters.review.file.Fil
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
 from chipgraph.app.errors import AppError
@@ -107,6 +108,41 @@ def findings_from_check(
     return findings
 
 
+ABSENT_HASH = hashlib.sha256(b"chipgraph:absent-file").hexdigest()
+"""The hash a waiver records for a bound file that does not exist yet.
+
+When the file appears, its real hash differs, so the waiver stops being current."""
+
+
+def bound_hashes(store: ArtifactStore, paths: Iterable[str]) -> dict[str, str]:
+    """`{"<repo>:<path>": hash}` for `paths`, with `ABSENT_HASH` for a missing file."""
+    refs = [ArtifactRef(kind="other", path=path) for path in paths]
+    present = store.current_hashes(refs)
+    return {
+        f"{ref.repo}:{ref.path}": present.get(f"{ref.repo}:{ref.path}", ABSENT_HASH) for ref in refs
+    }
+
+
+def finding_current_hashes(
+    store: ArtifactStore, finding: Finding, waivers: Iterable[Approval]
+) -> dict[str, str]:
+    """The current hashes to judge `finding`'s waivers against.
+
+    The finding's own artifacts, plus every file a waiver was bound to with `--bind`
+    (a missing one hashes to `ABSENT_HASH`), so a waiver on a whole-check finding
+    expires when a bound file appears or changes.
+    """
+    current = store.current_hashes(finding.artifacts)
+    extra = sorted(
+        key.partition(":")[2]
+        for waiver in waivers
+        for key in waiver.artifact_hashes
+        if key not in current and key.partition(":")[2]
+    )
+    current.update(bound_hashes(store, extra))
+    return current
+
+
 def waive(
     finding: Finding,
     *,
@@ -122,8 +158,10 @@ def waive(
     `note`. The waiver's `artifact_hashes` come from `finding.artifact_hashes` (its
     hashes at detection time), unless `current_hashes` is given, in which case the
     waiver binds to `finding.artifacts`' *current* hashes instead (waiving as of now,
-    not as of whenever the finding was first recorded). Raises `ValueError` if `reason`
-    is blank, or `AppError` if `finding` has no artifact hashes to bind a waiver to.
+    not as of whenever the finding was first recorded). A finding with no file (a
+    whole-check error) is bound with `current_hashes` from `bound_hashes` instead (the
+    CLI's `--bind`). Raises `ValueError` if `reason` is blank, or `AppError` if there is
+    no artifact hash to bind a waiver to.
 
     Also updates the finding's stored `status` to `"waived"` in `store`, for display
     convenience; `chipgraph.core.state.findings.effective_status` remains the source of
@@ -135,7 +173,8 @@ def waive(
     hashes = dict(current_hashes) if current_hashes else dict(finding.artifact_hashes)
     if not hashes:
         raise AppError(
-            f"cannot waive finding {finding.id!r}: it has no artifact hashes to bind the waiver to"
+            f"cannot waive finding {finding.id!r}: it has no file to bind the waiver to; "
+            "name the files whose change should end the waiver with --bind PATH"
         )
 
     approval = Approval(
@@ -153,4 +192,12 @@ def waive(
     return stored
 
 
-__all__ = ["LAYER_BY_CHECK", "findings_from_check", "layer_for_check", "waive"]
+__all__ = [
+    "ABSENT_HASH",
+    "LAYER_BY_CHECK",
+    "bound_hashes",
+    "finding_current_hashes",
+    "findings_from_check",
+    "layer_for_check",
+    "waive",
+]

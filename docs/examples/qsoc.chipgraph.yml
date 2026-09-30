@@ -63,7 +63,9 @@ adapters:
   cross_chip: { use: cross_chip }
   ports_diff: { use: ports_diff, top: "m_qnsc_wrap_{block}" }
   duplicate: { use: duplicate, scope: ["design/**/*.sv", "design/**/*.v"] }
-  trace: { use: trace, tests: ["design/*/dv/**/*", "dv/**/*"] }
+  # QSoC has no DV tests yet: report untraced requirements, but do not block, until DV
+  # starts (then drop `severity`).
+  trace: { use: trace, tests: ["design/*/dv/**/*", "dv/**/*"], severity: warning }
   connect: { use: connect }
   hardcode:
     use: hardcode

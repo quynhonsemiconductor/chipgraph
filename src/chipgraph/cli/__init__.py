@@ -1050,7 +1050,7 @@ def _findings_with_effective_status(
     rows: list[Finding] = []
     for finding in store.list(layer=layer):
         waivers = app_ctx.review.approvals(waiver_gate_id(finding.id))
-        current_hashes = app_ctx.store.current_hashes(finding.artifacts)
+        current_hashes = findings_app.finding_current_hashes(app_ctx.store, finding, waivers)
         eff = effective_status(finding, waivers, current_hashes)
         if status != "all" and eff != status:
             continue
@@ -1099,6 +1099,17 @@ def waive_cmd(
     finding_id: Annotated[str, typer.Argument(help="A finding id, e.g. 'F-1a2b3c4d'.")],
     reason: Annotated[str, typer.Option("--reason", help="Why this finding is waived.")],
     by: Annotated[str | None, typer.Option("--by")] = None,
+    bind: Annotated[
+        list[str],
+        typer.Option(
+            "--bind",
+            help=(
+                "Also bind the waiver to this repo file (repeatable; may not exist yet). "
+                "Needed for a finding with no file; the waiver ends when a bound file "
+                "appears or changes."
+            ),
+        ),
+    ] = [],  # noqa: B006
 ) -> None:
     """Waive a finding, binding the waiver to its artifacts' current hashes."""
     state: CliState = ctx.obj
@@ -1111,6 +1122,7 @@ def waive_cmd(
 
     who = by or default_identity()
     current_hashes = app_ctx.store.current_hashes(finding.artifacts)
+    current_hashes.update(findings_app.bound_hashes(app_ctx.store, bind))
     try:
         waived = findings_app.waive(
             finding,

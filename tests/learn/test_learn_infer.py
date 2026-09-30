@@ -114,3 +114,47 @@ def test_draft_profile_holds_no_machine_path(tmp_path: Path) -> None:
     text = dump_profile_yaml(learn(repo), naming_rules_ref=None)
     assert str(tmp_path) not in text
     assert "# Learned from: proj/" in text
+
+
+def test_one_file_of_a_kind_is_not_learned_as_a_layout(tmp_path: Path) -> None:
+    # QSoC main has one RTL file, `design/top/rtl/qnsc_pkg.sv`: not a convention.
+    from chipgraph.learn import learn
+
+    (tmp_path / "design" / "top" / "rtl").mkdir(parents=True)
+    (tmp_path / "design" / "top" / "rtl" / "qnsc_pkg.sv").write_text("package p; endpackage\n")
+    (tmp_path / "design" / "top" / "top.f").write_text("rtl/qnsc_pkg.sv\n")
+    (tmp_path / "design" / "pwm").mkdir(parents=True)
+    (tmp_path / "design" / "pwm" / "pwm.f").write_text("\n")
+    result = learn(tmp_path)
+    assert "rtl" not in {r.kind for r in result.layout}
+    assert any("only 1 file" in o.summary and o.topic == "layout" for o in result.observations)
+    assert {r.kind for r in result.layout} == {"filelist"}
+
+
+def test_a_file_name_without_the_block_becomes_a_glob(tmp_path: Path) -> None:
+    from chipgraph.learn import learn
+
+    for block, name in (("pwm", "pwm_core.sv"), ("uart", "uart_core.sv"), ("top", "qnsc_pkg.sv")):
+        d = tmp_path / "design" / block / "rtl"
+        d.mkdir(parents=True)
+        (d / name).write_text(
+            "module m; endmodule\n" if block != "top" else "package p; endpackage\n"
+        )
+        (tmp_path / "design" / block / f"{block}.f").write_text(f"rtl/{name}\n")
+    rtl = {r.kind: r for r in learn(tmp_path).layout}["rtl"]
+    assert rtl.template in ("design/{block}/rtl/{block}_core.sv", "design/{block}/rtl/*.sv")
+    assert "qnsc_pkg" not in rtl.template
+
+
+def test_draft_yaml_has_no_anchors(tmp_path: Path) -> None:
+    from chipgraph.learn import dump_profile_yaml, learn
+
+    for block in ("aa", "bb"):
+        d = tmp_path / "vendor" / block
+        d.mkdir(parents=True)
+        (d / "x.sv").write_text("module x; endmodule\n")
+    for block in ("timer", "gpio"):
+        (tmp_path / "rtl").mkdir(exist_ok=True)
+        (tmp_path / "rtl" / f"tiny_{block}.sv").write_text(f"module tiny_{block}; endmodule\n")
+    text = dump_profile_yaml(learn(tmp_path), naming_rules_ref=None)
+    assert "&id" not in text and "*id" not in text

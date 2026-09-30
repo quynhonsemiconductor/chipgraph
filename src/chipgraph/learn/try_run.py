@@ -29,7 +29,12 @@ import yaml
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.core.contracts import ArtifactRef, CheckResult, RuleInstance
-from chipgraph.learn.draft import build_naming_rules, build_profile_dict, dump_naming_rules_yaml
+from chipgraph.learn.draft import (
+    build_naming_rules,
+    build_profile_dict,
+    dump_naming_rules_yaml,
+    dump_yaml,
+)
 from chipgraph.learn.infer import DEFAULT_THRESHOLD, learn
 from chipgraph.learn.models import LearnResult
 
@@ -194,9 +199,7 @@ def _place_profile(work: Path, result: LearnResult, profile_path: Path | None) -
             )
     else:
         data = _draft_for_work(work, result)
-    (work / ".chipgraph.yml").write_text(
-        yaml.safe_dump(data, sort_keys=True, default_flow_style=False), encoding="utf-8"
-    )
+    (work / ".chipgraph.yml").write_text(dump_yaml(data), encoding="utf-8")
 
 
 def _draft_for_work(work: Path, result: LearnResult) -> dict[str, Any]:

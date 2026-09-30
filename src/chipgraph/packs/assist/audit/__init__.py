@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from chipgraph.app.baseline import baseline_gate_id
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
-from chipgraph.app.findings import layer_for_check
+from chipgraph.app.findings import finding_current_hashes, layer_for_check
 from chipgraph.app.ingest import run_ingest
 from chipgraph.core.contracts import ArtifactRef, CheckResult, RuleInstance
 from chipgraph.core.contracts.finding import Finding, FindingSeverity
@@ -218,8 +218,8 @@ def _audit_status(finding: Finding, ctx: AppContext) -> tuple[AuditFindingStatus
     baselined) `error` in a hard layer -- layers 1 and 5, or a lint error in layer 4 --
     is blocking.
     """
-    current_hashes = ctx.store.current_hashes(finding.artifacts)
     waivers = ctx.review.approvals(waiver_gate_id(finding.id))
+    current_hashes = finding_current_hashes(ctx.store, finding, waivers)
     status: AuditFindingStatus = effective_status(finding, waivers, current_hashes)
     if status == "open" and _is_baselined(finding, ctx, current_hashes):
         status = "baselined"
