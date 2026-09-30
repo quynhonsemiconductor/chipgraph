@@ -1141,6 +1141,74 @@ def waive_cmd(
         typer.echo(f"waived {waived.id} by {who!r}: {reason}")
 
 
+# --- agents-md ----------------------------------------------------------------------
+
+
+@app.command("agents-md")
+@_handle_errors
+def agents_md_cmd(
+    ctx: typer.Context,
+    write: Annotated[
+        bool, typer.Option("--write", help="Write the file (only if its content changes).")
+    ] = False,
+    check_only: Annotated[
+        bool,
+        typer.Option(
+            "--check", help="Exit 1 if the file on disk is not what --write would write (CI)."
+        ),
+    ] = False,
+    path: Annotated[
+        Path,
+        typer.Option("--path", help="The file to manage, relative to the project root."),
+    ] = Path("AGENTS.md"),
+) -> None:
+    """Generate chipgraph's part of AGENTS.md from the profile and org rules (optional, no AI).
+
+    Only the text between `<!-- chipgraph:begin -->` and `<!-- chipgraph:end -->` is
+    chipgraph's; the rest of the file is the team's and is kept byte for byte. A file
+    without the markers gets the block appended. By default the full resulting file is
+    printed and nothing is written. Opening a PR is out of scope: review and commit the
+    file yourself.
+    """
+    from chipgraph.core.config import load as load_config
+    from chipgraph.packs.spec_core.gen.agents_md import AgentsMdError, agents_md_content
+
+    state: CliState = ctx.obj
+    if write and check_only:
+        typer.echo("--write and --check cannot be used together", err=True)
+        raise typer.Exit(code=2)
+    resolved = load_config(state.start, profile_path=state.profile_path)
+    if resolved is None:
+        raise AppError("no .chipgraph.yml: only read-only commands work; run `chipgraph init`")
+    root = find_repo_root(state.start)
+    target = path if path.is_absolute() else root / path
+
+    try:
+        existing = target.read_bytes().decode("utf-8") if target.is_file() else None
+        content = agents_md_content(existing, resolved, root)
+    except (AgentsMdError, OSError, UnicodeDecodeError) as exc:
+        typer.echo(f"{path}: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    if check_only:
+        if content != existing:
+            typer.echo(f"{path} is out of date; run `chipgraph agents-md --write`", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"{path} is up to date")
+    elif write:
+        if content == existing:
+            typer.echo(f"{path} is up to date")
+            return
+        try:
+            target.write_bytes(content.encode("utf-8"))
+        except OSError as exc:
+            typer.echo(f"{path}: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo(f"wrote {path}")
+    else:
+        typer.echo(content, nl=False)
+
+
 # --- mcp ---------------------------------------------------------------------------
 
 

@@ -1,0 +1,178 @@
+{#- The chipgraph-managed block of AGENTS.md (pack spec-core, task M1-15).
+
+Rendered by chipgraph.packs.spec_core.gen.agents_md.render_agents_md, which normalizes the
+output: trailing spaces are dropped and runs of blank lines collapse to one. So a tag on a
+line of its own may leave a blank line (fine between paragraphs), while inside a list or a
+table every tag starts the line of the item it guards, so no blank line appears there.
+A project overrides one section with `templates.override: { agents_md_<name>: <file> }`.
+-#}
+## Project rules for coding agents (chipgraph)
+{% block agents_md_intro %}
+
+These rules come from this repository's chipgraph profile and the organization rules it
+extends. Follow them whenever you add or change a file.
+{% endblock %}
+{% block agents_md_project %}
+### Project and blocks
+
+- Project: {{ code(project.name) }}
+{% if project.extends %}- Extends: {% for e in project.extends %}{{ code(e) }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}{% if project.packs %}- Packs: {% for p in project.packs %}{{ code(p) }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}{% if project.chip_spec %}- Chip spec: {{ code(project.chip_spec.path) }} (format {{ code(project.chip_spec.format) }})
+{% endif %}{% if project.ip_dir %}- Per-IP specs: {{ code(project.ip_dir) }}
+{% endif %}- Target: {{ project.target_kind }}{% if project.pdk %}, PDK {{ code(project.pdk) }}{% endif %}
+{% if blocks %}
+
+Each block is an IP. Its instances are the names the chip's memory map uses for it; a
+block with no instances listed matches the instance of the same name.
+
+| Block | Instances |
+|---|---|
+{% for b in blocks %}| {{ code(b.name, cell=True) }} | {% if b.instances %}{% for i in b.instances %}{{ code(i, cell=True) }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}-{% endif %} |
+{% endfor %}
+{% endif %}
+{% endblock %}
+{% block agents_md_layout %}
+{% if layout or block_layout %}
+### Where files go
+
+Create each kind of file only at the path its template gives; do not invent new
+directories.{% if placeholders %} In a template, {% for p in placeholders %}{{ code(p) }} is the block name{% if p == "{BLOCK}" %} in upper case{% endif %}{% if not loop.last %} and {% endif %}{% endfor %}.{% endif %}
+{% if layout %}
+
+| Kind | Path template |
+|---|---|
+{% for row in layout %}| {{ text(row.kind) }} | {% if row.templates %}{% for t in row.templates %}{{ code(t, cell=True) }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}(none){% endif %} |
+{% endfor %}
+{% endif %}
+{% if block_layout %}
+
+Per-block overrides:
+
+| Block | Kind | Path template |
+|---|---|---|
+{% for row in block_layout %}| {{ code(row.block, cell=True) }} | {{ text(row.kind) }} | {% if row.templates %}{% for t in row.templates %}{{ code(t, cell=True) }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}(none){% endif %} |
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endblock %}
+{% block agents_md_naming %}
+{% if naming or naming_checker %}
+### Naming
+{% for rules in naming %}
+
+From {{ code(rules.ref) }} ({{ text(rules.document) }} v{{ text(rules.version) }}). The whole
+name must match the pattern for its kind:
+
+| Kind | Pattern | Rule | Message |
+|---|---|---|---|
+{% for row in rules.identifiers %}| {{ text(row.kind) }} | {{ code(row.pattern, cell=True) }} | {{ text(row.rule) }} | {{ text(row.message) }} |
+{% endfor %}
+{% if rules.lexical %}
+
+Every declared name also follows:
+
+{% for lex in rules.lexical %}- {{ text(lex.rule) }}: {{ text(lex.message) }}
+{% endfor %}
+{% endif %}
+{% if rules.vocabulary %}
+
+Words ({{ text(rules.vocabulary.rule) }}): use the project term on the right, never the
+word on the left: {% for pair in rules.vocabulary.pairs %}{{ code(pair[0]) }} -> {{ code(pair[1]) }}{% if not loop.last %}, {% endif %}{% endfor %}.
+{% endif %}
+
+A declaration line that ends with the comment {{ code(rules.ignore_comment) }} is exempt;
+use it only with a reason the reviewer accepts.
+{% endfor %}
+{% if naming_checker %}
+
+Naming is checked by the {{ code(naming_checker.use) }} checker{% if naming_checker.command %}: {{ code(naming_checker.command) }}{% endif %}.
+{% endif %}
+{% endif %}
+{% endblock %}
+{% block agents_md_checks %}
+### Before you open a PR
+
+Run these from the repository root and fix what they report:
+
+```sh
+chipgraph ingest    # build the Design Model; the cross checks read it
+chipgraph check     # run every configured check; exits 1 if one fails
+chipgraph audit     # every finding, grouped by layer
+```
+
+Scope a run with `chipgraph check --block <block>` or `chipgraph check --only <check>`.
+`chipgraph ingest --strict` and `chipgraph audit --strict` also exit 1, on an error-level
+ingest issue or a blocking finding.
+{% if checks %}
+
+Configured checks (a severity caps what the check reports; a command's `{block}` is the
+block name):
+
+| Check | Adapter | Severity | Command |
+|---|---|---|---|
+{% for c in checks %}| {{ code(c.id, cell=True) }} | {{ text(c.use) }} | {{ text(c.severity) if c.severity else "-" }} | {{ code(c.command, cell=True) if c.command else "-" }} |
+{% endfor %}
+{% endif %}
+{% if block_checks %}
+
+Per-block check overrides:
+
+| Block | Check | Adapter | Severity | Command |
+|---|---|---|---|---|
+{% for c in block_checks %}| {{ code(c.block, cell=True) }} | {{ code(c.id, cell=True) }} | {{ text(c.use) }} | {{ text(c.severity) if c.severity else "-" }} | {{ code(c.command, cell=True) if c.command else "-" }} |
+{% endfor %}
+{% endif %}
+{% endblock %}
+{% block agents_md_requirements %}
+### Requirement IDs
+
+- A requirement ID in a spec must match {{ code(requirements.id_pattern) }}{% if requirements.uses_block %}, with `{block}`/`{BLOCK}` replaced by the block name in lower/upper case{% if requirements.example %} (for {{ code(requirements.example.block) }}: {{ code(requirements.example.pattern) }}){% endif %}{% endif %}.
+{% if requirements.trace_check %}- Name the ID in the test that covers it: the {{ code(requirements.trace_check) }} check traces each requirement to a test.
+{% endif %}{% if requirements.infer %}- A spec without IDs is read in a temporary mode: each numbered item of its "{{ text(requirements.infer_heading) }}" section counts as one requirement, keyed by block and content hash. A declared ID always wins; add IDs rather than rely on this.
+{% endif %}
+{% if block_requirements %}
+
+Per-block overrides:
+
+| Block | ID pattern | Inferred from "{{ text(requirements.infer_heading) }}" |
+|---|---|---|
+{% for r in block_requirements %}| {{ code(r.block, cell=True) }} | {{ code(r.id_pattern, cell=True) }} | {{ "yes" if r.infer else "no" }} |
+{% endfor %}
+{% endif %}
+{% endblock %}
+{% block agents_md_paths %}
+{% if paths %}
+### Path exceptions
+
+These paths follow different rules. Do not write under a path whose write is `deny`,
+and do not add a new exception without a reason the reviewer accepts.
+
+| Path | Block | Checks | Write | Reason |
+|---|---|---|---|---|
+{% for p in paths %}| {{ code(p.glob, cell=True) }} | {{ code(p.block, cell=True) if p.block else "-" }} | {{ text(", ".join(p.checks)) if p.checks else "-" }} | {{ p.write }} | {{ text(p.reason) if p.reason else "-" }} |
+{% endfor %}
+{% endif %}
+{% endblock %}
+{% block agents_md_data %}
+{% if nda %}
+### Data labels
+
+Files matching these paths are labeled `nda`. Never send their content to a cloud model
+(do not paste it into a prompt, an issue or a web tool){% if nda.model == "local" %}; only a local model may read them (`nda_model: local`){% else %}; no model may read them (`nda_model: block`){% endif %}.
+
+{% for p in nda.paths %}- {{ code(p) }}
+{% endfor %}
+{% endif %}
+{% endblock %}
+{% block agents_md_generated %}
+{% if generated %}
+### Generated files
+
+chipgraph or the project's flow generates these files. Do not edit them by hand: change
+their source and regenerate them.
+
+{% for g in generated %}- {{ code(g) }}
+{% endfor %}
+{% endif %}
+{% endblock %}
