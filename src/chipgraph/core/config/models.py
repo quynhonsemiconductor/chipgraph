@@ -87,6 +87,9 @@ class RequirementsCfg(BaseModel):
         return re.compile(pattern)
 
 
+_DEFAULT_REGISTER_ACCESS = ("RW", "RO", "WO", "W1C", "RSVD")
+
+
 class SpecCfg(BaseModel):
     """Where the chip-level spec and per-IP specs live."""
 
@@ -98,6 +101,21 @@ class SpecCfg(BaseModel):
         default_factory=RequirementsCfg,
         description="How requirement IDs are found in text specs (D37).",
     )
+    register_access: tuple[str, ...] = Field(
+        default=_DEFAULT_REGISTER_ACCESS,
+        description=(
+            "Access modes a register-map cell may use (case-insensitive). The MAS "
+            "extractor rejects any other mode. Extend it for IP with extra modes, e.g. "
+            "'RW0C'/'RW1C' for OpenTitan-derived blocks."
+        ),
+    )
+
+    @field_validator("register_access")
+    @classmethod
+    def _access_non_empty(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("register_access must list at least one access mode")
+        return value
 
 
 class AdapterCfg(BaseModel):

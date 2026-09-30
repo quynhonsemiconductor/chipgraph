@@ -200,3 +200,28 @@ def test_requirements_infer_mode_from_profile_data() -> None:
         {"project": "x", "spec": {"requirements": {"infer": "verification"}}}
     )
     assert profile.spec.requirements.infer == "verification"
+
+
+# --------------------------------------------------------------------------------------
+# spec.register_access
+# --------------------------------------------------------------------------------------
+
+
+def test_register_access_default() -> None:
+    cfg = Profile(project="x").spec
+    assert cfg.register_access == ("RW", "RO", "WO", "W1C", "RSVD")
+
+
+def test_register_access_configurable() -> None:
+    profile = Profile.model_validate(
+        {
+            "project": "x",
+            "spec": {"register_access": ["RW", "RO", "WO", "W1C", "RSVD", "RW0C", "RW1C"]},
+        }
+    )
+    assert profile.spec.register_access == ("RW", "RO", "WO", "W1C", "RSVD", "RW0C", "RW1C")
+
+
+def test_register_access_rejects_empty() -> None:
+    with pytest.raises(ValidationError, match="at least one access mode"):
+        Profile.model_validate({"project": "x", "spec": {"register_access": []}})

@@ -61,7 +61,8 @@ _DIRECTIONS: dict[str, Literal["input", "output", "inout"]] = {
     "inout": "inout",
     "io": "inout",
 }
-_ACCESS_KINDS = ("RW", "RO", "WO", "W1C", "RSVD")
+_DEFAULT_ACCESS_MODES = ("RW", "RO", "WO", "W1C", "RSVD")
+"""Access modes accepted by default; kept in sync with ``SpecCfg.register_access``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,7 @@ class MasExtractor:
         requirements: RequirementsCfg = _DEFAULT_REQUIREMENTS,
         root: Path | None = None,
         template: MasTemplate = _DEFAULT_TEMPLATE,
+        access_modes: tuple[str, ...] = _DEFAULT_ACCESS_MODES,
     ) -> tuple[DesignModel, tuple[MasDiagnostic, ...]]:
         """Extract a :class:`DesignModel` from the MAS at ``path`` for ``block``.
 
@@ -148,6 +150,8 @@ class MasExtractor:
             requirements: How REQ-IDs are found (declared always, inferred if configured).
             root: Repo root; provenance ``file`` is written relative to it, POSIX.
             template: Section titles to look for.
+            access_modes: The register access modes a cell may use (case-insensitive); any
+                other mode is an ``error``. Defaults to the built-in set.
 
         Returns:
             ``(model, diagnostics)``. Diagnostics are never raised; the model always holds
@@ -159,12 +163,13 @@ class MasExtractor:
         builder = _Builder(file=rel_file, artifact=artifact)
         doc = md.scan(text)
 
+        allowed_access = frozenset(mode.upper() for mode in access_modes)
         block_lower = block.lower()
         block_key = make_key("block", block_lower)
 
         _extract_requirements(builder, doc, block_lower, block_key, requirements)
         _extract_ports(builder, doc, block_lower, block_key, template)
-        _extract_registers(builder, doc, block_lower, block_key, template)
+        _extract_registers(builder, doc, block_lower, block_key, template, allowed_access)
         _extract_open_items(builder, doc, block_lower, template)
 
         model = DesignModel.build(builder.entities, builder.relations)
@@ -357,7 +362,7 @@ def _ports_from_table(
         dir_cell = row.cells[cols["dir"]]
         width_cell = row.cells[cols["width"]]
         desc = row.cells[cols["description"]] if "description" in cols else ""
-        signals = _split_signals(signal_cell)
+        signals = _expand_signals(builder, signal_cell, row.line)
         if not signals:
             continue
         directions = _split_multi(dir_cell, len(signals))
@@ -401,17 +406,65 @@ def _ports_from_table(
             )
 
 
-def _split_signals(cell: str) -> list[str]:
-    """Split a signal cell into individual signal names.
+def _expand_signals(builder: _Builder, cell: str, line: int) -> list[str]:
+    """Split a signal cell into individual signal names, resolving shorthands.
 
-    Handles ``` `a`, `b`, `c` ``` (several signals in one cell) and a single signal.
-    Non-identifier fragments are dropped (e.g. a stray note).
+    Handles ``` `a`, `b`, `c` ``` (several signals in one cell) and a single signal. A
+    fragment that starts with ``_`` is a shorthand for the most recent full name in the
+    same cell with its last ``_<segment>`` replaced: after ``o_bus_axi_aw_len`` the
+    fragment ``_size`` means ``o_bus_axi_aw_size``. A leading ``_`` with no full name
+    before it in the cell is an ``error`` at the line. A fragment containing ``*`` is a
+    wildcard, not a port: it yields an ``info`` diagnostic and no entity. Other
+    non-identifier fragments are dropped silently (e.g. a stray note).
     """
     cleaned = tx.strip_cell_markup(cell)
     if not cleaned:
         return []
-    parts = [p.strip() for p in cleaned.split(",")]
-    return [p for p in parts if tx.is_identifier(p)]
+    signals: list[str] = []
+    previous: str | None = None
+    for raw in cleaned.split(","):
+        part = raw.strip()
+        if not part:
+            continue
+        if "*" in part:
+            builder.diag(
+                line,
+                "info",
+                "port.wildcard",
+                f"signal {part!r} is a wildcard, not a port; no entity",
+            )
+            continue
+        if part.startswith("_"):
+            resolved = _resolve_shorthand(previous, part)
+            if resolved is None:
+                builder.diag(
+                    line,
+                    "error",
+                    "port.shorthand",
+                    f"shorthand {part!r} has no full signal name before it in the cell",
+                )
+                continue
+            signals.append(resolved)
+            previous = resolved
+            continue
+        if tx.is_identifier(part):
+            signals.append(part)
+            previous = part
+    return signals
+
+
+def _resolve_shorthand(previous: str | None, shorthand: str) -> str | None:
+    """Resolve ``_<segment>`` against ``previous`` by replacing its last ``_<segment>``.
+
+    ``o_bus_axi_aw_len`` + ``_size`` -> ``o_bus_axi_aw_size``. Returns ``None`` when there
+    is no previous full name.
+    """
+    if previous is None:
+        return None
+    prefix, sep, _last = previous.rpartition("_")
+    if not sep:
+        return None
+    return f"{prefix}{shorthand}"
 
 
 def _split_multi(cell: str, count: int) -> list[str]:
@@ -461,6 +514,7 @@ def _extract_registers(
     block: str,
     block_key: str,
     template: MasTemplate,
+    allowed_access: frozenset[str],
 ) -> None:
     reg_names: dict[str, int] = {}  # register name -> first line, per block
     for section in md.iter_sections_by_title(doc, template.registers):
@@ -475,11 +529,25 @@ def _extract_registers(
             )
             if has_full:
                 _registers_from_table(
-                    builder, table, cols, block, block_key, reg_names, with_fields=True
+                    builder,
+                    table,
+                    cols,
+                    block,
+                    block_key,
+                    reg_names,
+                    allowed_access,
+                    with_fields=True,
                 )
             elif has_short:
                 _registers_from_table(
-                    builder, table, cols, block, block_key, reg_names, with_fields=False
+                    builder,
+                    table,
+                    cols,
+                    block,
+                    block_key,
+                    reg_names,
+                    allowed_access,
+                    with_fields=False,
                 )
             elif "offset" in colset:
                 builder.diag(
@@ -505,6 +573,7 @@ def _registers_from_table(
     block: str,
     block_key: str,
     reg_names: dict[str, int],
+    allowed_access: frozenset[str],
     *,
     with_fields: bool,
 ) -> None:
@@ -526,7 +595,9 @@ def _registers_from_table(
         is_continuation = with_fields and not tx.strip_cell_markup(offset_cell) and not reg_name
         if is_continuation:
             if current_reg_key is not None:
-                _emit_field(builder, table, cols, row, current_reg_key, block, block_key)
+                _emit_field(
+                    builder, table, cols, row, current_reg_key, block, block_key, allowed_access
+                )
             continue
 
         # A reserved / array / range row: no register entity.
@@ -550,7 +621,7 @@ def _registers_from_table(
             continue
         reg_names[reg_name] = row.line
         offset = tx.parse_int_maybe(offset_cell)
-        access, access_note = _parse_access(builder, row.cells, cols, row.line)
+        access, access_note = _parse_access(builder, row.cells, cols, row.line, allowed_access)
         reset = _parse_reset(row.cells, cols)
         reg_key = make_key("register", block, reg_name)
         attrs: dict[str, JSONValue] = {}
@@ -570,7 +641,7 @@ def _registers_from_table(
         )
         current_reg_key = reg_key
         if with_fields:
-            _emit_field(builder, table, cols, row, reg_key, block, block_key)
+            _emit_field(builder, table, cols, row, reg_key, block, block_key, allowed_access)
 
 
 def _emit_field(
@@ -581,6 +652,7 @@ def _emit_field(
     reg_key: str,
     block: str,
     block_key: str,
+    allowed_access: frozenset[str],
 ) -> None:
     if "field" not in cols:
         return
@@ -596,7 +668,7 @@ def _emit_field(
         return
     bits = tx.parse_bits(row.cells[cols["bits"]]) if "bits" in cols else None
     msb, lsb = (bits[0], bits[1]) if bits is not None else (None, None)
-    access, access_note = _parse_access(builder, row.cells, cols, row.line)
+    access, access_note = _parse_access(builder, row.cells, cols, row.line, allowed_access)
     reset = _parse_reset(row.cells, cols)
     _, reg_name = reg_key.split(":", 1)
     reg_name = reg_name.split(".", 1)[1]
@@ -632,7 +704,11 @@ def _is_reserved_offset(cell: str) -> bool:
 
 
 def _parse_access(
-    builder: _Builder, cells: tuple[str, ...], cols: dict[str, int], line: int
+    builder: _Builder,
+    cells: tuple[str, ...],
+    cols: dict[str, int],
+    line: int,
+    allowed_access: frozenset[str],
 ) -> tuple[str | None, str | None]:
     if "access" not in cols:
         return None, None
@@ -641,7 +717,7 @@ def _parse_access(
         return None, None
     head, _, rest = raw.partition(",")
     kind = head.strip().upper()
-    if kind not in _ACCESS_KINDS:
+    if kind not in allowed_access:
         builder.diag(line, "error", "register.access", f"unknown access mode {head.strip()!r}")
         return None, None
     note = rest.strip() or None
