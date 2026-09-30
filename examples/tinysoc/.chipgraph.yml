@@ -20,6 +20,18 @@ adapters:
     use: cmd
     cmd: "make lint BLOCK={block}"
     parser: verilator
+  # Cross checks (M1-07 part B). tinysoc passes all three: every declared REQ-ID is named
+  # by a dv stub (trace), both blocks are instantiated in the top with their irq wired
+  # (connect), and its addresses (0x0/0x4) are below `hardcode`'s default min_value so no
+  # RTL literal duplicates a contract number.
+  trace:
+    use: trace
+    tests: ["dv/**/*.py", "dv/**/*.sv"]
+  connect:
+    use: connect
+  hardcode:
+    use: hardcode
+    scope: ["rtl/**/*.sv"]
 
 blocks:
   timer: {}
