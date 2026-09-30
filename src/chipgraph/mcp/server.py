@@ -16,6 +16,7 @@ unhandled exception that would crash the server loop.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -179,6 +180,21 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
             "ok": all(result.ok for result in results),
             "results": [result.model_dump(mode="json") for result in results],
         }
+
+    @server.tool(
+        description="Run every deterministic check over the whole project, grouped by layer."
+    )
+    @_guard
+    async def audit(blocks: list[str] | None = None, ingest: bool = True) -> dict[str, Any]:
+        from chipgraph.packs.assist.audit import run_audit
+
+        ctx = _load_ctx()
+        ctx.require_profile()
+        block_list = list(blocks) if blocks else None
+        # `run_audit` is synchronous and drives its own event loop; run it in a worker
+        # thread so it does not clash with the MCP server's running loop.
+        report = await asyncio.to_thread(run_audit, ctx, ingest=ingest, blocks=block_list)
+        return report.model_dump(mode="json")
 
     @server.tool(
         description="Record an approve or reject decision for a gate over a rule instance."
