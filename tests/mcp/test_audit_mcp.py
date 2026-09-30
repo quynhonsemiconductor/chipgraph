@@ -20,8 +20,26 @@ from chipgraph.mcp.server import build_server
 _EXAMPLE_ROOT = Path(__file__).resolve().parents[2] / "examples" / "tinysoc"
 
 
-def _copy_tinysoc(dest: Path) -> Path:
+_LINT_ADAPTER = """  lint:
+    use: cmd
+    cmd: "make lint BLOCK={block}"
+    parser: verilator
+"""
+
+
+def _drop_lint(dest: Path) -> None:
+    """Remove tinysoc's `lint` adapter: it needs verilator, which CI's test job lacks."""
+    profile = dest / ".chipgraph.yml"
+    text = profile.read_text(encoding="utf-8")
+    assert _LINT_ADAPTER in text
+    profile.write_text(text.replace(_LINT_ADAPTER, ""), encoding="utf-8")
+
+
+def _copy_tinysoc(dest: Path, *, lint: bool = False) -> Path:
+    """A git copy of tinysoc; without its verilator `lint` adapter unless `lint`."""
     shutil.copytree(_EXAMPLE_ROOT, dest)
+    if not lint:
+        _drop_lint(dest)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.invalid"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=dest, check=True)

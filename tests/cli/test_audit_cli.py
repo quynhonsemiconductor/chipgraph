@@ -28,8 +28,26 @@ requires_eda = pytest.mark.skipif(
 )
 
 
-def _copy_tinysoc(dest: Path) -> Path:
+_LINT_ADAPTER = """  lint:
+    use: cmd
+    cmd: "make lint BLOCK={block}"
+    parser: verilator
+"""
+
+
+def _drop_lint(dest: Path) -> None:
+    """Remove tinysoc's `lint` adapter: it needs verilator, which CI's test job lacks."""
+    profile = dest / ".chipgraph.yml"
+    text = profile.read_text(encoding="utf-8")
+    assert _LINT_ADAPTER in text
+    profile.write_text(text.replace(_LINT_ADAPTER, ""), encoding="utf-8")
+
+
+def _copy_tinysoc(dest: Path, *, lint: bool = False) -> Path:
+    """A git copy of tinysoc; without its verilator `lint` adapter unless `lint`."""
     shutil.copytree(_EXAMPLE_ROOT, dest)
+    if not lint:
+        _drop_lint(dest)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.invalid"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=dest, check=True)
@@ -64,7 +82,7 @@ def _invoke(root: Path, *args: str, json_output: bool = False) -> object:
 
 @requires_eda
 def test_clean_audit_exits_zero(tmp_path: Path) -> None:
-    root = _copy_tinysoc(tmp_path / "tinysoc")
+    root = _copy_tinysoc(tmp_path / "tinysoc", lint=True)
     result = _invoke(root, "--strict")
     assert result.exit_code == 0, result.output
     assert "open errors: none" in result.output
