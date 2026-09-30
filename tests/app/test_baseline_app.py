@@ -1,9 +1,7 @@
 """Tests for `chipgraph.app.baseline`: planning and confirming a baseline on tinysoc.
 
-Each test works on a fresh git copy of `examples/tinysoc` in `tmp_path`. The example
-ships `baseline` decisions under `.chipgraph/decisions/`; these tests remove them first
-so they can show the "before baseline" state (gates waiting) and record the baseline
-themselves.
+Each test works on a fresh git copy of `examples/tinysoc` in `tmp_path`, which starts
+with no decisions: the "before baseline" state (gates waiting).
 """
 
 from __future__ import annotations

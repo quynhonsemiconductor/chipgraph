@@ -24,11 +24,6 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
   (`tinysoc/rtl`) that declares each block's RTL as an artifact behind a `spec:{block}`
   gate, and a `gen` rule (`tinysoc/lint_manifest`) that writes the manifest and then
   runs the `lint` check against that block.
-- `.chipgraph/decisions/` — the `baseline` decisions recorded by `chipgraph baseline`
-  (DESIGN.md 6.4): the example ships as an already-baselined project, so `tinysoc/rtl`
-  builds without stopping at its spec gate. Each decision pins the hashes of a block's
-  reviewed inputs; editing one (e.g. a MAS) returns that gate to "waiting".
-
 ## The spec gate and `baseline`
 
 `tinysoc/rtl` is gated by `spec:{block}`: a person approves the block's reviewed
@@ -40,10 +35,10 @@ gate covers only its filelist — it still has a tracked artifact to baseline.
 An existing project like this one has reviewed those inputs through PRs but has no
 chipgraph decision for them, so the first build would stop at every spec gate.
 `chipgraph baseline` records that history as one `baseline` decision per gate over its
-clean, tracked inputs, at their current hash (DESIGN.md 6.4). This example ships those
-decisions under `.chipgraph/decisions/`, so `build` passes the spec gates out of the
-box; editing a reviewed input (e.g. a MAS) changes its hash and returns that gate to
-"waiting", and the RTL must be re-approved.
+clean, tracked inputs, at their current hash (DESIGN.md 6.4), under `.chipgraph/decisions/`.
+After that `build` passes the spec gates; editing a reviewed input (e.g. a MAS) changes
+its hash and returns that gate to "waiting", and the RTL must be re-approved. The
+end-to-end tests do exactly this on their copy before building.
 
 ## Running it
 
@@ -64,9 +59,8 @@ chipgraph build tinysoc/lint_manifest  # build and lint every block through the 
 chipgraph status                       # see what the last run did
 ```
 
-`chipgraph baseline --confirm` records the `baseline` decisions (the example already
-ships them). Delete `.chipgraph/decisions/` in your copy to see the gates start out
-"waiting" and baseline them yourself.
+`chipgraph baseline --confirm` records the `baseline` decisions; commit them. Until
+then `build` stops at each block's `spec:{block}` gate.
 
 `chipgraph build tinysoc/lint_manifest` builds one instance per block (`timer`,
 `gpio`, `top`) plus the `tinysoc/rtl` instances it depends on. `chipgraph build '*'`

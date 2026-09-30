@@ -1,9 +1,0 @@
-artifact_hashes:
-  .:doc/specs/TINY_GPIO_MAS.md: ac1d65b76444c0f5f5d80d15926f51565aeb63f70684d1c3473e8be0e49342c3
-  .:filelists/gpio.f: f3e5fd3881fd9a034e77e5efb09b1d054e53d0de45926e2536ab04af780cedda
-at: '2026-09-30T06:12:53.993827Z'
-by: tinysoc lead
-decision: baseline
-gate_id: spec:gpio
-note: baseline of the tinysoc example (see README)
-schema_version: 1

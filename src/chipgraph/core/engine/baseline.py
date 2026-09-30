@@ -35,12 +35,13 @@ __all__ = [
     "plan_baseline",
 ]
 
-ArtifactStatus = Literal["clean", "dirty", "untracked"]
+ArtifactStatus = Literal["clean", "dirty", "untracked", "missing"]
 """How an artifact stands relative to the main branch.
 
 - ``clean``: tracked and unmodified in the working tree -> can be baselined.
 - ``dirty``: tracked but modified in the working tree -> not baselined.
-- ``untracked``: not tracked by version control -> not baselined.
+- ``untracked``: on disk but not tracked by version control -> not baselined.
+- ``missing``: a declared input that does not exist -> nothing to baseline.
 """
 
 
@@ -108,7 +109,7 @@ class BaselineArtifact(BaseModel):
     sha256: str | None = Field(
         default=None, description="Current content sha256 (hex), or None if missing on disk."
     )
-    status: ArtifactStatus = Field(description="'clean', 'dirty', or 'untracked'.")
+    status: ArtifactStatus = Field(description="'clean', 'dirty', 'untracked' or 'missing'.")
     last_commit: CommitInfo | None = Field(
         default=None, description="The last commit that touched this artifact, if any."
     )
@@ -182,7 +183,7 @@ class BaselinePlan(BaseModel):
         seen: dict[str, BaselineArtifact] = {}
         for gate in self.gates:
             for artifact in gate.artifacts:
-                if not artifact.baselineable and artifact.path not in seen:
+                if artifact.status in ("dirty", "untracked") and artifact.path not in seen:
                     seen[artifact.path] = artifact
         return tuple(seen[path] for path in sorted(seen))
 
@@ -213,6 +214,8 @@ def gate_inputs_from_instances(
 
 
 def _artifact_status(path: str, facts: VcsFacts) -> ArtifactStatus:
+    if facts.sha256(path) is None:
+        return "missing"
     if not facts.is_tracked(path):
         return "untracked"
     if facts.is_dirty(path):

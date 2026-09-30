@@ -15,6 +15,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
+
+from chipgraph.cli import app
 
 _EXAMPLE_ROOT = Path(__file__).resolve().parents[2] / "examples" / "tinysoc"
 
@@ -36,11 +39,19 @@ def copy_tinysoc(dest: Path) -> Path:
     example's own git history, if any, is irrelevant here.
     """
     shutil.copytree(_EXAMPLE_ROOT, dest)
-    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.email", "e2e@example.invalid"], cwd=dest, check=True)
     subprocess.run(["git", "config", "user.name", "e2e"], cwd=dest, check=True)
     subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "initial import of tinysoc"], cwd=dest, check=True)
+    # An existing project's first step (DESIGN.md 6.4): baseline what is on main, so the
+    # `spec:{block}` gates pass, then commit the decisions like a lead would.
+    result = CliRunner().invoke(
+        app, ["-C", str(dest), "baseline", "--confirm", "--by", "e2e", "--note", "e2e setup"]
+    )
+    assert result.exit_code == 0, result.output
+    subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=dest, check=True)
     return dest
 
 

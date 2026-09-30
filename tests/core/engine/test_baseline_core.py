@@ -66,7 +66,7 @@ def test_plan_classifies_clean_dirty_untracked_and_missing() -> None:
     assert by_path["a.md"].last_commit is not None
     assert by_path["b.md"].status == "dirty"
     assert by_path["b.md"].baselineable is False
-    assert by_path["c.md"].status == "untracked"
+    assert by_path["c.md"].status == "missing"
     assert by_path["c.md"].short_sha256 == "-"
 
     # Only the clean, tracked artifact would be pinned by a baseline decision.
@@ -138,3 +138,32 @@ def test_clean_refs_for_gate_looks_up_original_refs() -> None:
     refs = clean_refs_for_gate(plan.gates[0], {"a.md": ref_a, "b.md": ref_b})
     # Only the clean artifact's ref is returned, and it is the original (label kept).
     assert refs == (ref_a,)
+
+
+def test_a_declared_input_missing_on_disk_is_missing_not_untracked() -> None:
+    class _Facts:
+        def sha256(self, path: str) -> str | None:
+            return None if path == "spec/none.md" else "a" * 64
+
+        def is_tracked(self, path: str) -> bool:
+            return path != "spec/none.md"
+
+        def is_dirty(self, path: str) -> bool:
+            return False
+
+        def last_commit(self, path: str) -> None:
+            return None
+
+    gate = GateInput(
+        gate_id="spec:x",
+        instance_id="p/r[block=x]",
+        artifacts=(
+            ArtifactRef(kind="spec", path="spec/none.md"),
+            ArtifactRef(kind="spec", path="x.f"),
+        ),
+        already_decided=False,
+    )
+    plan = plan_baseline([gate], _Facts())
+    statuses = {a.path: a.status for a in plan.gates[0].artifacts}
+    assert statuses == {"spec/none.md": "missing", "x.f": "clean"}
+    assert plan.dirty_artifacts == ()

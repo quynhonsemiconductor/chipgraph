@@ -1,7 +1,7 @@
 """CLI tests for `chipgraph baseline` (M1-24).
 
 Most tests run the real CLI against a git copy of `examples/tinysoc` in `tmp_path`,
-with the example's shipped `baseline` decisions removed so the gates start out waiting.
+which has no decisions yet, so the gates start out waiting.
 """
 
 from __future__ import annotations
