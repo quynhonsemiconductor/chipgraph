@@ -36,6 +36,12 @@ adapters:
   hardcode:
     use: hardcode
     scope: ["rtl/**/*.sv"]
+  # Structural CDC (M1-19). tinysoc has a single clock (`clk`), so no signal crosses a
+  # domain and this passes on every block. `sync_cells` is still required, so name a cell
+  # the design would use if it grew a second clock; none exists yet, so none is analysed.
+  cdc_struct:
+    use: cdc_struct
+    sync_cells: [tiny_sync2]
 
 blocks:
   timer: {}
