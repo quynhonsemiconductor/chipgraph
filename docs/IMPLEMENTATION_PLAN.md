@@ -91,7 +91,7 @@ Spike là thử nhanh để giảm rủi ro. Kết quả là một ghi chú ng�
 | S3 | Edalize 0.6 + cocotb 2.1 + Verilator 5.052 chạy một testbench trên macOS và Linux không? | M2-05 |
 | S4 | NVIDIA OpenShell 0.1 chạy được trên macOS của team không, hay dùng container? | D11, M1-11 |
 | S5 | MCP Python SDK 2.x: server stdio, và plugin Claude Code gọi được tool của nó | M0-14 |
-| S7 | **Runtime `claude-code`:** plugin lặp `next_task` → subagent của vai → `submit`; subagent giới hạn được tool và model; hook `PreToolUse` chặn ghi ngoài `outputs`; nhiều subagent chạy song song; đọc được token qua OpenTelemetry của Claude Code | M1-11 |
+| S7 | **Runtime `claude-code`:** plugin lặp `next_task` → subagent của vai → `submit`; subagent giới hạn được tool và model; hook `PreToolUse` chặn ghi ngoài `outputs`; nhiều subagent chạy song song; đọc được token và chi phí từ event `result` cuối của `claude -p` (`usage`, `total_cost_usd`, `modelUsage` theo model); không cần OpenTelemetry | M1-11 |
 | S6 | Model tự host (GLM open-weight, qua vLLM) cho tool calling ổn định tới mức nào? | D27, M5-06 |
 
 S1–S5 và S7 làm song song ngay đầu M0. S6 làm trước M5.
@@ -162,6 +162,15 @@ rồi resume đúng chỗ; import-linter xanh.
 | M1-22 | Template Jinja2 chia block, ghi đè từng phần, thứ tự tìm block → dự án → tổ chức → pack | E | M0-04 | `core/config/templates.py` | Ghi đè một block không làm đổi phần còn lại (test snapshot) |
 | M1-23 | Plugin cục bộ của dự án (`.chipgraph/plugins/`) nạp qua plugin API; tắt được bằng cấu hình tổ chức | A | M0-03 | `core/plugin_api/local.py`, `core/config/models.py`, `core/config/loader.py`, `app/context.py`, `cli/` | Plugin mẫu đổi được luật layout; `config check` liệt kê plugin cục bộ đang chạy |
 | M1-24 | `chipgraph baseline` (DESIGN 6.4): liệt kê artifact trên nhánh chính kèm hash và lịch sử merge; lead xác nhận; ghi quyết định `baseline`; finding có sẵn được ghi nhận, không chặn build | A+E | M0-11, 06 | `core/engine/baseline.py`, `app/baseline.py`, `cli/`, `examples/tinysoc/` | Trên tinysoc có MAS sẵn: sau `baseline`, `build rtl:<block>` không dừng ở gate spec; sửa MAS thì gate về "chờ" |
+
+**Ghi chú từ spike S7 cho M1-11** (`docs/spikes/S7.md`):
+- `--max-turns` chỉ đếm lượt của phiên chính, không đếm lượt của subagent. Engine phải tự
+  giới hạn ngân sách cho từng task.
+- Hook `PreToolUse` nhận `agent_id`/`agent_type`, nên quyền ghi (`outputs`) được cấp riêng
+  cho từng task và từng subagent, không gộp chung.
+- Guard chặn ghi đặt trong `hooks/hooks.json` của plugin, không đặt trong frontmatter của
+  agent (hook trong frontmatter không chạy ở chế độ `-p`). Guard phải chặn khi có lỗi (fail
+  closed), vì Claude Code cho lệnh chạy tiếp khi hook thoát với mã khác 0 và 2.
 
 **Thoát M1 khi:** `ingest` + `baseline` + check chéo chạy trên QSoC (lead xác nhận); `/ask` và `/triage`
 đạt ngưỡng evals; plugin cài được.
