@@ -105,11 +105,56 @@ def _snapshot(root: Path) -> tuple[dict[str, str], list[str], str | None]:
     return entities, relations, meta.get("build_inputs_hash")
 
 
-def test_missing_mas_is_info_not_error(tinysoc: Path) -> None:
-    # `top` has no MAS file; that must be an info issue, not an error, and not block ingest.
-    ctx = AppContext.load(tinysoc)
-    report = run_ingest(ctx)
-    no_mas = [i for i in report.issues if i.code == "no_mas" and i.block == "block:top"]
-    assert no_mas
-    assert no_mas[0].severity == "info"
+def _set_profile(repo: Path, text: str) -> None:
+    (repo / ".chipgraph.yml").write_text(text, encoding="utf-8")
+
+
+def test_block_with_spec_opt_out_reports_nothing(tinysoc: Path) -> None:
+    # tinysoc's `top` says `layout.spec: []`: no spec expected, nothing reported.
+    report = run_ingest(AppContext.load(tinysoc))
+    assert not [i for i in report.issues if i.block == "block:top" and "spec" in i.code]
     assert not report.has_error
+
+
+def test_missing_spec_and_filelist_are_warnings(tinysoc: Path) -> None:
+    profile = (tinysoc / ".chipgraph.yml").read_text(encoding="utf-8")
+    _set_profile(tinysoc, profile + "  uart: {}\n")
+    report = run_ingest(AppContext.load(tinysoc))
+    by_code = {(i.code, i.block): i for i in report.issues}
+    spec = by_code[("missing_spec", "block:uart")]
+    assert spec.severity == "warning"
+    assert spec.file == "doc/specs/TINY_UART_MAS.md"
+    assert by_code[("missing_filelist", "block:uart")].severity == "warning"
+    assert not report.has_error
+
+
+def test_per_block_spec_list_reads_every_file(tinysoc: Path) -> None:
+    extra = tinysoc / "doc" / "specs" / "TIMER_EXTRA.md"
+    extra.write_text("# 7. Behaviour\n\n`REQ-TIM-900` The timer also does this.\n")
+    profile = (tinysoc / ".chipgraph.yml").read_text(encoding="utf-8")
+    profile = profile.replace(
+        "  timer: {}\n",
+        "  timer:\n    layout:\n      spec: [doc/specs/TINY_TIMER_MAS.md, doc/specs/TIMER_EXTRA.md]\n",
+    )
+    _set_profile(tinysoc, profile)
+    report = run_ingest(AppContext.load(tinysoc))
+    reqs = {e.key for e in report.model.by_kind("requirement")}
+    assert {"requirement:REQ-TIM-001", "requirement:REQ-TIM-900"} <= reqs
+
+
+def test_spec_matching_the_template_but_unread_is_a_warning(tinysoc: Path) -> None:
+    orphan = tinysoc / "doc" / "specs" / "TINY_UART_MAS.md"
+    orphan.write_text("# 1. Overview\n")
+    template = tinysoc / "doc" / "specs" / "TINY_TEMPLATE_MAS.md"
+    template.write_text("# 1. Overview\n")
+    profile = (tinysoc / ".chipgraph.yml").read_text(encoding="utf-8")
+    profile += (
+        "paths:\n"
+        '  "doc/specs/TINY_TEMPLATE_MAS.md":\n'
+        "    checks: { ingest: off }\n"
+        "    reason: the template, not a spec\n"
+    )
+    _set_profile(tinysoc, profile)
+    report = run_ingest(AppContext.load(tinysoc))
+    unread = [i.file for i in report.issues if i.code == "unread_spec"]
+    assert unread == ["doc/specs/TINY_UART_MAS.md"]

@@ -164,20 +164,58 @@ class _PartBuilder:
         for block in sorted(self.resolved.profile.blocks):
             block_profile = self.resolved.for_block(block)
             self._build_block_rtl(block, block_profile)
-            self._build_block_mas(block, block_profile)
+            for template in _layout_templates(block_profile, "spec"):
+                self._build_block_mas(block, _fill(template, block))
+        self._report_unread_specs()
+
+    def _report_unread_specs(self) -> None:
+        """Warn about spec files that match the project's spec template but no block read.
+
+        A spec named after a block the profile does not list (or lists under another name)
+        would otherwise be skipped silently. Map it with a per-block `layout.spec`, add the
+        block, or exempt the file with `paths: {<file>: {checks: {ingest: off}, reason: ...}}`.
+        """
+        read = {f.rel_path for f in self.input_files}
+        patterns: set[str] = set()
+        for template in _layout_templates(self.resolved.profile, "spec"):
+            if "{block}" in template or "{BLOCK}" in template:
+                patterns.add(template.replace("{block}", "*").replace("{BLOCK}", "*"))
+        seen: set[str] = set()
+        for pattern in sorted(patterns):
+            for path in sorted(self.root.glob(pattern)):
+                rel = _rel(path, self.root)
+                if rel in read or rel in seen or not path.is_file():
+                    continue
+                seen.add(rel)
+                if self.resolved.for_path(rel).checks.get("ingest") == "off":
+                    continue
+                self.issues.append(
+                    IngestIssue(
+                        severity="warning",
+                        code="unread_spec",
+                        message=(
+                            f"{rel} matches the spec template {pattern!r} but no block reads "
+                            "it; map it in blocks.<name>.layout.spec, or exempt it in paths:"
+                        ),
+                        file=rel,
+                    )
+                )
 
     def _build_block_rtl(self, block: str, block_profile: Profile) -> None:
-        template = _layout_template(block_profile, "filelist")
-        if template is None:
-            return
-        filelist_path = (self.root / _fill(template, block)).resolve()
+        templates = _layout_templates(block_profile, "filelist")
+        if not templates:
+            return  # no filelist template, or an explicit `filelist: []` for this block
+        filelist_path = (self.root / _fill(templates[0], block)).resolve()
         rel = _rel(filelist_path, self.root)
         if not filelist_path.is_file():
             self.issues.append(
                 IngestIssue(
-                    severity="info",
-                    code="no_filelist",
-                    message=f"no filelist for block {block!r} at {rel}",
+                    severity="warning",
+                    code="missing_filelist",
+                    message=(
+                        f"block {block!r}: no filelist at {rel}; its RTL is not in the model "
+                        "(set blocks.<name>.layout.filelist, or [] if it has none)"
+                    ),
                     block=_block_key(block),
                     file=rel,
                 )
@@ -239,18 +277,19 @@ class _PartBuilder:
             SourcePart(source="rtl", block=_block_key(block), model=model, diagnostics=diagnostics)
         )
 
-    def _build_block_mas(self, block: str, block_profile: Profile) -> None:
-        template = _layout_template(block_profile, "spec")
-        if template is None:
-            return
-        mas_path = (self.root / _fill(template, block)).resolve()
+    def _build_block_mas(self, block: str, rel_path: str) -> None:
+        block_profile = self.resolved.for_block(block)
+        mas_path = (self.root / rel_path).resolve()
         rel = _rel(mas_path, self.root)
         if not mas_path.is_file():
             self.issues.append(
                 IngestIssue(
-                    severity="info",
-                    code="no_mas",
-                    message=f"no MAS for block {block!r} at {rel}",
+                    severity="warning",
+                    code="missing_spec",
+                    message=(
+                        f"block {block!r}: no spec at {rel}; its requirements are not in the "
+                        "model (set blocks.<name>.layout.spec, or [] if it has none)"
+                    ),
                     block=_block_key(block),
                     file=rel,
                 )
@@ -341,13 +380,18 @@ def _parse_options(profile: Profile) -> _ParseOptions:
     return _ParseOptions(**updates)  # type: ignore[arg-type]
 
 
-def _layout_template(profile: Profile, key: str) -> str | None:
+def _layout_templates(profile: Profile, key: str) -> tuple[str, ...]:
+    """The layout template(s) for `key`: one string, a list of several, or `()` for none.
+
+    An explicit empty list (`spec: []`) says the block has no such file, so nothing is
+    reported missing for it.
+    """
     value = profile.layout.get(key)
     if isinstance(value, str):
-        return value
-    if isinstance(value, tuple) and value and isinstance(value[0], str):
-        return value[0]
-    return None
+        return (value,)
+    if isinstance(value, tuple):
+        return tuple(v for v in value if isinstance(v, str))
+    return ()
 
 
 def _fill(template: str, block: str) -> str:
