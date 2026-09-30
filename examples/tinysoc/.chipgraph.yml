@@ -20,6 +20,10 @@ adapters:
     use: cmd
     cmd: "make lint BLOCK={block}"
     parser: verilator
+  spec_schema: { use: spec_schema }
+  cross_chip: { use: cross_chip }
+  ports_diff: { use: ports_diff, top: "tiny_{block}" }
+  duplicate: { use: duplicate }
 
 blocks:
   timer: {}
