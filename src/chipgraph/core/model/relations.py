@@ -16,14 +16,17 @@ CoreRelationKind = Literal[
     "derives_from",
     "contains",
     "instantiates",
+    "instance_of",
 ]
-"""The relation kinds DESIGN.md names, plus `contains`/`instantiates` for hierarchy.
+"""The relation kinds DESIGN.md names, plus `contains`/`instantiates`/`instance_of`.
 
 DESIGN.md 4.2 only lists `implements`, `verifies`, `connects`, `derives_from`. Building
 `DesignModel.children()` needs a way to walk hierarchy (block -> module -> port,
-module -> module instance), so this task adds `contains` (a owns b, e.g. block contains
-module) and `instantiates` (a module instantiates another module) as core kinds. Packs
-may add further relation kinds; `Relation.kind` is a plain `str` so those round-trip too.
+module -> module instance), so this adds `contains` (a owns b, e.g. block contains
+module) and `instantiates` (a module instantiates another module) as core kinds.
+`instance_of` links a block that is an instance on the memory map to the IP block it is a
+copy of (`block:<instance>` -> `block:<ip>`, D38). Packs may add further relation kinds;
+`Relation.kind` is a plain `str` so those round-trip too.
 """
 
 CORE_RELATION_KINDS: tuple[str, ...] = (
@@ -33,6 +36,7 @@ CORE_RELATION_KINDS: tuple[str, ...] = (
     "derives_from",
     "contains",
     "instantiates",
+    "instance_of",
 )
 
 

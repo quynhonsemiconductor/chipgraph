@@ -93,6 +93,33 @@ def test_block_override_rejects_autonomy_l5() -> None:
         _minimal_profile(blocks={"uart": {"autonomy": {"rtl": "L5"}}})
 
 
+def test_block_override_accepts_instances() -> None:
+    profile = _minimal_profile(blocks={"timer": {"instances": ["timer_0", "timer_1"]}})
+    assert profile.blocks["timer"].instances == ("timer_0", "timer_1")
+
+
+def test_block_override_instances_default_empty() -> None:
+    profile = _minimal_profile(blocks={"pwm": {}})
+    assert profile.blocks["pwm"].instances == ()
+
+
+def test_block_override_rejects_empty_instance_name() -> None:
+    with pytest.raises(ValidationError, match="must not be empty"):
+        _minimal_profile(blocks={"timer": {"instances": [""]}})
+
+
+def test_block_override_rejects_instance_name_with_colon_or_dot() -> None:
+    with pytest.raises(ValidationError, match="must not contain"):
+        _minimal_profile(blocks={"timer": {"instances": ["block:timer_0"]}})
+    with pytest.raises(ValidationError, match="must not contain"):
+        _minimal_profile(blocks={"timer": {"instances": ["timer.0"]}})
+
+
+def test_block_override_rejects_duplicate_instance_within_block() -> None:
+    with pytest.raises(ValidationError, match="more than once"):
+        _minimal_profile(blocks={"timer": {"instances": ["timer_0", "timer_0"]}})
+
+
 def test_user_config_defaults() -> None:
     user = UserConfig()
     assert user.autonomy == {}
@@ -173,3 +200,28 @@ def test_requirements_infer_mode_from_profile_data() -> None:
         {"project": "x", "spec": {"requirements": {"infer": "verification"}}}
     )
     assert profile.spec.requirements.infer == "verification"
+
+
+# --------------------------------------------------------------------------------------
+# spec.register_access
+# --------------------------------------------------------------------------------------
+
+
+def test_register_access_default() -> None:
+    cfg = Profile(project="x").spec
+    assert cfg.register_access == ("RW", "RO", "WO", "W1C", "RSVD")
+
+
+def test_register_access_configurable() -> None:
+    profile = Profile.model_validate(
+        {
+            "project": "x",
+            "spec": {"register_access": ["RW", "RO", "WO", "W1C", "RSVD", "RW0C", "RW1C"]},
+        }
+    )
+    assert profile.spec.register_access == ("RW", "RO", "WO", "W1C", "RSVD", "RW0C", "RW1C")
+
+
+def test_register_access_rejects_empty() -> None:
+    with pytest.raises(ValidationError, match="at least one access mode"):
+        Profile.model_validate({"project": "x", "spec": {"register_access": []}})

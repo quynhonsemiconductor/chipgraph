@@ -407,6 +407,29 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
 - **Việc riêng, ngoài chipgraph:** team QSoC ghi quy ước `<BLOCK>_NNN` vào template MAS và thêm ID
   cho 6 MAS còn thiếu; lead bàn với team. Làm xong thì tắt `infer`.
 
+## D38. Block là IP, instance nối vào IP bằng quan hệ `instance_of` — Chốt (2026-09-30)
+
+- **Vấn đề:** hai nguồn gọi block theo hai cách. Profile và thư mục thiết kế dùng tên IP
+  (`timer`, `uart`, `gpio`), nên MAS và RTL gắn vào `block:timer`. Contract chip dùng tên
+  instance trên memory map (`timer_0`, `timer_1`, `uart_0`, `dma_cfg`, `isram_dbg`). Kết quả là
+  `block:timer` và `block:dma` được tham chiếu nhưng không có trong contract, và check chéo
+  không biết `timer_0` là một bản của `timer`.
+- **Chọn:**
+  - Mỗi block trong profile là một **IP**. Profile khai rõ instance của nó:
+    `blocks.timer.instances: [timer_0, timer_1]`.
+  - Không khai `instances` thì block chỉ khớp instance **cùng tên** trong contract (`pwm` với
+    `pwm`). Không đoán bằng cách cắt đuôi `_0` hay tìm tiền tố: có những cặp như `dma` và
+    `dma_cfg`, `isram` và `isram_dbg`, mà tên không nói được quan hệ.
+  - Thêm kiểu quan hệ lõi `instance_of`: `block:<instance>` → `block:<ip>`. `ingest` tạo block
+    IP (nếu contract chưa có) và các quan hệ này.
+  - Chỗ chưa map được thì báo, không im lặng: instance trong contract không thuộc IP nào; IP
+    khai một instance không có trong contract; entity tham chiếu một block không tồn tại.
+    `ingest` báo thành warning; check chéo (M1-07) biến chúng thành finding.
+- **Lý do:** tên không đủ tin để suy ra quan hệ; khai một lần trong profile là rõ và kiểm được.
+  MAS mô tả IP, contract mô tả instance, nên hai tầng cần một cạnh nối rõ ràng.
+- **Bỏ:** đoán theo tiền tố hoặc hậu tố tên; đổi tên block trong profile cho khớp contract (mất
+  liên hệ với thư mục thiết kế và filelist).
+
 ## Lịch xem lại
 
 | Quyết định | Xem lại khi |

@@ -70,6 +70,7 @@ def run_ingest(ctx: AppContext) -> IngestReport:
         builder.parts,
         input_files=builder.input_files,
         profile_digest=_profile_digest(resolved.profile),
+        ip_blocks={name: override.instances for name, override in resolved.profile.blocks.items()},
     )
     # Fold the builder's own file-level issues (missing files, adapter exceptions) in.
     result = _with_extra_issues(result, builder.issues)
@@ -298,7 +299,11 @@ class _PartBuilder:
         requirements = block_profile.spec.requirements
         try:
             model, diags = MasExtractor.extract_model(
-                mas_path, block=block, requirements=requirements, root=self.root
+                mas_path,
+                block=block,
+                requirements=requirements,
+                root=self.root,
+                access_modes=block_profile.spec.register_access,
             )
         except Exception as exc:
             self.issues.append(
