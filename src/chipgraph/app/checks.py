@@ -19,6 +19,9 @@ from chipgraph.core.state.artifacts import hash_inputs
 from chipgraph.core.state.findings import FindingStore
 from chipgraph.core.state.idempotency import IdempotencyStore, make_key
 
+_RUNNER_KEYS = frozenset({"use", "per_block"})
+"""Adapter-config keys the runner itself reads; they are not passed to the plugin."""
+
 
 class ProfileCheckRunner:
     """Runs a check id through the adapter `.chipgraph.yml` configures for it."""
@@ -77,7 +80,7 @@ class ProfileCheckRunner:
                 ),
             )
 
-        args = {k: v for k, v in cfg.model_dump().items() if k != "use"}
+        args = {k: v for k, v in cfg.model_dump().items() if k not in _RUNNER_KEYS}
         spec = CheckSpec(id=check_id, capability=check_id, adapter=cfg.use, args=args)
         tool_ctx = ToolContext(
             repo_root=self.ctx.root,
@@ -129,6 +132,21 @@ class ProfileCheckRunner:
         except OSError:
             pass
         return result
+
+    def runs_per_block(self, check_id: str) -> bool:
+        """Whether `chipgraph check` runs `check_id` once per block (the default).
+
+        A profile's `adapters.<id>.per_block` wins; otherwise the plugin's own `per_block`
+        attribute (chip-wide checks set it to False); otherwise True.
+        """
+        cfg = self.ctx.require_profile().profile.adapters.get(check_id)
+        if cfg is None:
+            return True
+        override = cfg.model_dump().get("per_block")
+        if isinstance(override, bool):
+            return override
+        plugin = self._resolve_plugin(cfg.use)
+        return bool(getattr(plugin, "per_block", True))
 
     def _resolve_plugin(self, use: str) -> Check | ToolAdapter | None:
         for kind in ("check", "tool"):

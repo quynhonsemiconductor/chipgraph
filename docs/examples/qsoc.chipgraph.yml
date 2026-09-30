@@ -58,6 +58,18 @@ adapters:
     cmd: "make contract-tags BLOCK={block}"
     regex: '^\s+(?P<file>\S+):(?P<line>\d+)\s+\[(?P<rule>[^\]]+)\]\s+(?P<msg>.+)$'
 
+  # Cross checks over the Design Model (M1-07). Run `chipgraph ingest` first.
+  spec_schema: { use: spec_schema }
+  cross_chip: { use: cross_chip }
+  ports_diff: { use: ports_diff, top: "m_qnsc_wrap_{block}" }
+  duplicate: { use: duplicate, scope: ["design/**/*.sv", "design/**/*.v"] }
+  trace: { use: trace, tests: ["design/*/dv/**/*", "dv/**/*"] }
+  connect: { use: connect }
+  hardcode:
+    use: hardcode
+    scope: ["design/**/rtl/**/*.sv"]
+    generated: ["design/top/rtl/qnsc_pkg.sv"]  # generated from the contract
+
 # One entry per directory under design/ that has a <block>.f filelist, plus syscsr, whose
 # design directory is still in an open PR (ingest warns about its missing filelist until
 # then). A block whose spec file is not QNSC_<BLOCK>_MAS.md maps it with its own

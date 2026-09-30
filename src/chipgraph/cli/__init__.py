@@ -316,7 +316,14 @@ def check(
     blocks: list[str | None] = list(raw_blocks) if raw_blocks else [None]
 
     runner = ProfileCheckRunner(app_ctx)
-    combos = [(cid, b) for cid in check_ids for b in blocks]
+    # A chip-wide check (per_block = False) runs once for the whole project, unless the
+    # user scoped the run with --block; running it per block would repeat its issues and
+    # drop those that belong to no block.
+    combos = [
+        (cid, b)
+        for cid in check_ids
+        for b in (blocks if block or runner.runs_per_block(cid) else [None])
+    ]
     results = asyncio.run(_run_checks(runner, combos))
 
     if state.json_output:
