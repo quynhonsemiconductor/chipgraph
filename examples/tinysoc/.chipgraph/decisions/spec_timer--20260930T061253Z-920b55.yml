@@ -1,0 +1,9 @@
+artifact_hashes:
+  .:doc/specs/TINY_TIMER_MAS.md: e88720090e257b674f63fad1318bb48499408c0ad9957dfce181d15cef233b1f
+  .:filelists/timer.f: f3b0280cc2313d621a8988cb771c3304f13a3dd81573d4bd0c9d8346445476d4
+at: '2026-09-30T06:12:53.996215Z'
+by: tinysoc lead
+decision: baseline
+gate_id: spec:timer
+note: baseline of the tinysoc example (see README)
+schema_version: 1

@@ -1,9 +1,22 @@
 # chipgraph example: tinysoc
-# Each block's RTL is written by a person: a `human` rule whose output is the RTL
-# file itself (DESIGN.md 3.4). Editing it makes the rule stale, so it and everything
-# built from it run again; hand-edit protection applies only to generated files.
+# Each block's RTL is written by a person: a `human` rule whose output is the block's
+# RTL file (DESIGN.md 3.4). Editing that output makes the rule stale, so it and
+# everything built from it run again; hand-edit protection applies only to generated
+# files.
+#
+# The RTL is gated by `spec:{block}` (DESIGN.md 6.1, 6.4): a person approves the
+# reviewed inputs before RTL is built on top of them. Those inputs are the block's MAS
+# (`doc/specs/TINY_{BLOCK}_MAS.md`, present for `timer` and `gpio`) and its filelist
+# (`filelists/{block}.f`, present for every block, so `top` — which has no MAS — still
+# has a gated, tracked artifact and can be baselined). `chipgraph baseline` records a
+# `baseline` decision over each block's clean, tracked inputs; editing the MAS afterwards
+# changes its hash and returns the gate to "waiting".
 rule: rtl
 kind: human
 foreach: blocks
+inputs:
+  - spec: "doc/specs/TINY_{BLOCK}_MAS.md"
+  - path: "filelists/{block}.f"
 outputs:
   - "rtl/tiny_{block}.sv"
+gate: "spec:{block}"

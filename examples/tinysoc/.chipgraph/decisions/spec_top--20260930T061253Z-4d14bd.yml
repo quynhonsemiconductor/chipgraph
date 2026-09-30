@@ -1,0 +1,8 @@
+artifact_hashes:
+  .:filelists/top.f: 1a9abbd80c6d5a2f0680fa5be1ab0f0cc6bdc4e48bb85b8bc0238bd07084507e
+at: '2026-09-30T06:12:53.996678Z'
+by: tinysoc lead
+decision: baseline
+gate_id: spec:top
+note: baseline of the tinysoc example (see README)
+schema_version: 1
