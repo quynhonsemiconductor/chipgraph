@@ -1,0 +1,9 @@
+schema_version: 1
+name: assist
+version: 0.1.0
+description: >-
+  Whole-project assistance commands. Ships `/audit`: run every deterministic check
+  over the whole project and group the findings by layer (DESIGN.md 4.8) and severity.
+provides:
+  commands:
+    - /audit

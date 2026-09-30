@@ -30,9 +30,10 @@ def test_list_tools_has_m0_and_m102_tools(tmp_path: Path) -> None:
             return sorted(tool.name for tool in result.tools)
 
     names = _run(_list())
-    # M0 tools: approve, build, check, config_show, status; M1-02: model_*
+    # M0 tools: approve, build, check, config_show, status; M1-02: model_*; M1-20: audit
     expected = [
         "approve",
+        "audit",
         "build",
         "check",
         "config_show",
