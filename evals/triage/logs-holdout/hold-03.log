@@ -1,0 +1,19 @@
+[30000] reset deasserted
+[41000] bus read  0x0 => 0x00000000
+[51000] bus read  0x2 => 0x00000000
+[61000] bus read  0x4 => 0x00000000
+[71000] bus read  0x6 => 0x00000000
+[86000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: gpio_pin_out one clock after the DATA_OUT write: read 0x00000000, want 0x0000003c
+-Info: tb/tb_soc_regs.sv:72: Verilog $stop, ignored due to +verilator+error+limit
+[110000] bus write 0x6 <= 0x000000f0
+[110000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: gpio_pin_dir after the DIR write: read 0x00000000, want 0x000000f0
+[121000] bus read  0x5 => 0x00000000
+[121000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: gpio DATA_IN with gpio_pin_in=0x81: read 0x00000000, want 0x00000081
+[140000] bus write 0x1 <= 0x00000004
+[160000] bus write 0x2 <= 0x00000001
+[205000] timer_irq rose
+[220000] bus write 0x2 <= 0x00000002
+[231000] bus read  0x8 => 0x00000000
+[231000] %Fatal: tb_soc_regs.sv:139: Assertion failed in tb_soc_regs: tb_soc_regs: 3 check(s) failed
+%Error: tb/tb_soc_regs.sv:139: Verilog $stop
+Aborting...

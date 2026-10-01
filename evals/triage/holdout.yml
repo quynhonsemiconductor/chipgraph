@@ -1,0 +1,167 @@
+# /triage holdout set (task M1-17): faults used only for grading.
+#
+# Same schema and the same way of making logs as faults.yml (see its header), but these
+# faults were designed from the label taxonomy and from the tools' real behaviour, by an
+# author who did not read the triage rules (src/chipgraph/packs/assist/triage/) or the 22
+# logs of faults.yml. They use other files, other tool messages and other constructs than
+# those 22, so a rule fitted to their exact error strings would not match these.
+#
+# Never tune triage rules on this set: a score here is only meaningful while no rule was
+# written against it (evals/README.md).
+#
+# Labels are fixed by the injected fault, as in faults.yml: `rtl` breaks RTL that the spec
+# and the testbench agree on; `tb` breaks only a testbench; `spec` edits only a MAS or
+# chip.yml; `infra` breaks the environment (signals, limits, tool options), never the design.
+#
+# One fault kind is added to faults.yml's: `ulimit: "-<letter> <n>"` runs the command under
+# that shell resource limit (`ulimit -f 0`: no file may grow, a full-disk stand-in).
+#
+# `tb` names a testbench relative to evals/triage/tb/; it is copied to tb/<file name>.
+# tb/holdout/tb_soc_regs.sv drives tiny_top's register bus (timer at 0x0, gpio at 0x4) and
+# reports a failed check as an immediate assertion (`$error`), not as a `FAIL` line.
+#
+# evals/triage/gen_logs.py --set holdout writes logs-holdout/<id>.log and <id>.json.
+schema_version: 1
+project: examples/tinysoc
+
+x-sim-soc: &sim_soc >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" -f filelists/top.f tb/tb_soc_regs.sv
+  --top-module tb_soc_regs && obj_dir/Vtb_soc_regs +verilator+quiet +verilator+error+limit+10
+
+samples:
+  - id: hold-01
+    label: spec
+    description: chip.yml puts gpio at base 0x2, inside the timer's window; the RTL decodes it at 0x4.
+    ingest: true
+    fault:
+      edit:
+        - path: chip.yml
+          find: "    base: 0x4\n"
+          replace: "    base: 0x2\n"
+    cmd: chipgraph check --only cross_chip
+    check: cross_chip
+
+  - id: hold-02
+    label: infra
+    description: The lint job is killed by SIGKILL (an out-of-memory-killer stand-in) before Verilator reports.
+    fault:
+      edit:
+        - path: Makefile
+          find: "\tverilator --lint-only -Wall"
+          replace: "\t@kill -KILL $$$$; verilator --lint-only -Wall"
+    cmd: make lint BLOCK=top
+
+  - id: hold-03
+    label: rtl
+    description: tiny_top decodes gpio on block select 2 (word 0x8) instead of 1 (word 0x4).
+    tb: [holdout/tb_soc_regs.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_top.sv
+          find: "kSelGpio = 2'd1;"
+          replace: "kSelGpio = 2'd2;"
+    cmd: *sim_soc
+
+  - id: hold-04
+    label: tb
+    description: The top testbench samples gpio_pin_out before the clock edge that captures the DATA_OUT write.
+    tb: [holdout/tb_soc_regs.sv]
+    fault:
+      edit:
+        - path: tb/tb_soc_regs.sv
+          find: "    wr_en = 1'b1;\n    @(posedge clk);\n    #1;\n"
+          replace: "    wr_en = 1'b1;\n"
+    cmd: *sim_soc
+
+  - id: hold-05
+    label: rtl
+    description: tiny_top makes each block's write enable depend on the other's, a combinational loop.
+    fault:
+      edit:
+        - path: rtl/tiny_top.sv
+          find: "  assign timer_wr_en = wr_en && (block_sel == kSelTimer);"
+          replace: "  assign timer_wr_en = wr_en && (block_sel == kSelTimer) && !gpio_wr_en;"
+        - path: rtl/tiny_top.sv
+          find: "  assign gpio_wr_en  = wr_en && (block_sel == kSelGpio);"
+          replace: "  assign gpio_wr_en  = wr_en && (block_sel == kSelGpio) && !timer_wr_en;"
+    cmd: chipgraph check --only lint --block top
+    check: lint
+
+  - id: hold-06
+    label: infra
+    description: The simulation build runs under a zero file-size limit (a full-disk stand-in); Verilator dies writing.
+    tb: [tb_tiny_timer.sv]
+    fault:
+      ulimit: "-f 0"
+    cmd: >-
+      verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+      -MAKEFLAGS "-s --no-print-directory" rtl/tiny_timer.sv tb/tb_tiny_timer.sv
+      --top-module tb_tiny_timer && obj_dir/Vtb_tiny_timer +verilator+quiet
+
+  - id: hold-07
+    label: spec
+    description: The timer MAS puts CTRL.IRQ_CLR on bit 0, on top of CTRL.EN; the RTL uses bit 1.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_TIMER_MAS.md
+          find: "| | | `IRQ_CLR` | 1 | W1C |"
+          replace: "| | | `IRQ_CLR` | 0 | W1C |"
+    cmd: chipgraph check --only spec_schema --block timer
+    check: spec_schema
+
+  - id: hold-08
+    label: tb
+    description: The top testbench peeks at the timer through a misspelled instance path (dut.u_tmr).
+    tb: [holdout/tb_soc_regs.sv]
+    fault:
+      edit:
+        - path: tb/tb_soc_regs.sv
+          find: "dut.u_timer.enable_q"
+          replace: "dut.u_tmr.enable_q"
+    cmd: *sim_soc
+
+  - id: hold-09
+    label: infra
+    description: The Makefile passes --inhibit-sim, an option of an older Verilator that this one rejects.
+    fault:
+      edit:
+        - path: Makefile
+          find: "\tverilator --lint-only -Wall"
+          replace: "\tverilator --lint-only --inhibit-sim -Wall"
+    cmd: make lint BLOCK=gpio
+
+  - id: hold-10
+    label: rtl
+    description: tiny_timer resets its enable flop to 1, so COUNT runs from reset.
+    tb: [holdout/tb_soc_regs.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_timer.sv
+          find: "      enable_q  <= 1'b0;\n      irq_q     <= 1'b0;\n    end else"
+          replace: "      enable_q  <= 1'b1;\n      irq_q     <= 1'b0;\n    end else"
+    cmd: *sim_soc
+
+  - id: hold-11
+    label: tb
+    description: The top testbench sets CTRL.EN by writing word 0x6 (gpio DIR), so its irq wait times out.
+    tb: [holdout/tb_soc_regs.sv]
+    fault:
+      edit:
+        - path: tb/tb_soc_regs.sv
+          find: "    bus_write(4'h2, 32'h1);\n"
+          replace: "    bus_write(4'h6, 32'h1);\n"
+    cmd: *sim_soc
+
+  - id: hold-12
+    label: spec
+    description: chip.yml says the timer is reset by rst_sync_n, a reset the chip does not declare.
+    ingest: true
+    fault:
+      edit:
+        - path: chip.yml
+          find: "    base: 0x0\n    size: 4\n    clock: clk\n    reset: rst_n\n"
+          replace: "    base: 0x0\n    size: 4\n    clock: clk\n    reset: rst_sync_n\n"
+    cmd: chipgraph check --only cross_chip
+    check: cross_chip

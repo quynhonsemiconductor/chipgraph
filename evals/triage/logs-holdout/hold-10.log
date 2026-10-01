@@ -1,0 +1,19 @@
+[30000] reset deasserted
+[41000] bus read  0x0 => 0x00000001
+[41000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: timer COUNT after reset: read 0x00000001, want 0x00000000
+-Info: tb/tb_soc_regs.sv:72: Verilog $stop, ignored due to +verilator+error+limit
+[51000] bus read  0x2 => 0x00000003
+[51000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: timer CTRL after reset: read 0x00000003, want 0x00000000
+[51000] %Error: tb_soc_regs.sv:72: Assertion failed in tb_soc_regs.expect_eq: timer enable flop after reset: read 0x00000001, want 0x00000000
+[61000] bus read  0x4 => 0x00000000
+[71000] bus read  0x6 => 0x00000000
+[110000] bus write 0x6 <= 0x000000f0
+[121000] bus read  0x5 => 0x00000081
+[140000] bus write 0x1 <= 0x00000004
+[160000] bus write 0x2 <= 0x00000001
+[160000] timer_irq rose
+[180000] bus write 0x2 <= 0x00000002
+[191000] bus read  0x8 => 0x00000000
+[191000] %Fatal: tb_soc_regs.sv:139: Assertion failed in tb_soc_regs: tb_soc_regs: 3 check(s) failed
+%Error: tb/tb_soc_regs.sv:139: Verilog $stop
+Aborting...

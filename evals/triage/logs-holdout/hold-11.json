@@ -1,0 +1,7 @@
+{
+  "id": "hold-11",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" -f filelists/top.f tb/tb_soc_regs.sv --top-module tb_soc_regs && obj_dir/Vtb_soc_regs +verilator+quiet +verilator+error+limit+10",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}
