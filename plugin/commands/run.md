@@ -2,6 +2,7 @@
 description: Run the chipgraph build loop - hand each ready agent task to its role subagent, submit it, repeat until the build is done or waiting.
 argument-hint: "[target, default *]"
 allowed-tools: mcp__plugin_chipgraph_chipgraph__next_task, mcp__plugin_chipgraph_chipgraph__submit, Agent
+disallowed-tools: Bash, NotebookEdit, Skill, WebFetch, WebSearch
 ---
 
 You drive a chipgraph build. The chipgraph engine decides every task, the files each

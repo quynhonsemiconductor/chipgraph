@@ -2,6 +2,7 @@
 description: Classify a failing lint/sim/check log as infra, rtl, tb or spec, with a summary, the evidence and what to do next. Deterministic rules first; otherwise a chipgraph:decider subagent answers (small model, then large when unsure).
 argument-hint: "<log path in the project> [check id]"
 allowed-tools: Agent, mcp__plugin_chipgraph_chipgraph__triage, mcp__plugin_chipgraph_chipgraph__pending_decisions, mcp__plugin_chipgraph_chipgraph__answer_decision
+disallowed-tools: Bash, Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, Skill, WebFetch, WebSearch
 ---
 
 Triage this failing log: `$ARGUMENTS`. The first word is the log's path inside the

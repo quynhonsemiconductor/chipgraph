@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipgraph"
-version = "0.0.1"
+version = "0.1.0rc1"
 description = "AI agent system for chip (IC) design, built on a build graph over a Design Model"
 readme = "README.md"
 license = "Apache-2.0"

@@ -9,7 +9,7 @@
     {
       "name": "chipgraph",
       "source": "./plugin",
-      "description": "Run the chipgraph MCP server (status, build, check, approve, config_show) inside your own Claude Code."
+      "description": "chipgraph for chip (IC) design in Claude Code: /chipgraph:status, /chipgraph:trace, /chipgraph:ask, /chipgraph:triage, /chipgraph:init-chipgraph and /chipgraph:run, over the chipgraph MCP server."
     }
   ]
 }
