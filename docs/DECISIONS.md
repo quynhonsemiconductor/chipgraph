@@ -129,6 +129,13 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
 - **Chọn:** luật bằng code, rồi model nhỏ có structured output, rồi model mạnh.
 - Jev chỉ cắm vào sau khi qua evals và chính sách dữ liệu. Nó mới ra (2026-09-15), là sản
   phẩm đóng, và dữ liệu phải gửi lên cloud.
+- **Bổ sung (2026-10-01), sau lần chạy holdout của triage (PR #65):** khi câu hỏi đã leo
+  lên hạng sau, câu trả lời hợp lệ của hạng đó là kết quả, kể cả khi dưới ngưỡng của chính
+  nó (khi đó đánh dấu `low_confidence`). Chỉ quay về câu trả lời của hạng trước khi hạng
+  sau không chọn được đáp án nào trong các lựa chọn. Không bao giờ so độ tin cậy giữa các
+  hạng: mỗi model tự báo độ tin cậy theo cách riêng, và model nhỏ thường tự tin quá mức
+  (holdout: Haiku trả `rtl` 0.70, Opus trả `tb` 0.45 là đúng, nhưng luật cũ chọn câu có độ
+  tin cậy cao hơn là `rtl`).
 
 ## D15. Chống lỗi thời bằng tách tầng, evals và rà soát định kỳ — Chốt (2026-09-27)
 
