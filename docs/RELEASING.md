@@ -17,7 +17,8 @@ stored anywhere).
    environment name `testpypi`.
 3. **GitHub environments**: in the repo's Settings → Environments, create:
    - `pypi` — add required reviewers (the lead, at minimum) so a push to `pypi` needs
-     manual approval.
+     manual approval. Release candidates go to PyPI too (after the TestPyPI
+     smoke test), so this approval gates every upload to PyPI.
    - `testpypi` — no required reviewers needed (safe to auto-run).
 
    The environment names must match exactly what the workflow uses
@@ -40,14 +41,19 @@ stored anywhere).
    - `git tag vX.Y.Z && git push origin vX.Y.Z` → the `build` job runs, then
      `publish-pypi` (requires the `pypi` environment's reviewer approval).
    - `git tag vX.Y.ZrcN && git push origin vX.Y.ZrcN` (a release-candidate tag
-     containing `rc`) → `build` then `publish-testpypi`, no approval needed.
+     containing `rc`) → `build`, then `publish-testpypi` (no approval), then
+     `smoke-testpypi` (installs that exact version from TestPyPI with `uvx` and runs
+     `--version` and `--help`), then `publish-pypi` with the **same build** (requires the
+     `pypi` environment's reviewer approval). The RC must reach PyPI because the
+     marketplace plugin runs `uvx chipgraph@X.Y.ZrcN`, which resolves from PyPI. PyPI
+     accepts pre-releases; only an exact pin (`@X.Y.ZrcN`) installs one, so nothing
+     else picks it up. If the smoke test fails, nothing goes to PyPI.
    - Or run the workflow manually (Actions → Release → Run workflow) and pick
      `testpypi` or `pypi` as the target — useful to republish without a new tag.
-   - A release candidate the marketplace plugin pins (`plugin/.mcp.json` runs
-     `uvx chipgraph@X.Y.ZrcN` from PyPI) must also be on PyPI, or the plugin's MCP server
-     cannot start: once it works from TestPyPI, run the workflow manually on the
-     `vX.Y.ZrcN` tag with target `pypi`. An exact pin (`@X.Y.ZrcN`) installs a
-     pre-release; nothing else picks it up.
+   - Before tagging, run the real-model evals by hand on your own plan:
+     `SUITES="ask triage-holdout" evals/run-claude-code.sh /tmp/cg-eval-<name>`
+     (about $2 at list price with Haiku). The weekly `evals` CI job stays off until
+     the `CHIPGRAPH_EVALS_CLAUDE_TOKEN` secret is added.
 4. The `build` job fails the whole run if the pushed tag's version (`vX.Y.Z` →
    `X.Y.Z`) does not match `pyproject.toml`'s `version`, so a stale bump can't slip
    through.
