@@ -1,0 +1,4 @@
+tb_gpio_pins: start
+[36000] %Fatal: tb_gpio_pins.sv:55: Assertion failed in tb_gpio_pins.expect_pins: tb_gpio_pins: REQ-GPIO-001: pin_out=0x00 after writing 0x5ac30001, expected 0x01
+%Error: tb/tb_gpio_pins.sv:55: Verilog $stop
+Aborting...

@@ -1,7 +1,7 @@
 """Summarise one M1-14 acceptance run (`run.sh`) and grade its answers.
 
-    uv run python docs/triage-claude-code/report.py [--set holdout] OUT_DIR
-    uv run python docs/triage-claude-code/report.py [--set holdout] --list   # id<TAB>check
+    uv run python docs/triage-claude-code/report.py [--set holdout|holdout2] OUT_DIR
+    uv run python docs/triage-claude-code/report.py [--set holdout|holdout2] --list
 
 Reads OUT_DIR/streams/<id>.jsonl (one `claude -p "/chipgraph:triage ..."` stream per
 sample). The answer of a sample is the last `triage` tool result of the main session (the
@@ -9,7 +9,9 @@ report the command prints): its label, its backend (rule, small, large) and conf
 Writes OUT_DIR/answers.jsonl and grades it with evals/triage/grade.py. Subagents may only
 call `pending_decisions`; any other subagent tool call is listed and fails the run.
 `--set holdout` uses the holdout set (`evals/triage/holdout.yml`, logs in
-`evals/triage/logs-holdout/`) instead of the 22 samples of `faults.yml`.
+`evals/triage/logs-holdout/`) instead of the 22 samples of `faults.yml`; `--set holdout2`
+the second holdout set (`evals/triage/holdout2.yml`, logs in `evals/triage/logs-holdout2/`).
+`--list` prints `id<TAB>check` per sample (run.sh reads it).
 Exit code: grade.py's (0 pass, 1 fail).
 """
 
@@ -26,7 +28,11 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 LOGS = REPO / "evals" / "triage" / "logs"
-LOGS_BY_SET = {"default": LOGS, "holdout": REPO / "evals" / "triage" / "logs-holdout"}
+LOGS_BY_SET = {
+    "default": LOGS,
+    "holdout": REPO / "evals" / "triage" / "logs-holdout",
+    "holdout2": REPO / "evals" / "triage" / "logs-holdout2",
+}
 SUBAGENT_TOOLS = ("__pending_decisions",)
 
 

@@ -13,9 +13,10 @@ chipgraph eval SUITE [--runtime fake|claude-code] [--main-model haiku]
                [--time-limit 3600] [--out DIR] [--only ID,ID...]
 ```
 
-Suites: `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`) and
-`triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`, same schema as
-`faults.yml`; until that file exists the suite reports `NO DATA` and exits 0).
+Suites: `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`),
+`triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`) and `triage-holdout2`
+(`triage/holdout2.yml` and `triage/logs-holdout2/`). The holdouts have the schema of
+`faults.yml`; a suite whose file does not exist reports `NO DATA` and exits 0.
 
 It is built on [Inspect AI](https://inspect.aisi.org.uk/) (`inspect-ai`, pinned in the
 `evals` extra and the dev group): `harness/` makes one Inspect `Task` per suite, its
@@ -68,20 +69,23 @@ Exit code: 0 pass (or no data), 1 fail, 2 error. Runtimes:
   most. With a plan token, `total_cost_usd` is the list-price equivalent, not a bill.
 
   Expected cost with haiku: triage about $1.1 for the 22 samples (the M1-14 acceptance run:
-  haiku main session, haiku/opus deciders; most samples are decided by rules). Ask with a
-  haiku main session has not been measured yet; the $3 default caps it.
+  haiku main session, haiku/opus deciders; most samples are decided by rules). The two
+  holdouts (12 samples each) have not been measured; holdout2 has more simulation failures,
+  which go to the deciders, so expect more per sample than the 22. Ask with a haiku main
+  session has not been measured yet. The $3 default caps each suite.
 
 ### The `evals` CI job
 
 `.github/workflows/evals.yml` runs `chipgraph eval --runtime claude-code` on `ask`,
-`triage` and `triage-holdout` with haiku and the budget: by hand (`workflow_dispatch`,
+`triage`, `triage-holdout` and `triage-holdout2` with haiku and the budget: by hand (`workflow_dispatch`,
 inputs `suite`, `main_model`, `budget_usd`, the cap per suite) and weekly; never on a push
 or a PR. It installs Claude Code (pinned) and uv, writes each `summary.md` to the job
 summary, uploads the whole report directory as the artifact `eval-report-<run id>`, and
 fails when a suite fails. It needs the repository secret `CHIPGRAPH_EVALS_CLAUDE_TOKEN`:
 a Claude Code OAuth token of a separate account (`claude setup-token` on that account),
 passed to `claude` as `CLAUDE_CODE_OAUTH_TOKEN` in the eval step only. Without the secret
-the job skips with a notice and stays green. At most `budget_usd` x 3 per run.
+the job skips with a notice and stays green. At most `budget_usd` x 4 per run (four
+suites).
 
 The same run on your machine: `evals/run-claude-code.sh /tmp/cg-eval-<name>` (env
 `SUITES`, `MAIN_MODEL`, `BUDGET_USD`).
@@ -184,3 +188,32 @@ used to fix a rule, it is spent: make a new one.
   into the repository.
 - `SET=holdout docs/triage-claude-code/run.sh /tmp/cg-triage-holdout` runs it in real
   Claude Code; the default is still the 22.
+
+### The second holdout set (holdout2)
+
+Holdout 1 has been used: its score exposed a flaw in `decide()` and in triage's spec
+retrieval, and both were changed because of it. It is now spent as a clean measure (a
+score on it is still worth reporting, but no longer independent). `triage/holdout2.yml`
+(`h2-01` ... `h2-12`, three per class) is the fresh one, for measuring that change
+honestly, made by an author who read neither the triage rules, `decide()`, their tests nor
+any committed log. Every fault is new against the 34 of `faults.yml` and `holdout.yml`.
+
+It is aimed at the hard case, RTL against testbench in a simulation failure: each sample
+says where it fails (`stage`: lint, build, sim, check) and how wide (`scope`: block, top,
+chip), and six are `stage: sim` (three `rtl`, three `tb`; the RTL lints clean), three of
+them through `tiny_top`. Its four testbenches (`triage/tb/holdout2/`) report in different
+styles: a watchdog timeout with `$fatal`, scoreboard `MISMATCH` lines ending in `$stop`,
+concurrent assertions with `$error`, and `$fatal` at the first failed check. One fault
+kind is added, `env` (extra environment variables for the command).
+
+The holdout rule above applies unchanged: grading only, no holdout2 id or file under
+`src/` (`tests/evals/test_triage_holdout2.py`), and once anything is changed because of
+it, it is spent too.
+
+- `triage/gen_logs.py --set holdout2 [--check]` regenerates (or compares) its logs.
+- `triage/grade.py ANSWERS.jsonl --set holdout2` grades answers against it.
+- `docs/triage-claude-code/rules_only_holdout2.py` runs `triage/rules_only.py`, unchanged
+  and as a black box, on it (as `rules_only_holdout.py` does for holdout 1; `--set
+  holdout` also works) and grades it. Report its result with the run; never commit it.
+- `SET=holdout2 docs/triage-claude-code/run.sh /tmp/cg-triage-holdout2` and
+  `chipgraph eval triage-holdout2 --runtime claude-code` run it with a real model.

@@ -1,0 +1,7 @@
+{
+  "id": "h2-09",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" -f filelists/top.f tb/tb_top_irq.sv --top-module tb_top_irq && obj_dir/Vtb_top_irq +verilator+quiet",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}

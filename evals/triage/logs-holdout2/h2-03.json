@@ -1,0 +1,7 @@
+{
+  "id": "h2-03",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" rtl/tiny_timer.sv tb/tb_timer_sva.sv --top-module tb_timer_sva && obj_dir/Vtb_timer_sva +verilator+quiet",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}

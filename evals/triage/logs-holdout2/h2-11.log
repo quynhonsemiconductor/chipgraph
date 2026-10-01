@@ -1,0 +1,8 @@
+.chipgraph.yml:25: invalid YAML: while parsing a flow mapping
+  in "<unicode string>", line 24, column 15:
+      cross_chip: { use: cross_chip
+                  ^
+expected ',' or '}', but got ':'
+  in "<unicode string>", line 25, column 13:
+      ports_diff: { use: ports_diff, top: "tiny_ ... 
+                ^

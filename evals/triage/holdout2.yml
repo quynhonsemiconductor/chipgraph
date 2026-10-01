@@ -1,0 +1,215 @@
+# /triage second holdout set (holdout2): faults used only for grading.
+#
+# Same schema and the same way of making logs as faults.yml (see its header). It was made
+# after holdout.yml had been used to change triage (decide() and its spec retrieval), so
+# holdout.yml is no longer a clean measure; this set is. Its author did not read the
+# triage rules (src/chipgraph/packs/assist/triage/), decide(), their tests, or any
+# committed log. Every fault differs from the 34 of faults.yml and holdout.yml in
+# construct, file or tool message.
+#
+# Never tune triage on this set: a score here is only meaningful while nothing was changed
+# because of it (evals/README.md). Once something is, it is spent: make a new one.
+#
+# Labels are fixed by the injected fault, as in faults.yml: `rtl` breaks RTL that the spec
+# and the testbench agree on; `tb` breaks only a testbench; `spec` edits only a MAS, so the
+# spec disagrees with the RTL and every user of it; `infra` breaks the environment (build
+# scripts, the tool environment, the project profile), never the design.
+#
+# Two fields say where each fault shows, and are checked by tests/evals/test_triage_holdout2.py:
+# - stage: lint (Verilator lint), build (the simulation build), sim (the simulation builds
+#   and runs, a check in the testbench fails; the RTL lints clean), or check (a chipgraph
+#   check of the Design Model or the profile).
+# - scope: block (one block, or its own testbench), top (through tiny_top's register bus),
+#   or chip (the whole project).
+# Half the set is `stage: sim`, three `rtl` and three `tb`, three of them through tiny_top:
+# telling RTL from testbench in a simulation failure is what this set is meant to measure.
+#
+# One fault kind is added to faults.yml's and holdout.yml's: `env: {NAME: value}` sets
+# extra environment variables for the command (never PATH, HOME or the locale).
+#
+# `tb` names a testbench relative to evals/triage/tb/; it is copied to tb/<file name>.
+# The four testbenches in tb/holdout2/ report failures in four styles: a watchdog timeout
+# with `$fatal` (tb_top_irq, through tiny_top), scoreboard MISMATCH lines and `$stop`
+# (tb_top_scoreboard, through tiny_top), concurrent assertions with `$error`
+# (tb_timer_sva), and `$fatal` at the first failed check (tb_gpio_pins).
+#
+# evals/triage/gen_logs.py --set holdout2 writes logs-holdout2/<id>.log and <id>.json.
+schema_version: 1
+project: examples/tinysoc
+
+x-sim-top-irq: &sim_top_irq >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" -f filelists/top.f tb/tb_top_irq.sv
+  --top-module tb_top_irq && obj_dir/Vtb_top_irq +verilator+quiet
+x-sim-top-scoreboard: &sim_top_scoreboard >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" -f filelists/top.f tb/tb_top_scoreboard.sv
+  --top-module tb_top_scoreboard && obj_dir/Vtb_top_scoreboard +verilator+quiet
+x-sim-timer-sva: &sim_timer_sva >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" rtl/tiny_timer.sv tb/tb_timer_sva.sv
+  --top-module tb_timer_sva && obj_dir/Vtb_timer_sva +verilator+quiet
+x-sim-gpio-pins: &sim_gpio_pins >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" rtl/tiny_gpio.sv tb/tb_gpio_pins.sv
+  --top-module tb_gpio_pins && obj_dir/Vtb_gpio_pins +verilator+quiet
+
+samples:
+  - id: h2-01
+    label: tb
+    stage: sim
+    scope: top
+    description: The top scoreboard's model keeps all 32 written bits of DATA_OUT; the MAS and the RTL keep 7:0.
+    tb: [holdout2/tb_top_scoreboard.sv]
+    fault:
+      edit:
+        - path: tb/tb_top_scoreboard.sv
+          find: "      4'h4: model_data_out = {24'd0, d[7:0]};  // DATA_OUT holds wdata[7:0]\n"
+          replace: "      4'h4: model_data_out = d;\n"
+    cmd: *sim_top_scoreboard
+
+  - id: h2-02
+    label: infra
+    stage: build
+    scope: top
+    description: VERILATOR_ROOT is left pointing at another Verilator install, so verilator refuses to build.
+    tb: [holdout2/tb_top_scoreboard.sv]
+    fault:
+      env:
+        VERILATOR_ROOT: tools/verilator-4.228/share/verilator
+    cmd: *sim_top_scoreboard
+
+  - id: h2-03
+    label: rtl
+    stage: sim
+    scope: block
+    description: tiny_timer compares COUNT + 1 with COMPARE, so irq rises one cycle early.
+    tb: [holdout2/tb_timer_sva.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_timer.sv
+          find: "      if (enable_q && count_q == compare_q) begin\n"
+          replace: "      if (enable_q && count_q + 32'd1 == compare_q) begin\n"
+    cmd: *sim_timer_sva
+
+  - id: h2-04
+    label: spec
+    stage: check
+    scope: block
+    description: The GPIO MAS writes DATA_OUT's bits as 0:7 (msb below lsb).
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_GPIO_MAS.md
+          find: "| `0x0` | `DATA_OUT` | `DATA_OUT` | 7:0 |"
+          replace: "| `0x0` | `DATA_OUT` | `DATA_OUT` | 0:7 |"
+    cmd: chipgraph check --only spec_schema --block gpio
+    check: spec_schema
+
+  - id: h2-05
+    label: rtl
+    stage: sim
+    scope: top
+    description: tiny_top wires the timer's write enable to the gpio decode and the gpio's to the timer decode.
+    tb: [holdout2/tb_top_irq.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_top.sv
+          find: "      .wr_en (timer_wr_en),\n"
+          replace: "      .wr_en (gpio_wr_en),\n"
+        - path: rtl/tiny_top.sv
+          find: "      .wr_en   (gpio_wr_en),\n"
+          replace: "      .wr_en   (timer_wr_en),\n"
+    cmd: *sim_top_irq
+
+  - id: h2-06
+    label: tb
+    stage: sim
+    scope: block
+    description: The timer testbench asserts irq in the same cycle COUNT equals COMPARE; the MAS says the cycle after.
+    tb: [holdout2/tb_timer_sva.sv]
+    fault:
+      edit:
+        - path: tb/tb_timer_sva.sv
+          find: "count == compare) |=> irq)\n  else $error(\"a_irq_after_match: COUNT reached COMPARE=0x%0h but irq=%b on the next cycle\",\n"
+          replace: "count == compare) |-> irq)\n  else $error(\"a_irq_after_match: COUNT reached COMPARE=0x%0h but irq=%b in the same cycle\",\n"
+    cmd: *sim_timer_sva
+
+  - id: h2-07
+    label: infra
+    stage: lint
+    scope: block
+    description: The Makefile's lint recipe line is indented with spaces instead of a tab.
+    fault:
+      edit:
+        - path: Makefile
+          find: "\tverilator --lint-only -Wall"
+          replace: "        verilator --lint-only -Wall"
+    cmd: make lint BLOCK=timer
+
+  - id: h2-08
+    label: spec
+    stage: check
+    scope: block
+    description: The GPIO MAS gives pin_dir direction in; in the RTL and the top it is an output.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_GPIO_MAS.md
+          find: "| `pin_dir` | out | 8 |"
+          replace: "| `pin_dir` | in | 8 |"
+    cmd: chipgraph check --only ports_diff --block gpio
+    check: ports_diff
+
+  - id: h2-09
+    label: tb
+    stage: sim
+    scope: top
+    description: The top irq testbench's watchdog gives up after 16 cycles, before COUNT can reach COMPARE = 20.
+    tb: [holdout2/tb_top_irq.sv]
+    fault:
+      edit:
+        - path: tb/tb_top_irq.sv
+          find: "  localparam int unsigned IrqTimeoutCycles = 64;\n"
+          replace: "  localparam int unsigned IrqTimeoutCycles = 16;\n"
+    cmd: *sim_top_irq
+
+  - id: h2-10
+    label: rtl
+    stage: sim
+    scope: block
+    description: tiny_gpio loads DATA_OUT from wdata[15:8] instead of wdata[7:0].
+    tb: [holdout2/tb_gpio_pins.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_gpio.sv
+          find: "        2'd0: out_q <= wdata[7:0];\n"
+          replace: "        2'd0: out_q <= wdata[15:8];\n"
+    cmd: *sim_gpio_pins
+
+  - id: h2-11
+    label: infra
+    stage: check
+    scope: chip
+    description: A hand edit of the project profile (.chipgraph.yml) left a flow mapping unclosed; it no longer parses.
+    fault:
+      edit:
+        - path: .chipgraph.yml
+          find: "  cross_chip: { use: cross_chip }\n"
+          replace: "  cross_chip: { use: cross_chip\n"
+    cmd: chipgraph check --only cross_chip
+    check: cross_chip
+
+  - id: h2-12
+    label: spec
+    stage: check
+    scope: block
+    description: The timer MAS keeps the REQ-TIM-002 tag but loses its text.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_TIMER_MAS.md
+          find: "`REQ-TIM-002` A write to `COUNT` loads it on the next clock, replacing the count.\n"
+          replace: "`REQ-TIM-002`\n"
+    cmd: chipgraph check --only spec_schema --block timer
+    check: spec_schema
