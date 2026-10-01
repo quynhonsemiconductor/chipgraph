@@ -10,7 +10,12 @@
 #   tests/evals/test_ask_grader.py checks every `cite` exists and every `has` is found,
 #   so the expectations stay true when the files change.
 # - `facts`: optional; each entry is a list of alternatives, and the answer text must
-#   contain one of them (case-insensitive).
+#   state one of them: plain text is found case-insensitively on word boundaries (`0x2`
+#   does not match `0x20`), `re:<regex>` is searched case-insensitively. A fact is never
+#   a bare digit: "8" would match almost any answer, so it is `8 bits` or `[7:0]`.
+# - `reference`: a correct answer stating every fact; the `fake` runtime of
+#   `chipgraph eval` answers with it (citing the first `expected`), and the tests check it
+#   passes the grader.
 #
 # Graded by evals/ask/grade.py; run for real by docs/ask-claude-code/run.sh.
 schema_version: 1
@@ -25,7 +30,10 @@ questions:
       - { cite: "rtl/tiny_timer.sv:29", has: "compare_q <= 32'd0" }
       - { cite: "model:register:timer.COMPARE" }
       - { cite: "model:field:timer.COMPARE.COMPARE" }
-    facts: [["0", "zero"]]
+    facts:
+      - ['re:\breset(s|ting)?\b[^.;,\d]{0,60}\b(0|zero|0x0+|32''[dh]0)\b',
+         're:\b(0|zero|0x0+)\b[^.;,\d]{0,30}\b(on|at|after|upon|out of) reset\b', "32'd0"]
+    reference: "COMPARE resets to 0: all timer registers reset to 0."
 
   - id: q02
     question: At which offset is the GPIO DIR register, and what is its access type?
@@ -34,7 +42,10 @@ questions:
       - { cite: "rtl/tiny_gpio.sv:10", has: "DIR      (RW)" }
       - { cite: "model:register:gpio.DIR" }
       - { cite: "model:field:gpio.DIR.DIR" }
-    facts: [["0x2", "offset 2", "2"], ["rw", "read/write", "read-write", "read and write"]]
+    facts:
+      - ["0x2", "0x02", "4'h2", 're:\boffset\D{0,10}\b2\b']
+      - ["rw", "read/write", "read-write", "read and write"]
+    reference: "DIR is at offset 0x2 and is RW (read/write)."
 
   - id: q03
     question: What happens when software writes 1 to CTRL.IRQ_CLR?
@@ -46,7 +57,8 @@ questions:
       - { cite: "rtl/tiny_timer.sv:43-45", has: "irq_q <= 1'b0" }
       - { cite: "model:field:timer.CTRL.IRQ_CLR" }
       - { cite: "model:requirement:REQ-TIM-004" }
-    facts: [["clear"]]
+    facts: [['re:\bclear(s|ed|ing)?\b']]
+    reference: "Writing 1 to CTRL.IRQ_CLR clears the pending interrupt: irq returns to 0."
 
   - id: q04
     question: Which block owns the DATA_IN register, and does it have a reset value?
@@ -56,7 +68,8 @@ questions:
       - { cite: "rtl/tiny_gpio.sv:9", has: "DATA_IN" }
       - { cite: "model:register:gpio.DATA_IN" }
       - { cite: "model:field:gpio.DATA_IN.DATA_IN" }
-    facts: [["gpio"]]
+    facts: [["gpio", "tiny_gpio"]]
+    reference: "DATA_IN belongs to the gpio block (tiny_gpio); it has no reset value."
 
   # --- ports and widths ---------------------------------------------------------------
   - id: q05
@@ -66,7 +79,8 @@ questions:
       - { cite: "doc/specs/TINY_GPIO_MAS.md:51", has: "`pin_out` | out | 8" }
       - { cite: "model:port:tiny_gpio.pin_out" }
       - { cite: "model:port:spec.gpio.pin_out" }
-    facts: [["8"]]
+    facts: [['re:\b8[- ]?bits?\b', "eight bits", "eight-bit", "[7:0]"]]
+    reference: "pin_out is 8 bits wide ([7:0])."
 
   - id: q06
     question: How many bits of wdata does tiny_gpio actually use?
@@ -75,7 +89,9 @@ questions:
       - { cite: "rtl/tiny_gpio.sv:35-36", has: "wdata[7:0]" }
       - { cite: "doc/specs/TINY_GPIO_MAS.md:48", has: "only `[7:0]` is meaningful" }
       - { cite: "model:port:spec.gpio.wdata" }
-    facts: [["7:0", "8"]]
+    facts:
+      - ["[7:0]", "7:0", 're:\b8[- ]?bits?\b', "eight bits", 're:\b(low|lower|bottom) (8|eight)\b']
+    reference: "Only wdata[7:0] is used: the low 8 bits."
 
   - id: q07
     question: What is the address width of the tinysoc register bus?
@@ -87,7 +103,8 @@ questions:
       - { cite: "README.md:10", has: "4-bit register bus" }
       - { cite: "model:project:tinysoc" }
       - { cite: "model:port:tiny_top.addr" }
-    facts: [["4"]]
+    facts: [['re:\b4[- ]?bits?\b', "four bits", "four-bit", "[3:0]", "addr_width: 4"]]
+    reference: "The register bus address is 4 bits wide (addr[3:0])."
 
   # --- interrupts, memory map, clock and reset ----------------------------------------
   - id: q08
@@ -95,14 +112,16 @@ questions:
     expected:
       - { cite: "chip.yml:24-26", has: "line: 0" }
       - { cite: "model:interrupt:timer.irq" }
-    facts: [["0"]]
+    facts: [['re:\b(line|irq|interrupt)\b[^.;,\d]{0,20}\b0\b', "irq[0]"]]
+    reference: "The timer drives interrupt line 0."
 
   - id: q09
     question: What is the base address of the gpio block in the memory map?
     expected:
       - { cite: "chip.yml:29", has: "base: 0x4" }
       - { cite: "model:memory_region:gpio" }
-    facts: [["0x4", "4"]]
+    facts: [["0x4", "0x04", "0x00000004", "4'h4", 're:\bbase\b[^.;,\d]{0,20}\b4\b']]
+    reference: "The gpio block's base address is 0x4."
 
   - id: q10
     question: What clock and reset does tinysoc use?
@@ -114,6 +133,7 @@ questions:
       - { cite: "model:clock:clk" }
       - { cite: "model:reset:rst_n" }
     facts: [["clk"], ["rst_n"]]
+    reference: "tinysoc uses one clock, clk, and one active-low reset, rst_n."
 
   - id: q11
     question: Is the tinysoc reset active high or active low?
@@ -123,7 +143,8 @@ questions:
       - { cite: "doc/specs/TINY_GPIO_MAS.md:45", has: "active-low" }
       - { cite: "rtl/tiny_timer.sv:27", has: "if (!rst_n)" }
       - { cite: "model:reset:rst_n" }
-    facts: [["low"]]
+    facts: [['re:\bactive[- _]?low\b', "low-active"]]
+    reference: "The reset rst_n is active low."
 
   # --- hierarchy, requirements, open items --------------------------------------------
   - id: q12
@@ -133,6 +154,7 @@ questions:
       - { cite: "model:module:tiny_timer" }
       - { cite: "model:module:tiny_top" }
     facts: [["tiny_top"], ["u_timer"]]
+    reference: "tiny_top instantiates tiny_timer as u_timer."
 
   - id: q13
     question: What does requirement REQ-TIM-004 say?
@@ -140,7 +162,8 @@ questions:
       - { cite: "doc/specs/TINY_TIMER_MAS.md:78", has: "`REQ-TIM-004`" }
       - { cite: "doc/specs/TINY_TIMER_MAS.md:122", has: "(`REQ-TIM-004`)" }
       - { cite: "model:requirement:REQ-TIM-004" }
-    facts: [["IRQ_CLR"], ["clear"]]
+    facts: [["IRQ_CLR"], ['re:\bclear(s|ed|ing)?\b']]
+    reference: "REQ-TIM-004: writing 1 to CTRL.IRQ_CLR clears a pending interrupt."
 
   - id: q14
     question: Which requirement covers reading the CTRL register?
@@ -149,6 +172,7 @@ questions:
       - { cite: "doc/specs/TINY_TIMER_MAS.md:123", has: "(`REQ-TIM-005`)" }
       - { cite: "model:requirement:REQ-TIM-005" }
     facts: [["REQ-TIM-005"]]
+    reference: "REQ-TIM-005: reading CTRL returns the enable bit and the pending flag."
 
   - id: q15
     question: What are the open items for the timer block?
@@ -158,6 +182,7 @@ questions:
       - { cite: "model:open_item:timer.hb77b5782" }
       - { cite: "model:open_item:timer.h90c33ab8" }
     facts: [["interrupt vector"]]
+    reference: "The timer's open items are the interrupt vector assignment and the bus owner."
 
   # --- no source in tinysoc: the answer must be "I don't know" ------------------------
   - id: q16

@@ -1,0 +1,131 @@
+name: evals
+
+# Real-model evals (task M1-17): `chipgraph eval` with runtime claude-code (headless
+# Claude Code, haiku main session by default) on the ask, triage and triage-holdout
+# suites. Never on push or pull requests: started by hand or weekly. The framework itself
+# is checked on every PR by the fake-runtime tests in the normal CI (tests/evals).
+#
+# Auth: the repository secret CHIPGRAPH_EVALS_CLAUDE_TOKEN, a Claude Code OAuth token of
+# a separate account (`claude setup-token`), passed to `claude` as
+# CLAUDE_CODE_OAUTH_TOKEN. Without the secret the job skips, green, with a notice.
+# Cost cap: --budget-usd per suite (claude's --max-budget-usd per sample, and the suite
+# stops once the summed total_cost_usd reaches it); --time-limit per suite.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Suite to run
+        type: choice
+        options: [all, ask, triage, triage-holdout]
+        default: all
+      main_model:
+        description: Main session model
+        type: string
+        default: haiku
+      budget_usd:
+        description: Cost cap per suite, in USD
+        type: string
+        default: "3"
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_CODE_VERSION: 2.1.286
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Check for the evals secret
+        id: auth
+        env:
+          TOKEN: ${{ secrets.CHIPGRAPH_EVALS_CLAUDE_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            msg="CHIPGRAPH_EVALS_CLAUDE_TOKEN is not set: real-model evals skipped (see evals/README.md)."
+            echo "::notice::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.auth.outputs.ok == 'true'
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: steps.auth.outputs.ok == 'true'
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.auth.outputs.ok == 'true'
+        with:
+          node-version: "24"
+
+      - name: Install Claude Code
+        if: steps.auth.outputs.ok == 'true'
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude --version
+
+      - run: uv sync --locked
+        if: steps.auth.outputs.ok == 'true'
+
+      - name: Run the evals
+        id: run
+        if: steps.auth.outputs.ok == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CHIPGRAPH_EVALS_CLAUDE_TOKEN }}
+          SUITE: ${{ inputs.suite || 'all' }}
+          MAIN_MODEL: ${{ inputs.main_model || 'haiku' }}
+          BUDGET_USD: ${{ inputs.budget_usd || '3' }}
+          EVAL_OUT: ${{ runner.temp }}/eval-report
+        run: |
+          set -u
+          if [ "$SUITE" = all ]; then suites="ask triage triage-holdout"; else suites="$SUITE"; fi
+          mkdir -p "$EVAL_OUT"
+          failed=""
+          for suite in $suites; do
+            echo "::group::chipgraph eval $suite"
+            rc=0
+            uv run chipgraph eval "$suite" --runtime claude-code \
+              --main-model "$MAIN_MODEL" --budget-usd "$BUDGET_USD" \
+              --out "$EVAL_OUT/$suite" || rc=$?
+            echo "::endgroup::"
+            if [ -f "$EVAL_OUT/$suite/summary.md" ]; then
+              cat "$EVAL_OUT/$suite/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "chipgraph eval $suite: no report (exit $rc)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            [ "$rc" -eq 0 ] || failed="$failed $suite"
+          done
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the eval report
+        if: always() && steps.auth.outputs.ok == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/eval-report
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Fail if a suite failed
+        if: steps.auth.outputs.ok == 'true' && steps.run.outputs.failed != ''
+        env:
+          FAILED: ${{ steps.run.outputs.failed }}
+        run: |
+          echo "::error::eval suites failed:$FAILED"
+          exit 1

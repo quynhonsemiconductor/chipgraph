@@ -27,6 +27,9 @@ otel = [
 llm = [
     "anthropic>=1.9,<2",
 ]
+evals = [
+    "inspect-ai==0.3.273",
+]
 
 [project.scripts]
 chipgraph = "chipgraph.cli:app"
@@ -87,6 +90,7 @@ dev = [
     "import-linter>=2.15",
     "opentelemetry-sdk>=1.45",
     "anthropic>=1.9,<2",
+    "inspect-ai==0.3.273",
 ]
 
 [tool.hatch.build.targets.wheel]
