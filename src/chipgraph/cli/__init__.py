@@ -1308,6 +1308,67 @@ def ask_cmd(
         raise typer.Exit(code=1)
 
 
+# --- triage ------------------------------------------------------------------------
+
+
+@app.command("triage")
+@_handle_errors
+def triage_cmd(
+    ctx: typer.Context,
+    log: Annotated[
+        str, typer.Argument(help="The failing log file, or - to read it from stdin.")
+    ] = "-",
+    check: Annotated[
+        str | None, typer.Option("--check", help="The check id that produced the log.")
+    ] = None,
+    json_flag: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False,
+) -> None:
+    """Classify a failing lint/sim/check log as infra, rtl, tb or spec, and say what to do.
+
+    Deterministic rules answer first; otherwise decide() asks a model: the API runtime uses
+    `models.providers`; runtime claude-code queues the question for Claude Code (run
+    `/chipgraph:triage LOG` there). A model's label is advice and never blocks.
+    Exit 1 when no label was decided.
+    """
+    from chipgraph.packs.assist.triage import run_triage
+
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    app_ctx.require_profile()
+    if log == "-":
+        text, source = sys.stdin.read(), None
+    else:
+        path = Path(log)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise AppError(f"cannot read the log {log}: {exc}") from exc
+        source = log
+        resolved_log = path.resolve()
+        if resolved_log.is_relative_to(app_ctx.root.resolve()):
+            source = resolved_log.relative_to(app_ctx.root.resolve()).as_posix()
+    report = run_triage(app_ctx, text, source=source, check_id=check)
+
+    if json_flag or state.json_output:
+        typer.echo(json.dumps(report.model_dump(mode="json"), indent=2))
+    elif report.status == "decided":
+        how = f"rule {report.rule}" if report.backend == "rule" else f"{report.backend} model"
+        low = ", low confidence: advice only" if report.low_confidence else ""
+        typer.echo(f"label: {report.label} ({how}, confidence {report.confidence:.2f}{low})")
+        typer.echo(f"summary: {report.summary}")
+        typer.echo(f"suggestion: {report.suggestion}")
+        if report.evidence:
+            typer.echo("evidence:")
+            for item in report.evidence:
+                typer.echo(f"  {item}")
+    else:
+        typer.echo(f"summary: {report.summary}")
+        typer.echo(report.message, err=True)
+
+    if report.status != "decided":
+        raise typer.Exit(code=1)
+
+
 # --- mcp ---------------------------------------------------------------------------
 
 

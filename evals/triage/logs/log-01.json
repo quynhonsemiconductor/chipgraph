@@ -1,0 +1,7 @@
+{
+  "id": "log-01",
+  "cmd": "make lint BLOCK=gpio",
+  "exit_code": 2,
+  "check": null,
+  "verilator": "5.052"
+}

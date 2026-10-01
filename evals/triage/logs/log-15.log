@@ -1,0 +1,14 @@
+verilator --lint-only -Wall -f filelists/gpio.f --top-module tiny_gpio
+%Warning-CASEINCOMPLETE: rtl/tiny_gpio.sv:43:5: Case values incompletely covered (example pattern 0x3)
+   43 |     case (addr)
+      |     ^~~~
+                         ... For warning description see https://verilator.org/warn/CASEINCOMPLETE?v=5.052
+                         ... Use "/* verilator lint_off CASEINCOMPLETE */" and lint_on around source to disable this message.
+%Warning-LATCH: rtl/tiny_gpio.sv:42:3: Latch inferred for signal 'rdata' (not all control paths of combinational always assign a value)
+                                     : ... Suggest use of always_latch for intentional latches
+   42 |   always_comb begin
+      |   ^~~~~~~~~~~
+                ... For warning description see https://verilator.org/warn/LATCH?v=5.052
+                ... Use "/* verilator lint_off LATCH */" and lint_on around source to disable this message.
+%Error: Exiting due to 2 warning(s)
+make: *** [lint] Error 1

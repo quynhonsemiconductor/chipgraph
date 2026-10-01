@@ -1,0 +1,3 @@
+FAIL   ports_diff timer 2 issues
+  doc/specs/TINY_TIMER_MAS.md:49  [ports_diff.missing_in_rtl] spec port 'irq_o' of IP 'timer' is missing from RTL module 'tiny_timer'
+  rtl/tiny_timer.sv:18  [ports_diff.missing_in_spec] RTL port 'irq' of module 'tiny_timer' is missing from IP 'timer''s spec

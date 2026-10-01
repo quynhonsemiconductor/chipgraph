@@ -1,0 +1,2 @@
+ERROR  lint gpio 1 issues
+  -:-  [] command timed out after 2s: make lint BLOCK=gpio

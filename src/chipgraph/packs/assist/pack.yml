@@ -4,9 +4,10 @@ version: 0.1.0
 description: >-
   Whole-project assistance commands. Ships `/audit`: run every deterministic check
   over the whole project and group the findings by layer (DESIGN.md 4.8) and severity;
-  and `/ask`: answer a question from the Design Model and the project's documents, only
-  with checked citations.
+  `/ask`: answer a question from the Design Model and the project's documents, only
+  with checked citations; and `/triage`: classify a failing log as infra, rtl, tb or spec.
 provides:
   commands:
     - /audit
     - /ask
+    - /triage

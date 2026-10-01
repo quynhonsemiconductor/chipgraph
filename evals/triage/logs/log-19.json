@@ -1,0 +1,7 @@
+{
+  "id": "log-19",
+  "cmd": "chipgraph check --only lint --block gpio",
+  "exit_code": 1,
+  "check": "lint",
+  "verilator": "5.052"
+}

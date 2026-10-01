@@ -1,0 +1,2 @@
+FAIL   spec_schema timer 1 issues
+  doc/specs/TINY_TIMER_MAS.md:60  [register.no_access] register 'register:timer.COMPARE' has no access mode

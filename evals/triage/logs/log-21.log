@@ -1,0 +1,16 @@
+%Warning-PINMISSING: tb/tb_tiny_gpio.sv:28:13: Instance has missing pin: 'pin_dir'
+   28 |   tiny_gpio dut (
+      |             ^~~
+                     rtl/tiny_gpio.sv:23:26: ... Location of port declaration
+   23 |     output logic [7:0]   pin_dir
+      |                          ^~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.052
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Error-PINNOTFOUND: tb/tb_tiny_gpio.sv:37:8: Pin not found: 'pin_dirs'
+                                           : ... Suggested alternative: 'pin_dir'
+   37 |       .pin_dirs(pin_dir)
+      |        ^~~~~~~~
+                                           : ... Location of instance's module declaration
+   12 | module tiny_gpio (
+      |        ^~~~~~~~~
+                    ... For error description see https://verilator.org/warn/PINNOTFOUND?v=5.052

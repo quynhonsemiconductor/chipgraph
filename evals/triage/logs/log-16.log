@@ -1,0 +1,23 @@
+tb: reset released
+tb: write addr=0x0 data=0x64
+tb: read  addr=0x0 data=0x0
+FAIL COUNT after load: expected 0x64 got 0x0 (rst_n=0)
+tb: write addr=0x0 data=0x0
+tb: write addr=0x2 data=0x1
+tb: write addr=0x2 data=0x0
+tb: read  addr=0x0 data=0x0
+FAIL COUNT after 6 enabled cycles: expected 0x6 got 0x0 (rst_n=0)
+tb: write addr=0x0 data=0x0
+tb: write addr=0x1 data=0x3
+tb: write addr=0x2 data=0x1
+FAIL irq after COUNT reached COMPARE: expected 0x1 got 0x0 (rst_n=0)
+tb: write addr=0x2 data=0x2
+ok   irq after CTRL.IRQ_CLR write = 0x0
+tb: read  addr=0x2 data=0x0
+ok   CTRL readback after clear = 0x0
+tb: read  addr=0x3 data=0x0
+ok   offset 0x3 = 0x0
+FAIL tb_tiny_timer: 3 check(s) failed
+[321000] %Fatal: tb_tiny_timer.sv:100: Assertion failed in tb_tiny_timer: tb_tiny_timer failed
+%Error: tb/tb_tiny_timer.sv:100: Verilog $stop
+Aborting...

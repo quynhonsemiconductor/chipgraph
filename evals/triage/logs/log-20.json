@@ -1,0 +1,7 @@
+{
+  "id": "log-20",
+  "cmd": "chipgraph check --only trace --block gpio",
+  "exit_code": 1,
+  "check": "trace",
+  "verilator": "5.052"
+}

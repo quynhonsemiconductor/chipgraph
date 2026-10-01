@@ -16,8 +16,9 @@ API key, per D35 (`docs/DECISIONS.md`).
 ## What it gives you
 
 **MCP server `chipgraph`** (`.mcp.json`): `status`, `build`, `check`, `approve`,
-`config_show`, `audit`, the `model_*` queries, and the three tools of runtime
-`claude-code` (M1-11):
+`config_show`, `audit`, the `model_*` queries, `ask_context` and `ask_check` (M1-13),
+`triage` (M1-14), `pending_decisions` and `answer_decision` (M1-12), and the three tools
+of runtime `claude-code` (M1-11):
 
 - `next_task(target)`: runs the build; every agent rule it reaches becomes a task; it
   hands out the ready ones (each with `task_id`, `agent`, `model`, `outputs`), or says
@@ -83,6 +84,39 @@ invented answer):
 
 ```bash
 MAIN_MODEL=opus docs/ask-claude-code/run.sh /tmp/cg-ask-opus
+```
+
+## Triage a failing log: `/chipgraph:triage <log> [check]` (M1-14)
+
+`/chipgraph:triage logs/lint.log lint` says which side has to change to fix a failing
+lint, simulation or check run: `infra` (the environment: fix it and retry without
+counting a try), `rtl` or `tb` (the file:line to fix), or `spec` (the spec line; ask the
+spec owner). It prints a summary of what failed and where, the suggestion and the
+evidence. A label is advice: it never blocks a build.
+
+- `triage(path | log, check_id)` runs chipgraph's deterministic rules first (a missing
+  tool or file, a time limit, a failing spec cross check, errors that all point into a
+  testbench or all into RTL). When none decides (a simulation mismatch: RTL or testbench
+  can only be told against the spec), the question goes to `decide()`'s model tiers and
+  the result is `deferred`.
+- The command then runs the **decider loop**, also available on its own as
+  `/chipgraph:decide`: `pending_decisions` lists each queued question with its tier's
+  model; one `chipgraph:decider` subagent per question, all in parallel, answers it;
+  `answer_decision` records the answer; repeat until none is pending. Then `triage` runs
+  again and picks the answer up. A small-model answer under `decide.small_min_confidence`
+  queues the question once more for the large model.
+
+The decider tiers come from the profile's `models.tiers` (`small`, `large`), by default
+`haiku` and `opus`. Outside Claude Code, `chipgraph triage LOG [--check ID] [--json]`
+does the same with the profile's `models.providers` (API runtime); with runtime
+`claude-code` it queues the question and tells you to run `/chipgraph:triage`.
+
+The acceptance run triages the 22 labelled sample logs of `evals/triage/` on a tinysoc
+copy and grades the labels (`evals/triage/grade.py`: at least 80 % correct, with the
+accuracy by backend):
+
+```bash
+docs/triage-claude-code/run.sh /tmp/cg-triage-haiku
 ```
 
 ## Requirements

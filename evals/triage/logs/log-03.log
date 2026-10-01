@@ -1,0 +1,2 @@
+FAIL   ports_diff gpio 1 issues
+  rtl/tiny_gpio.sv:21  [ports_diff.width] port 'pin_in' of IP 'gpio': spec width 16 but RTL width 8

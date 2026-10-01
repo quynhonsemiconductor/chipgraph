@@ -1,0 +1,4 @@
+%Error: tb/tb_tiny_timer.sv:49:5: syntax error, unexpected '#', expecting ';'
+   49 |     #1 d = rdata;
+      |     ^
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.
