@@ -1,0 +1,4 @@
+verilator --lint-only --inhibit-sim -Wall -f filelists/gpio.f --top-module tiny_gpio
+%Error: Invalid option: --inhibit-sim
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.
+make: *** [lint] Error 1

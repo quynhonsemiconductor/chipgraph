@@ -1,0 +1,2 @@
+FAIL   lint top 1 issues
+  rtl/tiny_top.sv:27  [UNOPTFLAT] Signal unoptimizable: Circular combinational logic: 'tiny_top.gpio_wr_en'

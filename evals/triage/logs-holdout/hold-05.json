@@ -1,0 +1,7 @@
+{
+  "id": "hold-05",
+  "cmd": "chipgraph check --only lint --block top",
+  "exit_code": 1,
+  "check": "lint",
+  "verilator": "5.052"
+}

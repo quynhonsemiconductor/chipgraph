@@ -156,3 +156,31 @@ decider subagents on the profile's tiers, small `haiku`, large `LARGE_MODEL=opus
 `sonnet`), writes `/tmp/cg-triage-haiku/answers.jsonl` and grades it.
 
 Real QSoC CI logs may be added later; their labels are then confirmed by a person.
+
+### The holdout set (task M1-17)
+
+The 22 samples were seen by whoever wrote the triage rules, so a score on them may reflect
+rules fitted to their exact error strings. `triage/holdout.yml` is a second, smaller set
+(`hold-01` ... `hold-12`, at least two per class) made the same way, by an author who did
+not read the rules or the 22 logs, from other files, tool messages and constructs (a
+signal-killed job, a file-size limit, a removed Verilator option, a combinational loop, a
+bad top-level decode, a wrong reset value, a testbench that samples too early, an
+address overlap in `chip.yml`, overlapping MAS fields, ...). Its sample logs are in
+`triage/logs-holdout/`, and its one extra testbench, a check of `tiny_top` through the
+register bus, is `triage/tb/holdout/tb_soc_regs.sv`.
+
+**The rule: never tune triage rules on the holdout.** Do not read its logs to write or
+change a rule, and never name a holdout id or file under `src/`
+(`tests/evals/test_triage_holdout.py` checks that). It is only for grading: the score on
+the 22 is trusted only when the holdout also scores at least 80 %. If the holdout is ever
+used to fix a rule, it is spent: make a new one.
+
+- `triage/gen_logs.py --set holdout [--check]` regenerates (or compares) its logs; it adds
+  one fault kind, `ulimit` (the command runs under that shell limit).
+- `triage/grade.py ANSWERS.jsonl --set holdout` grades answers against it.
+- `docs/triage-claude-code/rules_only_holdout.py` runs `triage/rules_only.py`, unchanged
+  and as a black box, on the holdout (in a temporary copy of the repo where the holdout
+  stands in for the 22) and grades it. Its result is reported with a run, never written
+  into the repository.
+- `SET=holdout docs/triage-claude-code/run.sh /tmp/cg-triage-holdout` runs it in real
+  Claude Code; the default is still the 22.
