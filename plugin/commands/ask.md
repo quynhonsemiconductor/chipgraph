@@ -2,6 +2,7 @@
 description: Answer a question about this chip project from its Design Model and documents, with checked citations (file:line or model key); says "I don't know" when there is no source.
 argument-hint: "<question>"
 allowed-tools: Agent, mcp__plugin_chipgraph_chipgraph__ask_check
+disallowed-tools: Bash, Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, Skill, WebFetch, WebSearch
 ---
 
 Answer this question about the project: `$ARGUMENTS`

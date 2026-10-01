@@ -1,6 +1,9 @@
 """The MCP server itself (task M0-14): `build_server` wires up an `mcp` 2.x `MCPServer`
 with the five M0 tools, and `run_stdio` runs it over stdio.
 
+The `init` tool (M1-16) is meant for a project with no `.chipgraph.yml` yet: it previews,
+and with `confirm`, writes the profile `chipgraph init` would write.
+
 Each tool call loads a fresh `chipgraph.app.context.AppContext` from `start` (and
 `profile_path`, if given): a stdio session is long-lived, so a project's
 `.chipgraph.yml` may change between calls, and every tool must see the current one
@@ -31,7 +34,7 @@ from chipgraph.adapters.runtime.claude_code import decisions as cc_decisions
 from chipgraph.adapters.runtime.claude_code import service as cc_service
 from chipgraph.app.build import make_scheduler
 from chipgraph.app.checks import ProfileCheckRunner
-from chipgraph.app.context import AppContext, default_identity
+from chipgraph.app.context import AppContext, default_identity, find_repo_root
 from chipgraph.app.errors import AppError
 from chipgraph.core.config.errors import ConfigError
 from chipgraph.core.contracts import ArtifactRef, RuleInstance
@@ -449,7 +452,151 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
             report = await triage_log(ctx, log, source=source, check_id=check_id, backend=backend)
         return report.model_dump(mode="json")
 
+    # --- /init-chipgraph (M1-16): `chipgraph init`, previewed before it writes -------
+
+    @server.tool(
+        description=(
+            "Set chipgraph up in this project (works with no .chipgraph.yml): returns the "
+            ".chipgraph.yml `chipgraph init` would write (a stub, or inferred from the repo "
+            "with from_learn). Writes it only with confirm=true, and never overwrites an "
+            "existing one without force=true. Show the preview to the user first."
+        )
+    )
+    @_guard
+    async def init(
+        project: str | None = None,
+        preset: str | None = None,
+        from_learn: bool = False,
+        confirm: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            _init_project,
+            find_repo_root(start),
+            project=project,
+            preset=preset,
+            from_learn=from_learn,
+            confirm=confirm,
+            force=force,
+        )
+
     return server
+
+
+_INIT_NEXT_STEPS = (
+    "chipgraph config check     # validate the profile",
+    "chipgraph doctor           # check tools are on PATH",
+    "chipgraph ingest           # build the Design Model (for /chipgraph:ask and /chipgraph:trace)",
+)
+
+
+def _init_preview(
+    root: Path, *, project: str | None, preset: str | None, from_learn: bool
+) -> tuple[str, list[dict[str, str]]]:
+    """The `.chipgraph.yml` text `chipgraph init` would write into `root`, and any other
+    file it would write (`--from-learn`'s naming rules), without writing anything.
+
+    The stub is `chipgraph.cli._init_content`, the CLI's own text. The `--from-learn`
+    text is composed from the same `chipgraph.learn` functions `init_from_learn` uses
+    (the write itself goes through `init_from_learn`; a test checks the two agree).
+    """
+    if not from_learn:
+        from chipgraph.cli import _init_content
+
+        return _init_content(project or root.name, preset), []
+
+    from chipgraph.learn import (
+        _INIT_NAMING_RULES_REL,
+        build_naming_rules,
+        build_profile_dict,
+        dump_naming_rules_yaml,
+        learn,
+    )
+    from chipgraph.learn.draft import dump_yaml
+
+    result = learn(root)
+    rules = build_naming_rules(result)
+    others: list[dict[str, str]] = []
+    naming_ref: str | None = None
+    if rules is not None:
+        naming_ref = _INIT_NAMING_RULES_REL
+        others.append({"path": naming_ref, "content": dump_naming_rules_yaml(rules)})
+    header = (
+        "# chipgraph project profile written by `chipgraph init --from-learn` (DESIGN.md 8.6).\n"
+        "# Review it: each rule was inferred from the repo. Edit freely.\n"
+    )
+    data = build_profile_dict(result, naming_rules_ref=naming_ref)
+    return header + dump_yaml(data), others
+
+
+def _init_project(
+    root: Path,
+    *,
+    project: str | None,
+    preset: str | None,
+    from_learn: bool,
+    confirm: bool,
+    force: bool,
+) -> dict[str, Any]:
+    """The `init` tool: preview `chipgraph init`, and with `confirm`, do it.
+
+    Mirrors the CLI command: refuses to overwrite an existing `.chipgraph.yml` unless
+    `force`; `from_learn` infers the profile (and naming rules) from the repo; otherwise
+    it writes the stub (`project` defaults to the root directory's name, `preset` adds
+    `extends`). `preset` and `project` are ignored with `from_learn`, as in the CLI.
+    """
+    profile = root / ".chipgraph.yml"
+    exists = profile.is_file()
+    content, others = _init_preview(root, project=project, preset=preset, from_learn=from_learn)
+    reply: dict[str, Any] = {
+        "path": ".chipgraph.yml",
+        "exists": exists,
+        "written": False,
+        "content": content,
+        "other_files": others,
+    }
+    if exists and not force:
+        if confirm:
+            raise ToolError(".chipgraph.yml already exists; pass force=true to overwrite it")
+        reply["message"] = (
+            ".chipgraph.yml already exists: nothing will be written unless force=true "
+            "(which overwrites it)."
+        )
+        return reply
+    if not confirm:
+        verb = "overwrite" if exists else "write"
+        reply["message"] = (
+            f"Preview only: nothing was written. Call init again with confirm=true to {verb} "
+            "these files."
+        )
+        return reply
+
+    if from_learn:
+        from chipgraph.learn import InitFromLearnError, init_from_learn
+
+        old = profile.read_bytes() if exists else None
+        if exists:
+            profile.unlink()
+        try:
+            _, naming_path = init_from_learn(root)
+        except Exception as exc:
+            if old is not None and not profile.exists():
+                profile.write_bytes(old)  # keep the user's file if the write failed
+            if isinstance(exc, InitFromLearnError):
+                raise ToolError(str(exc)) from exc
+            raise
+        written = [".chipgraph.yml"]
+        if naming_path is not None:
+            written.append(naming_path.relative_to(root).as_posix())
+        reply["content"] = profile.read_text(encoding="utf-8")
+    else:
+        profile.write_text(content, encoding="utf-8")
+        written = [".chipgraph.yml"]
+    reply["written"] = True
+    reply["files_written"] = written
+    reply["message"] = f"wrote {', '.join(written)}; review it, then run the next steps."
+    reply["next_steps"] = list(_INIT_NEXT_STEPS)
+    return reply
 
 
 async def run_stdio(start: Path, profile_path: Path | None = None) -> None:

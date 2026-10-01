@@ -213,7 +213,7 @@ wheels = [
 
 [[package]]
 name = "chipgraph"
-version = "0.0.1"
+version = "0.1.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

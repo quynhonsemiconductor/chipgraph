@@ -29,7 +29,7 @@ stored anywhere).
 
 ## Cutting a release
 
-1. Bump the version in **two places** and keep them equal:
+1. Bump the version in **three places** and keep them equal:
    - `pyproject.toml` → `[project].version`
    - `plugin/.claude-plugin/plugin.json` → `version`
    - `plugin/.mcp.json` → the `chipgraph@X.Y.Z` pin in the server's `args`
@@ -43,18 +43,30 @@ stored anywhere).
      containing `rc`) → `build` then `publish-testpypi`, no approval needed.
    - Or run the workflow manually (Actions → Release → Run workflow) and pick
      `testpypi` or `pypi` as the target — useful to republish without a new tag.
+   - A release candidate the marketplace plugin pins (`plugin/.mcp.json` runs
+     `uvx chipgraph@X.Y.ZrcN` from PyPI) must also be on PyPI, or the plugin's MCP server
+     cannot start: once it works from TestPyPI, run the workflow manually on the
+     `vX.Y.ZrcN` tag with target `pypi`. An exact pin (`@X.Y.ZrcN`) installs a
+     pre-release; nothing else picks it up.
 4. The `build` job fails the whole run if the pushed tag's version (`vX.Y.Z` →
    `X.Y.Z`) does not match `pyproject.toml`'s `version`, so a stale bump can't slip
    through.
 
 ## Verifying a release
 
-Against TestPyPI (falls back to real PyPI for dependencies that aren't mirrored
-there):
+Against TestPyPI (PyPI stays the default index, for the dependencies):
 
 ```
-uvx --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ chipgraph@X.Y.Z --version
+uvx --index https://test.pypi.org/simple/ --index-strategy unsafe-best-match chipgraph@X.Y.Z --version
 ```
+
+`--index` makes uv look at TestPyPI first. Without `--index-strategy unsafe-best-match`,
+uv takes each package from the first index that has it at all, and TestPyPI has stray
+uploads of common dependencies, so resolution fails; with PyPI first instead (the pip
+style `--index-url test --extra-index-url pypi`), uv takes `chipgraph` from PyPI as soon
+as any version of it is there, and never sees the TestPyPI-only version. To run the
+plugin itself against a TestPyPI build, see "Try a release candidate from TestPyPI" in
+`plugin/README.md`.
 
 Against real PyPI:
 

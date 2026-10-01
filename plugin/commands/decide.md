@@ -1,6 +1,7 @@
 ---
 description: Answer every question chipgraph's decide() queued for a model - one chipgraph:decider subagent per question, on its tier's model, in parallel - until none is pending.
 allowed-tools: Agent, mcp__plugin_chipgraph_chipgraph__pending_decisions, mcp__plugin_chipgraph_chipgraph__answer_decision
+disallowed-tools: Bash, Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, Skill, WebFetch, WebSearch
 ---
 
 You run chipgraph's **decider loop**. The engine's `decide()` asks multiple-choice
