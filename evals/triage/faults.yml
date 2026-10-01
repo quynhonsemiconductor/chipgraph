@@ -1,0 +1,277 @@
+# /triage sample logs (task M1-14): one entry per sample, each made by injecting a known
+# fault into a fresh copy of examples/tinysoc and running the real tool.
+#
+# The label is fixed by the fault that was injected, never by a model: an `rtl` fault edits
+# RTL that the spec and the testbench agree on; a `tb` fault edits only a testbench; a
+# `spec` fault edits only a MAS or chip.yml, so the spec disagrees with the RTL and every
+# user of it; an `infra` fault breaks the environment (tools, files, make, time limits),
+# never the design.
+#
+# Fields:
+# - id: `log-NN`; neutral on purpose (it says nothing about the label).
+# - label: infra | rtl | tb | spec.
+# - description: one line, what was injected.
+# - tb: testbenches from evals/triage/tb/ copied to tb/ in the copy before the fault.
+# - fault: what is changed, so it can be re-applied:
+#     edit: [{path, find, replace}]  `find` must occur exactly once in the file;
+#     delete: [path]                 removed before the command;
+#     chmod: [{path, mode}]          octal mode set before the command (restored after);
+#     path_only: [tool]              the command runs with a PATH holding only these tools;
+#     after_ingest_delete: [path]    removed after `chipgraph ingest`.
+# - ingest: run `chipgraph ingest` after the fault (the cross checks read the model).
+# - cmd: run with `/bin/sh -c` in the copy; `check`: the chipgraph check id it runs, if any.
+#
+# evals/triage/gen_logs.py writes logs/<id>.log and logs/<id>.json from this file.
+schema_version: 1
+project: examples/tinysoc
+
+x-sim-gpio: &sim_gpio >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" rtl/tiny_gpio.sv tb/tb_tiny_gpio.sv
+  --top-module tb_tiny_gpio && obj_dir/Vtb_tiny_gpio +verilator+quiet
+x-sim-timer: &sim_timer >-
+  verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w
+  -MAKEFLAGS "-s --no-print-directory" rtl/tiny_timer.sv tb/tb_tiny_timer.sv
+  --top-module tb_tiny_timer && obj_dir/Vtb_tiny_timer +verilator+quiet
+
+samples:
+  - id: log-01
+    label: rtl
+    description: tiny_gpio drives pin_out from a misspelled, undeclared signal.
+    fault:
+      edit:
+        - path: rtl/tiny_gpio.sv
+          find: "assign pin_out = out_q;"
+          replace: "assign pin_out = out_qq;"
+    cmd: make lint BLOCK=gpio
+
+  - id: log-02
+    label: infra
+    description: Verilator is not installed; make runs with a PATH that has no verilator.
+    fault:
+      path_only: [make]
+    cmd: make lint BLOCK=timer
+
+  - id: log-03
+    label: spec
+    description: The GPIO MAS says pin_in is 16 bits; the RTL, the top and the chip are 8.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_GPIO_MAS.md
+          find: "| `pin_in` | in | 8 |"
+          replace: "| `pin_in` | in | 16 |"
+    cmd: chipgraph check --only ports_diff --block gpio
+    check: ports_diff
+
+  - id: log-04
+    label: tb
+    description: The timer testbench does not compile (a missing semicolon in a task).
+    tb: [tb_tiny_timer.sv]
+    fault:
+      edit:
+        - path: tb/tb_tiny_timer.sv
+          find: "    addr = a;\n    #1 d = rdata;"
+          replace: "    addr = a\n    #1 d = rdata;"
+    cmd: *sim_timer
+
+  - id: log-05
+    label: rtl
+    description: tiny_gpio reads DATA_IN back from the output register instead of pin_in.
+    tb: [tb_tiny_gpio.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_gpio.sv
+          find: "2'd1:    rdata = {24'd0, pin_in};"
+          replace: "2'd1:    rdata = {24'd0, out_q};"
+    cmd: *sim_gpio
+
+  - id: log-06
+    label: infra
+    description: The timer filelist points at a path that does not exist (a moved file).
+    fault:
+      edit:
+        - path: filelists/timer.f
+          find: "rtl/tiny_timer.sv"
+          replace: "rtl/timer/tiny_timer.sv"
+    cmd: make lint BLOCK=timer
+
+  - id: log-07
+    label: tb
+    description: The GPIO testbench expects DIR to reset to 0xff; the MAS and the RTL say 0.
+    tb: [tb_tiny_gpio.sv]
+    fault:
+      edit:
+        - path: tb/tb_tiny_gpio.sv
+          find: "check(\"DIR after reset\", value, 32'h0);"
+          replace: "check(\"DIR after reset\", value, 32'hFF);"
+    cmd: *sim_gpio
+
+  - id: log-08
+    label: rtl
+    description: tiny_timer builds its CTRL read value one bit short of rdata's 32 bits.
+    fault:
+      edit:
+        - path: rtl/tiny_timer.sv
+          find: "2'd2:    rdata = {30'd0, irq_q, enable_q};"
+          replace: "2'd2:    rdata = {29'd0, irq_q, enable_q};"
+    cmd: make lint BLOCK=timer
+
+  - id: log-09
+    label: spec
+    description: The timer MAS gives the COMPARE register no access mode.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_TIMER_MAS.md
+          find: "| `0x1` | `COMPARE` | `COMPARE` | 31:0 | RW | 0 |"
+          replace: "| `0x1` | `COMPARE` | `COMPARE` | 31:0 |  | 0 |"
+    cmd: chipgraph check --only spec_schema --block timer
+    check: spec_schema
+
+  - id: log-10
+    label: infra
+    description: A Makefile refactor renamed the lint target; the flow still runs make lint.
+    fault:
+      edit:
+        - path: Makefile
+          find: ".PHONY: lint lint-all clean"
+          replace: ".PHONY: lint-one lint-all clean"
+        - path: Makefile
+          find: "\nlint:\n"
+          replace: "\nlint-one:\n"
+    cmd: make lint BLOCK=gpio
+
+  - id: log-11
+    label: rtl
+    description: tiny_top leaves the timer's irq output unconnected.
+    fault:
+      edit:
+        - path: rtl/tiny_top.sv
+          find: "      .rdata (timer_rdata),\n      .irq   (timer_irq)\n"
+          replace: "      .rdata (timer_rdata)\n"
+    cmd: make lint BLOCK=top
+
+  - id: log-12
+    label: tb
+    description: The GPIO testbench writes its DATA_OUT value to offset 0x2 (DIR).
+    tb: [tb_tiny_gpio.sv]
+    fault:
+      edit:
+        - path: tb/tb_tiny_gpio.sv
+          find: "write_reg(2'd0, 32'hA5);"
+          replace: "write_reg(2'd2, 32'hA5);"
+    cmd: *sim_gpio
+
+  - id: log-13
+    label: spec
+    description: chip.yml gives gpio an interrupt on line 0, which the timer already uses.
+    ingest: true
+    fault:
+      edit:
+        - path: chip.yml
+          find: "    base: 0x4\n    size: 4\n    clock: clk\n    reset: rst_n\n"
+          replace: "    base: 0x4\n    size: 4\n    clock: clk\n    reset: rst_n\n    interrupts:\n      - name: irq\n        line: 0\n"
+    cmd: chipgraph check --only cross_chip
+    check: cross_chip
+
+  - id: log-14
+    label: infra
+    description: An RTL source file cannot be read (its permissions are 000).
+    fault:
+      chmod:
+        - { path: rtl/tiny_gpio.sv, mode: "000" }
+    cmd: make lint BLOCK=gpio
+
+  - id: log-15
+    label: rtl
+    description: tiny_gpio's read mux drops its default, leaving rdata unassigned for 0x3 (a latch).
+    fault:
+      edit:
+        - path: rtl/tiny_gpio.sv
+          find: "  always_comb begin\n    unique case (addr)\n      2'd0:    rdata"
+          replace: "  always_comb begin\n    case (addr)\n      2'd0:    rdata"
+        - path: rtl/tiny_gpio.sv
+          find: "      default: rdata = 32'd0;\n"
+          replace: ""
+    cmd: make lint BLOCK=gpio
+
+  - id: log-16
+    label: tb
+    description: The timer testbench never releases reset (it prints that it did).
+    tb: [tb_tiny_timer.sv]
+    fault:
+      edit:
+        - path: tb/tb_tiny_timer.sv
+          find: "    rst_n = 1'b1;\n"
+          replace: ""
+    cmd: *sim_timer
+
+  - id: log-17
+    label: spec
+    description: The timer MAS declares the interrupt-clear requirement as REQ-TIM-040 (a typo).
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_TIMER_MAS.md
+          find: "`REQ-TIM-004` Writing 1"
+          replace: "`REQ-TIM-040` Writing 1"
+    cmd: chipgraph check --only trace --block timer
+    check: trace
+
+  - id: log-18
+    label: rtl
+    description: tiny_timer ignores a write of 1 to CTRL.IRQ_CLR.
+    tb: [tb_tiny_timer.sv]
+    fault:
+      edit:
+        - path: rtl/tiny_timer.sv
+          find: "            if (wdata[1]) begin\n              irq_q <= 1'b0;\n            end\n"
+          replace: ""
+    cmd: *sim_timer
+
+  - id: log-19
+    label: infra
+    description: The lint command hangs (a license-queue stand-in) and hits the check's time limit.
+    fault:
+      edit:
+        - path: .chipgraph.yml
+          find: "    cmd: \"make lint BLOCK={block}\"\n"
+          replace: "    cmd: \"make lint BLOCK={block}\"\n    timeout_s: 2\n"
+        - path: Makefile
+          find: "\tverilator --lint-only"
+          replace: "\tsleep 30; verilator --lint-only"
+    cmd: chipgraph check --only lint --block gpio
+    check: lint
+
+  - id: log-20
+    label: infra
+    description: The Design Model store is missing (deleted after ingest) when trace runs.
+    ingest: true
+    fault:
+      after_ingest_delete: [.chipgraph/state/cache/model.db]
+    cmd: chipgraph check --only trace --block gpio
+    check: trace
+
+  - id: log-21
+    label: tb
+    description: The GPIO testbench connects a DUT port that does not exist (pin_dirs).
+    tb: [tb_tiny_gpio.sv]
+    fault:
+      edit:
+        - path: tb/tb_tiny_gpio.sv
+          find: "      .pin_dir(pin_dir)\n"
+          replace: "      .pin_dirs(pin_dir)\n"
+    cmd: *sim_gpio
+
+  - id: log-22
+    label: spec
+    description: The timer MAS names the interrupt output irq_o; the RTL, the top and chip.yml say irq.
+    ingest: true
+    fault:
+      edit:
+        - path: doc/specs/TINY_TIMER_MAS.md
+          find: "| `irq` | out | 1 |"
+          replace: "| `irq_o` | out | 1 |"
+    cmd: chipgraph check --only ports_diff --block timer
+    check: ports_diff

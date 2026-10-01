@@ -1,0 +1,5 @@
+verilator --lint-only -Wall -f filelists/gpio.f --top-module tiny_gpio
+%Error: $VERILATOR_ROOT/include/verilated_std.sv:313:1: File not found: rtl/tiny_gpio.sv
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.
+%Error: Exiting due to 1 error(s)
+make: *** [lint] Error 1

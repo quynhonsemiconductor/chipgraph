@@ -1,0 +1,7 @@
+{
+  "id": "log-03",
+  "cmd": "chipgraph check --only ports_diff --block gpio",
+  "exit_code": 1,
+  "check": "ports_diff",
+  "verilator": "5.052"
+}

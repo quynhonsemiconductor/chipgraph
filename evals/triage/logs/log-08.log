@@ -1,0 +1,9 @@
+verilator --lint-only -Wall -f filelists/timer.f --top-module tiny_timer
+%Warning-WIDTHEXPAND: rtl/tiny_timer.sv:61:22: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's REPLICATE generates 31 bits.
+                                             : ... note: In instance 'tiny_timer'
+   61 |       2'd2:    rdata = {29'd0, irq_q, enable_q};
+      |                      ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.052
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Error: Exiting due to 1 warning(s)
+make: *** [lint] Error 1

@@ -1,0 +1,14 @@
+verilator --lint-only -Wall -f filelists/timer.f --top-module tiny_timer
+%Error: Cannot find file containing module: 'rtl/timer/tiny_timer.sv'
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.
+        ... This may be because there's no search path specified with -I<dir>.
+        ... Looked in:
+             rtl/timer/tiny_timer.sv
+             rtl/timer/tiny_timer.sv.v
+             rtl/timer/tiny_timer.sv.sv
+             obj_dir/rtl/timer/tiny_timer.sv
+             obj_dir/rtl/timer/tiny_timer.sv.v
+             obj_dir/rtl/timer/tiny_timer.sv.sv
+        ... With current working directory '.'
+%Error: Exiting due to 1 error(s)
+make: *** [lint] Error 1

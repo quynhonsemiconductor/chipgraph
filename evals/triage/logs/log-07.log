@@ -1,0 +1,17 @@
+tb: reset released
+tb: read  addr=0x0 data=0x0
+ok   DATA_OUT after reset = 0x0
+tb: read  addr=0x2 data=0x0
+FAIL DIR after reset: expected 0xff got 0x0 (rst_n=1)
+tb: write addr=0x0 data=0xa5
+ok   pin_out after DATA_OUT write = 0xa5
+tb: read  addr=0x1 data=0x5a
+ok   DATA_IN with pin_in=0x5a = 0x5a
+tb: write addr=0x2 data=0xf
+ok   pin_dir after DIR write = 0xf
+tb: read  addr=0x3 data=0x0
+ok   offset 0x3 = 0x0
+FAIL tb_tiny_gpio: 1 check(s) failed
+[101000] %Fatal: tb_tiny_gpio.sv:96: Assertion failed in tb_tiny_gpio: tb_tiny_gpio failed
+%Error: tb/tb_tiny_gpio.sv:96: Verilog $stop
+Aborting...

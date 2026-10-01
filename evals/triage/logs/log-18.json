@@ -1,0 +1,7 @@
+{
+  "id": "log-18",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" rtl/tiny_timer.sv tb/tb_tiny_timer.sv --top-module tb_tiny_timer && obj_dir/Vtb_tiny_timer +verilator+quiet",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}

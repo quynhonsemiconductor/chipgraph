@@ -410,6 +410,45 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
         submitted = AskAnswer(answer=answer, citations=tuple(citations or ()), unknown=unknown)
         return run_ask_check(_load_ctx(), submitted).model_dump(mode="json")
 
+    # --- /triage (M1-14): classify a failing log; models answer through the decider ----
+
+    @server.tool(
+        description=(
+            "Classify a failing lint/sim/check log as infra, rtl, tb or spec, with a "
+            "summary, a suggestion and evidence. Give `path` (a log file inside the "
+            "project) or `log` (its text), and `check_id` if known. Rules answer first; "
+            "otherwise status is 'deferred': answer pending_decisions with the decider "
+            "subagent (answer_decision), then call triage again with the same arguments."
+        )
+    )
+    @_guard
+    async def triage(
+        path: str | None = None, log: str | None = None, check_id: str | None = None
+    ) -> dict[str, Any]:
+        from chipgraph.packs.assist.triage import triage_log
+
+        ctx = _load_ctx()
+        profile = ctx.require_profile().profile
+        if (path is None) == (log is None):
+            raise ToolError("give exactly one of `path` (a log file) or `log` (its text)")
+        source: str | None = None
+        if path is not None:
+            root = ctx.root.resolve()
+            target = (root / path).resolve()
+            if not target.is_relative_to(root):
+                raise ToolError(f"{path!r} is outside the project; give a path inside it")
+            if not target.is_file():
+                raise ToolError(f"no log file {path!r} in the project")
+            log = target.read_text(encoding="utf-8", errors="replace")
+            source = target.relative_to(root).as_posix()
+        assert log is not None
+        # In Claude Code the model runs in the user's session (D35): queue the question
+        # for the decider subagent, whatever API runtime the profile names.
+        backend = cc_decisions.ClaudeCodeDecideBackend(ctx.layout, profile.models)
+        async with runtime_lock:
+            report = await triage_log(ctx, log, source=source, check_id=check_id, backend=backend)
+        return report.model_dump(mode="json")
+
     return server
 
 

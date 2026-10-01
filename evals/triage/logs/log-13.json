@@ -1,0 +1,7 @@
+{
+  "id": "log-13",
+  "cmd": "chipgraph check --only cross_chip",
+  "exit_code": 1,
+  "check": "cross_chip",
+  "verilator": "5.052"
+}

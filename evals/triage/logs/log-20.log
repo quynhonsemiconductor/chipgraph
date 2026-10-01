@@ -1,0 +1,2 @@
+ERROR  trace gpio 1 issues
+  -:-  [model] no Design Model at .chipgraph/state/cache/model.db; run `chipgraph ingest` before the cross checks

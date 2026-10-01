@@ -1,0 +1,17 @@
+verilator --lint-only -Wall -f filelists/top.f --top-module tiny_top
+%Warning-PINMISSING: rtl/tiny_top.sv:45:14: Instance has missing pin: 'irq'
+   45 |   tiny_timer u_timer (
+      |              ^~~~~~~
+                     rtl/tiny_timer.sv:18:26: ... Location of port declaration
+   18 |     output logic         irq
+      |                          ^~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.052
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-UNDRIVEN: rtl/tiny_top.sv:18:29: Signal is not driven: 'timer_irq'
+                                        : ... note: In instance 'tiny_top'
+   18 |     output logic            timer_irq
+      |                             ^~~~~~~~~
+                   ... For warning description see https://verilator.org/warn/UNDRIVEN?v=5.052
+                   ... Use "/* verilator lint_off UNDRIVEN */" and lint_on around source to disable this message.
+%Error: Exiting due to 2 warning(s)
+make: *** [lint] Error 1

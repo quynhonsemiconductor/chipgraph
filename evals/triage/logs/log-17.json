@@ -1,0 +1,7 @@
+{
+  "id": "log-17",
+  "cmd": "chipgraph check --only trace --block timer",
+  "exit_code": 1,
+  "check": "trace",
+  "verilator": "5.052"
+}

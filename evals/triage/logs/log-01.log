@@ -1,0 +1,8 @@
+verilator --lint-only -Wall -f filelists/gpio.f --top-module tiny_gpio
+%Error: rtl/tiny_gpio.sv:51:20: Can't find definition of variable: 'out_qq'
+                              : ... Suggested alternative: 'out_q'
+   51 |   assign pin_out = out_qq;
+      |                    ^~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.
+%Error: Exiting due to 1 error(s)
+make: *** [lint] Error 1
