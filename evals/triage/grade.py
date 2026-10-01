@@ -1,6 +1,6 @@
 """Deterministic grader for the `/triage` evals (task M1-14; reused by M1-17).
 
-    python evals/triage/grade.py ANSWERS.jsonl [--faults evals/triage/faults.yml] [--json]
+    python evals/triage/grade.py ANSWERS.jsonl [--set holdout | --faults FILE] [--json]
 
 ANSWERS.jsonl has one JSON object per line, one per sample log:
 
@@ -12,6 +12,9 @@ was injected to make the log, never by a model. A sample passes when the answer'
 is that label; a missing answer, or one with no label, fails. The report gives a verdict
 per sample, the accuracy, the confusion matrix (true label x answered label) and the
 accuracy by `decide()` backend (rule, small, large; `none` for no label).
+
+`--set holdout` grades against `holdout.yml` instead (the holdout set, ids `hold-NN`, used
+only for grading); `--faults` takes any file of the same schema.
 
 The run passes when the accuracy is at least 80 %. Exit code: 0 pass, 1 fail, 2 bad input.
 """
@@ -28,6 +31,8 @@ from typing import Any
 import yaml
 
 DEFAULT_FAULTS = Path(__file__).resolve().parent / "faults.yml"
+HOLDOUT_FAULTS = Path(__file__).resolve().parent / "holdout.yml"
+SETS = {"default": DEFAULT_FAULTS, "holdout": HOLDOUT_FAULTS}
 LABELS = ("infra", "rtl", "tb", "spec")
 BACKENDS = ("rule", "small", "large", "none")
 MIN_ACCURACY = 0.8
@@ -204,11 +209,14 @@ def format_report(report: GradeReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Grade /triage answers against faults.yml.")
     parser.add_argument("answers", type=Path, help="ANSWERS.jsonl, one answer per line")
-    parser.add_argument("--faults", type=Path, default=DEFAULT_FAULTS)
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument("--set", choices=sorted(SETS), default=None, help="sample set to grade")
+    which.add_argument("--faults", type=Path, default=None, help="a faults file to grade")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
+    faults = args.faults or SETS[args.set or "default"]
     try:
-        report = grade(load_samples(args.faults), load_answers(args.answers))
+        report = grade(load_samples(faults), load_answers(args.answers))
     except (GradeError, OSError, yaml.YAMLError) as exc:
         print(f"grade.py: {exc}", file=sys.stderr)
         return 2

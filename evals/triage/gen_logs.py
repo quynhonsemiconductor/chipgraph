@@ -1,6 +1,6 @@
 """Generate the `/triage` sample logs from injected faults (task M1-14).
 
-    uv run python evals/triage/gen_logs.py [--only ID ...] [--out DIR] [--check]
+    uv run python evals/triage/gen_logs.py [--set holdout] [--only ID ...] [--out DIR] [--check]
 
 Every sample in `faults.yml` is produced the same way, so its label is fixed by the fault
 that was injected and never by a model:
@@ -8,7 +8,8 @@ that was injected and never by a model:
 1. copy `examples/tinysoc` to a fresh temporary directory (its own git repo), plus the
    testbenches the sample names (`evals/triage/tb/<file>` -> `tb/<file>` in the copy);
 2. apply the sample's `fault`: text replacements (`edit`), file removals (`delete`),
-   permission changes (`chmod`), and a reduced `PATH` (`path_only`: only these tools);
+   permission changes (`chmod`), a reduced `PATH` (`path_only`: only these tools), and a
+   shell resource limit for the command (`ulimit`, for example `-f 0`);
 3. run `chipgraph ingest` in the copy if the sample sets `ingest: true` (after the fault,
    so the Design Model is built from the faulty files), then remove what `after_ingest`
    deletes;
@@ -20,6 +21,10 @@ The log is normalised so it is stable and holds no machine path: the copy's abso
 becomes repo-relative, the Verilator install path becomes `$VERILATOR_ROOT`, and wall-clock
 times, speeds and memory sizes become `N`. Running this twice gives byte-identical files;
 `--check` regenerates into a temporary directory and compares, without writing.
+
+`--set holdout` does the same for the holdout set: `holdout.yml` (ids `hold-NN`, used only
+for grading, never for writing triage rules) into `logs-holdout/`; its testbenches are
+named relative to `tb/` (for example `holdout/tb_soc_regs.sv`) and copied to `tb/<name>`.
 
 CI does not run this (it needs Verilator); `tests/evals/test_triage_samples.py` checks the
 committed logs against `faults.yml`. Needs `verilator` (5.x) and `make` on `PATH`.
@@ -47,6 +52,11 @@ TINYSOC = REPO / "examples" / "tinysoc"
 FAULTS = HERE / "faults.yml"
 LOGS = HERE / "logs"
 TB_DIR = HERE / "tb"
+HOLDOUT = HERE / "holdout.yml"
+LOGS_HOLDOUT = HERE / "logs-holdout"
+# Sample sets: (faults file, logs directory, id prefix). `default` is the set the triage
+# rules were written against; `holdout` is for grading only.
+SETS = {"default": (FAULTS, LOGS, "log"), "holdout": (HOLDOUT, LOGS_HOLDOUT, "hold")}
 LABELS = ("infra", "rtl", "tb", "spec")
 DEFAULT_TIMEOUT_S = 300.0
 
@@ -85,6 +95,7 @@ class Sample:
     after_ingest_delete: tuple[str, ...] = ()
     chmod: tuple[tuple[str, int], ...] = ()
     path_only: tuple[str, ...] | None = None
+    ulimit: str | None = None
     timeout_s: float = DEFAULT_TIMEOUT_S
     raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
@@ -97,8 +108,8 @@ def _strings(value: object, where: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def load_samples(path: Path = FAULTS) -> list[Sample]:
-    """The samples of faults.yml, validated (ids unique, labels known, faults well formed)."""
+def load_samples(path: Path = FAULTS, *, prefix: str = "log") -> list[Sample]:
+    """The samples of a faults file, validated (ids unique, labels known, faults well formed)."""
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("samples"), list):
         raise FaultError(f"{path}: expected a mapping with a 'samples' list")
@@ -108,8 +119,8 @@ def load_samples(path: Path = FAULTS) -> list[Sample]:
         if not isinstance(item, dict):
             raise FaultError(f"{path}: every sample must be a mapping")
         sid = item.get("id")
-        if not isinstance(sid, str) or not re.fullmatch(r"log-\d{2}", sid):
-            raise FaultError(f"{path}: sample id {sid!r} must look like 'log-01'")
+        if not isinstance(sid, str) or not re.fullmatch(rf"{re.escape(prefix)}-\d{{2}}", sid):
+            raise FaultError(f"{path}: sample id {sid!r} must look like '{prefix}-01'")
         if sid in seen:
             raise FaultError(f"{path}: duplicate sample id {sid!r}")
         seen.add(sid)
@@ -135,6 +146,11 @@ def load_samples(path: Path = FAULTS) -> list[Sample]:
                 raise FaultError(f"{sid}: a chmod needs 'path' and 'mode'")
             chmod.append((entry["path"], int(str(entry["mode"]), 8)))
         path_only = fault.get("path_only")
+        ulimit = fault.get("ulimit")
+        if ulimit is not None and (
+            not isinstance(ulimit, str) or not re.fullmatch(r"-[a-z] \d+", ulimit)
+        ):
+            raise FaultError(f"{sid}: 'ulimit' must look like '-f 0'")
         samples.append(
             Sample(
                 id=sid,
@@ -153,6 +169,7 @@ def load_samples(path: Path = FAULTS) -> list[Sample]:
                 path_only=None
                 if path_only is None
                 else _strings(path_only, f"{sid}.fault.path_only"),
+                ulimit=ulimit,
                 timeout_s=float(item.get("timeout_s", DEFAULT_TIMEOUT_S)),
                 raw=item,
             )
@@ -175,7 +192,7 @@ def _prepare(sample: Sample, root: Path) -> None:
         if not source.is_file():
             raise FaultError(f"{sample.id}: no testbench {source.relative_to(REPO)}")
         (root / "tb").mkdir(exist_ok=True)
-        shutil.copy2(source, root / "tb" / name)
+        shutil.copy2(source, root / "tb" / Path(name).name)
     _git(root, "init", "-q", "-b", "main")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "tinysoc")
@@ -284,9 +301,10 @@ def run_sample(sample: Sample) -> tuple[str, dict[str, Any]]:
             _remove(root / rel)
         for rel, mode in sample.chmod:
             (root / rel).chmod(mode)
+        cmd = sample.cmd if sample.ulimit is None else f"ulimit {sample.ulimit}; {sample.cmd}"
         try:
             proc = subprocess.run(
-                ["/bin/sh", "-c", sample.cmd],
+                ["/bin/sh", "-c", cmd],
                 cwd=root,
                 env=base_env,
                 capture_output=True,
@@ -330,15 +348,21 @@ def write_sample(sample: Sample, out: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate the /triage sample logs.")
     parser.add_argument("--only", nargs="*", default=None, help="sample ids to generate")
-    parser.add_argument("--out", type=Path, default=LOGS, help="output directory")
+    parser.add_argument(
+        "--set", choices=sorted(SETS), default="default", help="sample set (default: the 22)"
+    )
+    parser.add_argument("--out", type=Path, default=None, help="output directory")
     parser.add_argument(
         "--check",
         action="store_true",
         help="regenerate into a temporary directory and compare with --out, writing nothing",
     )
     args = parser.parse_args(argv)
+    faults, logs, prefix = SETS[args.set]
+    if args.out is None:
+        args.out = logs
     try:
-        samples = load_samples()
+        samples = load_samples(faults, prefix=prefix)
     except (FaultError, OSError, yaml.YAMLError) as exc:
         print(f"gen_logs.py: {exc}", file=sys.stderr)
         return 2
