@@ -180,6 +180,31 @@ def test_low_confidence_is_requeued_for_the_large_model(project: Project) -> Non
     ]
 
 
+def test_an_unsure_large_answer_is_the_result_not_the_surer_small_one(project: Project) -> None:
+    question = _question()
+    assert isinstance(project.decide(question), Deferred)
+    project.answer("rtl", 0.70)
+
+    deferred = project.decide(question)
+    assert isinstance(deferred, Deferred) and deferred.tier == "large"
+    project.answer("tb", 0.45)
+
+    decision = project.decide(question)
+    assert decision == Decision(question_id=QID, value="tb", confidence=0.45, backend="large")
+    events = [(e.event, e.tier, e.value, e.model, e.low_confidence) for e in project.log.read()]
+    assert events == [
+        ("deferred", "small", None, "haiku", False),
+        ("escalated", "small", "rtl", "haiku", False),
+        ("deferred", "large", None, "opus", False),
+        ("escalated", "small", "rtl", "haiku", False),
+        ("rejected", "large", "tb", "opus", False),
+        ("decided", "large", "tb", "opus", True),
+    ]
+    assert project.pending() == []
+    # asking again returns the same answer, from the recorded tiers
+    assert project.decide(question) == decision
+
+
 def test_low_confidence_stays_small_when_large_is_disabled(project: Project) -> None:
     question = _question()
     cfg = DecideCfg(enabled_tiers=("small",))

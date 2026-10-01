@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from chipgraph.core.config import DecideCfg, DecideOverride
-from chipgraph.core.config.models import DecideTier
+from chipgraph.core.config.models import DecideSettings, DecideTier
 from chipgraph.core.contracts import Decision
 from chipgraph.core.engine.decide import (
     DecideError,
@@ -154,13 +154,111 @@ def test_an_unsure_large_answer_is_returned_but_logged_low(log: DecisionLog) -> 
     ]
 
 
-def test_the_best_valid_answer_wins_when_large_is_invalid(log: DecisionLog) -> None:
+def test_an_invalid_large_answer_keeps_the_small_answer_as_low(log: DecisionLog) -> None:
     backend = Scripted(small=_answer("tb", 0.6), large=_answer("not-a-choice", 0.99))
-    decision = _decide(_question(), log, backend)
+    cfg = DecideCfg()
+    decision = _decide(_question(), log, backend, cfg)
     assert isinstance(decision, Decision)
     assert (decision.value, decision.backend, decision.confidence) == ("tb", "small", 0.6)
-    last = log.read()[-1]
-    assert (last.event, last.backend, last.low_confidence) == ("decided", "small", True)
+    assert low_confidence(decision, cfg)
+    events = [(e.event, e.tier, e.value, e.answer, e.low_confidence) for e in log.read()]
+    assert events == [
+        ("escalated", "small", "tb", None, False),
+        ("rejected", "large", None, "not-a-choice", False),
+        ("decided", "small", "tb", None, True),
+    ]
+
+
+def test_an_escalated_tier_answer_wins_over_a_surer_small_one(log: DecisionLog) -> None:
+    # The holdout case: small says 'rtl' at 0.70 (< 0.8), so the question goes to the
+    # large tier, which says 'tb' at 0.45 (< 0.5). The large answer is the result: the
+    # confidences of two models are not comparable.
+    backend = Scripted(small=_answer("rtl", 0.70, "s"), large=_answer("tb", 0.45, "l"))
+    cfg = DecideCfg()
+    decision = _decide(_question(), log, backend, cfg)
+    assert decision == Decision(
+        question_id="triage.log1", value="tb", confidence=0.45, backend="large"
+    )
+    assert low_confidence(decision, cfg)
+    events = [
+        (e.event, e.tier, e.value, e.confidence, e.model, e.low_confidence) for e in log.read()
+    ]
+    assert events == [
+        ("escalated", "small", "rtl", 0.70, "s", False),
+        ("rejected", "large", "tb", 0.45, "l", False),
+        ("decided", "large", "tb", 0.45, "l", True),
+    ]
+
+
+def test_a_confident_large_answer_is_final(log: DecisionLog) -> None:
+    backend = Scripted(small=_answer("rtl", 0.79), large=_answer("tb", 0.5))
+    decision = _decide(_question(), log, backend)
+    assert decision == Decision(
+        question_id="triage.log1", value="tb", confidence=0.5, backend="large"
+    )
+    assert [(e.event, e.low_confidence) for e in log.read()] == [
+        ("escalated", False),
+        ("decided", False),
+    ]
+
+
+class _Tiers:
+    """A stand-in `DecideCfg` that asks the tiers in `tiers`, `threshold` for each.
+
+    `DecideTier` has two values today; the decision rule is written for any number of
+    tiers, so this asks the large tier more than once to stand for a third tier.
+    """
+
+    def __init__(self, tiers: tuple[DecideTier, ...], threshold: float) -> None:
+        self.settings = DecideSettings.model_construct(
+            small_min_confidence=threshold,
+            large_min_confidence=threshold,
+            enabled_tiers=tiers,
+        )
+
+    def for_question(self, question_id: str) -> DecideSettings:
+        return self.settings
+
+
+class InOrder:
+    """Answers each `ask` with the next reply, whatever the tier."""
+
+    name = "in-order"
+
+    def __init__(self, *replies: ModelAnswer) -> None:
+        self.replies = list(replies)
+        self.asked: list[DecideTier] = []
+
+    async def ask(self, question: Question, tier: DecideTier) -> ModelAnswer | Deferred:
+        self.asked.append(tier)
+        return self.replies.pop(0)
+
+
+@pytest.mark.parametrize(
+    ("replies", "expected"),
+    [
+        # the latest valid answer wins, though an earlier one was surer
+        ((("rtl", 0.79, "t1"), ("spec", 0.2, "t2"), ("tb", 0.1, "t3")), ("tb", "t3")),
+        # the last tier gave no choice: the latest earlier valid answer, not the surest
+        ((("rtl", 0.79, "t1"), ("spec", 0.2, "t2"), ("cannot tell", 0.9, "t3")), ("spec", "t2")),
+        ((("rtl", 0.79, "t1"), (None, 0.0, "t2"), ("nope", 0.0, "t3")), ("rtl", "t1")),
+    ],
+)
+def test_three_tiers_the_latest_valid_answer_wins(
+    log: DecisionLog,
+    replies: tuple[tuple[str | None, float, str], ...],
+    expected: tuple[str, str],
+) -> None:
+    backend = InOrder(*(_answer(v, c, m) for v, c, m in replies))
+    cfg = _Tiers(("small", "large", "large"), threshold=0.8)
+    decision = _decide(_question(), log, backend, cfg)  # type: ignore[arg-type]
+    assert isinstance(decision, Decision)
+    assert len(backend.asked) == 3
+    entries = log.read()
+    assert [e.event for e in entries] == ["escalated", "escalated", "rejected", "decided"]
+    last = entries[-1]
+    assert (last.value, last.model, last.low_confidence) == (*expected, True)
+    assert decision.value == expected[0]
 
 
 # --- invalid answers ------------------------------------------------------------------

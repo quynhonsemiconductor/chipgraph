@@ -2,9 +2,14 @@
 
 The context is what a model needs and no more (DESIGN 5.4, shortened logs): the failing
 check, the log excerpt, the parsed issues and, for a simulation failure, the spec lines the
-Design Model and the indexed documents hold about what failed (`/ask`'s retrieval): a
-simulation mismatch is only decidable against the spec (is the testbench's expectation
-or the design's answer the one the spec gives?).
+Design Model and the indexed documents hold about what failed (`/ask`'s retrieval), plus
+the chip-level map entries of the registers and blocks the failure names: a simulation
+mismatch is only decidable against the spec (is the testbench's expectation or the
+design's answer the one the spec gives?), and a test of a top-level design drives its
+blocks through the chip's address map.
+
+A simulation failure is a self-checking testbench's `FAIL ...` / `expected X got Y` line
+or the message of a failed assertion (`$error`, `assert`): `failure_lines`.
 
 Spec lines never come from RTL or testbench files (those are the two sides being judged)
 and never from an 'nda' file. The question id is `triage.<hash of the log and check>`, so
@@ -15,12 +20,15 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
 from chipgraph.core.contracts.types import DataLabel
 from chipgraph.core.engine.decide import Question
+from chipgraph.core.model.entities import EntityBase
 from chipgraph.packs.assist.ask._project import AskProject
+from chipgraph.packs.assist.ask.contract import AskSource
 from chipgraph.packs.assist.ask.retrieve import retrieve
 from chipgraph.packs.assist.triage.contract import LABELS, SpecLine
 from chipgraph.packs.assist.triage.parse import ParsedLog
@@ -28,6 +36,7 @@ from chipgraph.packs.assist.triage.rules import TriageFacts, is_rtl_path, is_tb_
 
 QUESTION_PREFIX = "triage."
 MAX_SPEC_LINES = 10
+MAX_MAP_LINES = 6
 MAX_SPEC_TEXT = 240
 MAX_ISSUES = 12
 MAX_FAILURES = 6
@@ -48,6 +57,8 @@ spec lines: if the spec agrees with the expected value, the RTL is wrong; if the
 agrees with what the design returned, or the testbench drove the design in a way the spec \
 does not describe, the testbench is wrong."""
 """The question every triage asks a model (choices: `LABELS`)."""
+
+_IDENT = re.compile(r"\w+(?:[-.]\w+)*")
 
 _FAIL_WORD = re.compile(r"^\s*(?:\[[^\]]*\]\s*)?(?:FAIL(?:ED|URE)?|MISMATCH)\b[:\s]*")
 
@@ -73,18 +84,54 @@ def _file_of(citation: str | None) -> str | None:
     return citation.rsplit(":", 1)[0] if re.search(r":\d+(?:-\d+)?$", citation) else citation
 
 
+def failure_lines(parsed: ParsedLog) -> tuple[str, ...]:
+    """What the simulation says failed: the self-check failure lines, then the messages of
+    its failed assertions (a testbench that reports with `$error` or `assert`)."""
+    lines = list(parsed.sim_failures)
+    for message in parsed.sim_assertions:
+        if not any(message in line for line in lines):
+            lines.append(message)
+    return tuple(lines)
+
+
 def spec_lines(
     ctx: AppContext, parsed: ParsedLog, facts: TriageFacts
 ) -> tuple[tuple[SpecLine, ...], tuple[DataLabel, ...]]:
     """The spec sources about a simulation failure, and their data labels.
 
+    The `/ask` retrieval for the failure lines (`failure_lines`), then the chip-level map
+    entries of what they name (`chip_map_sources`): the registers, and the address map
+    of the blocks and of the buses they sit on. A test of a top-level design drives the
+    blocks through that map, so it is only decidable against it.
+
     Empty when the log shows no simulation failure, or the project has no Design Model
     yet (`chipgraph ingest`): the question is then asked without them.
     """
-    if not parsed.sim_failures:
+    failures = failure_lines(parsed)
+    if not failures:
         return (), ()
-    failures = [_FAIL_WORD.sub("", line) for line in parsed.sim_failures[:3]]
-    return spec_sources(ctx, " ".join(f for f in failures if f), facts)
+    try:
+        project = AskProject.load(ctx)
+    except AppError:
+        return (), ()
+    texts = [_FAIL_WORD.sub("", line) for line in failures[:3]]
+    query = " ".join(t for t in texts if t)
+    sources = retrieve(project, query, limit=MAX_SPEC_LINES * 2).sources if query.strip() else ()
+    lines: list[SpecLine] = []
+    labels: set[DataLabel] = set()
+    _collect(project, sources, facts, MAX_SPEC_LINES, lines, labels, set())
+    named = "\n".join((*failures, *parsed.runtime_lines))
+    _collect(
+        project,
+        chip_map_sources(project, named),
+        facts,
+        len(lines) + MAX_MAP_LINES,
+        lines,
+        labels,
+        {line.citation for line in lines},
+        by_citation=True,
+    )
+    return tuple(lines), tuple(sorted(labels))
 
 
 def spec_sources(
@@ -100,25 +147,173 @@ def spec_sources(
     context = retrieve(project, query, limit=limit * 2)
     lines: list[SpecLine] = []
     labels: set[DataLabel] = set()
-    seen: set[str] = set()
-    for source in context.sources:
+    _collect(project, context.sources, facts, limit, lines, labels, set())
+    return tuple(lines), tuple(sorted(labels))
+
+
+def _collect(
+    project: AskProject,
+    sources: Iterable[AskSource],
+    facts: TriageFacts,
+    limit: int,
+    lines: list[SpecLine],
+    labels: set[DataLabel],
+    seen: set[str],
+    *,
+    by_citation: bool = False,
+) -> None:
+    """Add the spec-side `sources` to `lines` (and their labels), up to `limit` lines.
+
+    A source whose location is in `seen` already is skipped, or with `by_citation` one
+    whose citation is (two entities read from one table row are both kept).
+    """
+    for source in sources:
+        if len(lines) >= limit:
+            break
         files = [f for f in (_file_of(source.citation), _file_of(source.defined_at)) if f]
         if any(_not_spec(f, facts) for f in files):
             continue
         # A document line the model entity was read from says the same thing again.
         location = source.defined_at or source.citation
-        if location in seen:
+        key = source.citation if by_citation else location
+        if key in seen:
             continue
-        seen.add(location)
+        seen.update((key, location))
         text = " ".join(source.text.split())
         if len(text) > MAX_SPEC_TEXT:
             text = text[: MAX_SPEC_TEXT - 1] + "…"
         defined_at = source.defined_at if source.defined_at != source.citation else None
         lines.append(SpecLine(citation=source.citation, text=text, defined_at=defined_at))
         labels.update(project.labels.label_for(f) for f in files)
-        if len(lines) >= limit:
-            break
-    return tuple(lines), tuple(sorted(labels))
+
+
+# --- the chip-level map of what a failure names -------------------------------------------
+
+
+def _words(text: str) -> list[str]:
+    """The identifiers of `text`, in order, without repeats (`CTRL.EN` is one)."""
+    words: list[str] = []
+    for match in _IDENT.finditer(text):
+        word = match.group(0).strip("-.")
+        if word and word not in words:
+            words.append(word)
+    return words
+
+
+def _named_blocks(project: AskProject, words: list[str]) -> list[str]:
+    """The keys of the blocks the words name, in order: by the name of the block, of one
+    of its modules, or of an instance of one.
+
+    A word that names nothing is split, at `.` and `-` then at `_`, and its parts are
+    tried: a top-level port or instance is usually named after its block (`<block>_irq`,
+    `u_<block>`, `dut.u_<block>.q`).
+    """
+    owners: dict[str, list[str]] = {}
+
+    def own(name: str, block: str | None) -> None:
+        if name and block and project.get(block) is not None:
+            owners.setdefault(name.lower(), []).append(block)
+
+    for entity in sorted(project.model.by_kind("block"), key=lambda e: e.key):
+        if project.visible(entity):
+            own(entity.name, entity.key)
+    for module in sorted(project.model.by_kind("module"), key=lambda e: e.key):
+        if project.visible(module):
+            own(module.name, project.block_of(module))
+    for relation in project.model.relations:
+        child = project.get(relation.dst) if relation.kind == "instantiates" else None
+        if child is not None:
+            own(str(relation.attrs.get("instance_name", "")), project.block_of(child))
+
+    blocks: list[str] = []
+
+    def named(word: str) -> bool:
+        found = owners.get(word.lower(), [])
+        blocks.extend(b for b in found if b not in blocks)
+        return bool(found)
+
+    for word in words:
+        if named(word):
+            continue
+        for segment in re.split(r"[.\-]+", word):
+            if segment and not named(segment):
+                for part in segment.split("_"):
+                    if part:
+                        named(part)
+    return blocks
+
+
+def _related_blocks(project: AskProject, blocks: list[str]) -> list[str]:
+    """`blocks`, then their IP blocks or instances (`instance_of`), then the other blocks
+    on the buses they connect to: the address map a test of the chip addresses them by."""
+    related = list(blocks)
+
+    def add(key: str) -> None:
+        if key not in related and project.get(key) is not None:
+            related.append(key)
+
+    for relation in project.model.relations:
+        if relation.kind == "instance_of":
+            if relation.src in blocks:
+                add(relation.dst)
+            elif relation.dst in blocks:
+                add(relation.src)
+    buses = [r.src for r in project.model.relations if r.kind == "connects" and r.dst in related]
+    for relation in project.model.relations:
+        if relation.kind == "connects" and relation.src in buses:
+            add(relation.dst)
+    return related
+
+
+def _named_registers(project: AskProject, words: list[str], blocks: list[str]) -> list[EntityBase]:
+    """The registers the words name exactly (`CTRL`, or `CTRL.EN` for a field of it): of
+    the named blocks (or their IP blocks) when there are any, else of any block."""
+    names = set(words) | {w.split(".")[0] for w in words if "." in w}
+    found = [
+        r
+        for r in sorted(project.model.by_kind("register"), key=lambda e: e.key)
+        if r.name in names and project.visible(r)
+    ]
+    if blocks:
+        return [r for r in found if project.block_of(r) in blocks]
+    return found
+
+
+def chip_map_sources(project: AskProject, text: str) -> list[AskSource]:
+    """The chip-level map entries of what `text` names, most specific first.
+
+    The registers it names (of the blocks it names, when it names any); the memory
+    regions of the blocks it names (`_named_blocks`) or whose registers it names, of
+    their IP blocks or instances (`instance_of`), and of the other blocks on the same
+    buses.
+    """
+    words = _words(text)
+    blocks = _named_blocks(project, words)
+    registers = _named_registers(project, words, _related_blocks(project, blocks))
+    for register in registers:
+        block = project.block_of(register)
+        if block is not None and block not in blocks:
+            blocks.append(block)
+    related = _related_blocks(project, blocks)
+    order = {key: index for index, key in enumerate(related)}
+    regions = sorted(
+        (
+            r
+            for r in project.model.by_kind("memory_region")
+            if project.visible(r) and project.block_of(r) in order
+        ),
+        key=lambda r: (order[project.block_of(r) or ""], r.key),
+    )
+    return [
+        AskSource(
+            citation=f"model:{entity.key}",
+            kind="model",
+            text=project.summary(entity),
+            origin="lookup",
+            defined_at=project.defined_at(entity),
+        )
+        for entity in (*registers, *regions)
+    ]
 
 
 def build_context(parsed: ParsedLog, facts: TriageFacts, specs: tuple[SpecLine, ...] = ()) -> str:
@@ -141,8 +336,9 @@ def build_context(parsed: ParsedLog, facts: TriageFacts, specs: tuple[SpecLine, 
             f"- {where(i) or '(no file)'} [{i.rule or '-'}] {i.severity}: {i.msg}" for i in issues
         ]
         parts.append("Parsed issues:\n" + "\n".join(rows))
-    if parsed.sim_failures:
-        rows = [f"- {line}" for line in parsed.sim_failures[:MAX_FAILURES]]
+    failures = failure_lines(parsed)
+    if failures:
+        rows = [f"- {line}" for line in failures[:MAX_FAILURES]]
         parts.append("Simulation self-check failures:\n" + "\n".join(rows))
     if specs:
         rows = [
@@ -153,7 +349,7 @@ def build_context(parsed: ParsedLog, facts: TriageFacts, specs: tuple[SpecLine, 
             "Spec lines (from the project's Design Model and specification documents):\n"
             + "\n".join(rows)
         )
-    elif parsed.sim_failures:
+    elif failures:
         parts.append("Spec lines: none found (no Design Model, or nothing matched).")
     return "\n\n".join(parts)
 
@@ -180,6 +376,8 @@ __all__ = [
     "QUESTION_PREFIX",
     "build_context",
     "build_question",
+    "chip_map_sources",
+    "failure_lines",
     "question_id",
     "spec_lines",
     "spec_sources",

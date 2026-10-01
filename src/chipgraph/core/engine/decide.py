@@ -9,9 +9,13 @@ a command risky ...). `decide()` answers it in cost order:
 3. the **large** model tier, when the small answer's confidence is under the
    threshold (or the answer is not one of the choices, which counts as confidence 0).
 
-A large answer under its own threshold is still returned (the best valid answer seen,
-in fact), and logged as low confidence: AI never blocks (DESIGN 4.8), the caller
-decides what a low-confidence answer means. The thresholds and the tiers that may be
+Once a question is escalated, the later tier's valid answer is the result, even under
+that tier's own threshold: it is returned and logged as low confidence (AI never
+blocks, DESIGN 4.8; the caller decides what a low-confidence answer means). An earlier
+tier's answer is kept only when no later tier gave one of the choices (it refused, or
+said it cannot tell). Confidences are never compared across tiers: each model reports
+its own, and a small model is often surer than it should be. With more tiers, the
+latest tier that gave a valid answer wins. The thresholds and the tiers that may be
 asked come from the profile's `decide` section (`DecideCfg`), per question-id prefix.
 
 A backend may also answer `Deferred`: an out-of-process host answers the question
@@ -170,9 +174,14 @@ def rule_decision(question: Question, value: str, confidence: float = 1.0) -> De
 DecisionEvent = Literal["decided", "escalated", "rejected", "deferred", "undecided", "error"]
 """One step of `decide()`:
 
-- `decided`: the final answer (from a rule or a model tier);
-- `escalated`: a tier's answer was not accepted and the next tier is asked;
-- `rejected`: the last tier's answer was not accepted (an earlier one may still win);
+- `decided`: the final answer (from a rule or a model tier); `low_confidence` when it
+  is under its tier's threshold, i.e. the latest valid answer, kept because no tier
+  was sure enough;
+- `escalated`: a tier's answer was under its threshold or not one of the choices, and
+  the next tier is asked;
+- `rejected`: the last tier's answer was under its threshold or not one of the
+  choices; a `decided` low-confidence entry follows with the answer kept (the last
+  tier's own if it was a choice, else the latest earlier valid one), or `undecided`;
 - `deferred`: a tier will be answered later by a host;
 - `undecided`: no valid answer at all;
 - `error`: the backend raised (refused the question, the budget is spent ...).
@@ -205,7 +214,11 @@ class DecisionLogEntry(BaseModel):
         default=None, ge=0, le=1, description="The confidence the tier needed."
     )
     low_confidence: bool = Field(
-        default=False, description="A decision returned although under its threshold."
+        default=False,
+        description=(
+            "A decision returned although under its threshold: the latest tier's valid "
+            "answer (confidences are never compared across tiers)."
+        ),
     )
     model: str | None = Field(default=None, description="The model id, when known.")
     duration_s: float = Field(ge=0, description="Seconds this step took.")
@@ -294,6 +307,10 @@ async def decide(
 ) -> Decision | Deferred:
     """Answer `question`: rules, then the small model tier, then the large one.
 
+    The first answer at or over its tier's threshold is final. Otherwise the result is
+    the valid answer of the latest tier that gave one, low confidence (an escalated
+    tier's answer replaces an earlier tier's, whatever their confidences).
+
     Returns the `Decision`, or `Deferred` when the backend queued the question for a
     host (call again later). Raises `Undecided` when no rule answered and no tier gave
     one of the choices, `DecideError` when a rule misbehaves or nothing can answer, and
@@ -330,7 +347,10 @@ async def decide(
         raise DecideError(f"no rule answered {question.id!r} and no model backend was given")
 
     begin = time.monotonic()
-    best: tuple[Decision, DecisionLogEntry] | None = None
+    # The latest tier's valid answer under its threshold: what is returned if no tier
+    # is sure enough. A later tier's valid answer always replaces an earlier one; the
+    # confidences of different models are not comparable.
+    latest: tuple[Decision, DecisionLogEntry] | None = None
     for index, tier in enumerate(tiers):
         start = time.monotonic()
         threshold = settings.threshold(tier)
@@ -387,14 +407,13 @@ async def decide(
             if confidence >= threshold:
                 log.append(step.model_copy(update={"event": "decided"}))
                 return candidate
-            if best is None or candidate.confidence >= best[0].confidence:
-                best = (candidate, step)
+            latest = (candidate, step)
 
         if index == len(tiers) - 1:
             step = step.model_copy(update={"event": "rejected"})
         log.append(step)
 
-    if best is None:
+    if latest is None:
         log.append(
             DecisionLogEntry(
                 question_id=question.id,
@@ -409,7 +428,7 @@ async def decide(
             f"its choices {list(question.choices)}",
             question_id=question.id,
         )
-    decision, answered = best
+    decision, answered = latest
     log.append(
         answered.model_copy(
             update={

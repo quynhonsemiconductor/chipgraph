@@ -8,8 +8,9 @@ Three kinds of input are understood, and may be mixed:
 - the text output of `chipgraph check` (`FAIL   <check> <block> N issues` and indented
   `file:line  [rule] message` lines), or its `--json` output (`CheckResult` objects);
 - a simulation run: runtime messages (`[time] %Error`, `Verilog $stop`, `Assertion
-  failed`, `UVM_ERROR`, ...) and a self-checking testbench's failure lines (`FAIL ...`,
-  `... expected X got Y`).
+  failed`, `UVM_ERROR`, ...), a self-checking testbench's failure lines (`FAIL ...`,
+  `... expected X got Y`), and the messages of its failed assertions (a testbench that
+  reports with `$error` or `assert` rather than a `FAIL` line).
 
 Nothing here decides a class; `rules` does, from these facts.
 """
@@ -71,6 +72,51 @@ _SIM_FAILURE = re.compile(
 )
 """A self-checking testbench's failure line."""
 
+_ASSERTION_FAILED = re.compile(r"\bAssertion failed in (?P<scope>[\w.$]+)\s*:\s*(?P<msg>.*\S)")
+_RUNTIME_ERROR = re.compile(
+    r"^\s*\[[^\]]*\]\s*%(?:Error|Fatal)(?:-[A-Za-z0-9_]+)?:\s*(?:[^\s:]+:\d+(?::\d+)?:\s*)?"
+    r"(?P<msg>.*\S)"
+    r"|^\s*\*\* (?:Error|Fatal):\s*(?:[^\s:()]+\(\d+\):\s*)?(?P<msg2>.*?\S)\s*(?:\bTime:.*)?$"
+)
+"""A running simulation's assertion or `$error`/`$fatal` message: Verilator's `Assertion
+failed in <scope>: <message>`, a time-stamped `%Error:`, a `** Error: ... Time:` (not the
+`Verilog $stop` line after it)."""
+
+_NO_FACT = frozenset(
+    {"assert", "assertion", "check", "checks", "error", "fail", "failed", "failure", "test"}
+)
+"""Words that say a check failed, not what failed."""
+
+_WORDS = re.compile(r"\w+")
+
+
+def _assertion_message(line: str) -> str | None:
+    """The message of a simulation assertion line, or None for none or one that only
+    says that something failed (`<tb>: 1 check(s) failed`, `'assert' failed`)."""
+    if re.search(r"Verilog \$(?:stop|fatal)\b|\$finish called\b", line):
+        return None
+    scope = ""
+    match = _ASSERTION_FAILED.search(line)
+    if match is not None:
+        scope, msg = match.group("scope"), match.group("msg")
+    else:
+        match = _RUNTIME_ERROR.search(line)
+        if match is None:
+            return None
+        msg = match.group("msg") or match.group("msg2") or ""
+    msg = msg.strip()
+    scope_words = {w.lower() for w in _WORDS.findall(scope)}
+    facts = [
+        w
+        for w in _WORDS.findall(msg)
+        if len(w) > 1
+        and not w.isdigit()
+        and w.lower() not in _NO_FACT
+        and w.lower() not in scope_words
+    ]
+    return msg if facts else None
+
+
 _ERRORISH = re.compile(
     r"%(?:Error|Fatal|Warning)|\berror\b|\bFAIL|\bERROR\b|make: \*\*\*|not found"
     r"|No such file|timed out|Killed|Permission denied|expected\b.*\bgot\b",
@@ -113,6 +159,10 @@ class ParsedLog:
     """`chipgraph check` results found in the log (text or JSON)."""
     sim_failures: tuple[str, ...] = ()
     """A self-checking testbench's failure lines."""
+    sim_assertions: tuple[str, ...] = ()
+    """The messages of a running simulation's failed assertions and `$error`/`$fatal`
+    calls (`Assertion failed in <scope>: <message>` gives `<message>`), without the
+    ones that only say that something failed."""
     runtime_lines: tuple[str, ...] = ()
     """Lines only a running simulation prints."""
     first_error: str = ""
@@ -280,12 +330,16 @@ def parse_log(text: str) -> ParsedLog:
     runtime: list[Issue] = []
     runtime_lines: list[str] = []
     sim_failures: list[str] = []
+    sim_assertions: list[str] = []
     unlocated: list[str] = []
     for index, line in enumerate(lines):
         if index in used:
             continue
         if _RUNTIME.search(line):
             runtime_lines.append(line.strip())
+            message = _assertion_message(line)
+            if message is not None and message not in sim_assertions:
+                sim_assertions.append(message)
         if _SIM_FAILURE.search(line):
             sim_failures.append(line.strip())
         bare = _UNLOCATED.match(line)
@@ -306,6 +360,7 @@ def parse_log(text: str) -> ParsedLog:
         runtime_issues=_dedupe(runtime),
         checks=checks,
         sim_failures=tuple(sim_failures),
+        sim_assertions=tuple(sim_assertions),
         runtime_lines=tuple(runtime_lines),
         first_error=_first_error(lines),
         excerpt=_excerpt(lines),
