@@ -1,0 +1,5 @@
+%Error: tb/tb_soc_regs.sv:86:60: Can't find definition of 'u_tmr' in dotted scope/variable: 'dut.u_tmr'
+   86 |     expect_eq("timer enable flop after reset", {31'd0, dut.u_tmr.enable_q}, 32'h0);
+      |                                                            ^~~~~
+        ... Known scopes under 'dut': u_gpio, u_timer
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.052 for more assistance.

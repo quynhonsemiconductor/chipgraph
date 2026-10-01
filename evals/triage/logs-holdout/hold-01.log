@@ -1,0 +1,2 @@
+FAIL   cross_chip - 1 issues
+  chip.yml:29  [address.overlap] memory region 'memory_region:gpio' [0x2, 0x6) overlaps 'memory_region:timer' [0x0, 0x4)

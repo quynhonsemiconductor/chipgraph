@@ -1,0 +1,2 @@
+FAIL   cross_chip - 1 issues
+  chip.yml:18  [reset.unknown] block 'block:timer' refers to unknown reset 'rst_sync_n'

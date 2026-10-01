@@ -6,8 +6,9 @@
 # Env: MAIN_MODEL (default haiku: the main session only dispatches), SMALL_MODEL (default
 # haiku) and LARGE_MODEL (default opus; sonnet if your plan does not allow opus): the
 # decider tiers, written into the copy's profile (`models.tiers`); MAX_TURNS (default 30
-# per sample); ONLY (space-separated sample ids, default every sample of
-# evals/triage/faults.yml).
+# per sample); ONLY (space-separated sample ids, default every sample of the set); SET
+# (default: the 22 samples of evals/triage/faults.yml; `holdout`: evals/triage/holdout.yml,
+# logs from evals/triage/logs-holdout/, graded only, never used to tune rules).
 #
 # What it does:
 #   1. copies examples/tinysoc to OUT_DIR/tinysoc (its own git repo; the example is not
@@ -34,6 +35,12 @@ SMALL_MODEL="${SMALL_MODEL:-haiku}"
 LARGE_MODEL="${LARGE_MODEL:-opus}"
 MAX_TURNS="${MAX_TURNS:-30}"
 ONLY="${ONLY:-}"
+SET="${SET:-default}"
+case "$SET" in
+  default) LOG_DIR="$REPO/evals/triage/logs" ;;
+  holdout) LOG_DIR="$REPO/evals/triage/logs-holdout" ;;
+  *) echo "run.sh: unknown SET=$SET (use default or holdout)" >&2; exit 2 ;;
+esac
 
 # OUT_DIR is deleted first: accept only /tmp/cg-triage-<name> (after resolving symlinks).
 parent="$(cd "$(dirname "$OUT")" 2>/dev/null && pwd -P || true)"
@@ -63,7 +70,7 @@ git -C "$PROJ" add -A
 git -C "$PROJ" -c user.email=triage@example.invalid -c user.name=triage commit -q -m "tinysoc"
 (cd "$REPO" && uv run chipgraph -C "$PROJ" ingest) > "$OUT/ingest.txt" 2>&1
 mkdir -p "$PROJ/logs"
-cp "$REPO"/evals/triage/logs/*.log "$PROJ/logs/"
+cp "$LOG_DIR"/*.log "$PROJ/logs/"
 
 cp -R "$REPO/plugin" "$OUT/plugin"
 cat > "$OUT/plugin/.mcp.json" <<EOF
@@ -84,7 +91,7 @@ TOOLS="$TOOLS mcp__plugin_chipgraph_chipgraph__answer_decision Agent"
 # first run, a Haiku main session sometimes reached for one of them instead of `triage`.
 DENY="Bash Read Write Edit MultiEdit NotebookEdit Glob Grep Skill WebFetch WebSearch"
 
-(cd "$REPO" && uv run python "$HERE/report.py" --list) > "$OUT/samples.tsv"
+(cd "$REPO" && uv run python "$HERE/report.py" --set "$SET" --list) > "$OUT/samples.tsv"
 
 start=$(date +%s)
 while IFS=$'\t' read -r id check; do
@@ -112,4 +119,4 @@ end=$(date +%s)
 echo "wall_s=$((end - start))" > "$OUT/timing.txt"
 
 cd "$REPO"
-uv run python "$HERE/report.py" "$OUT"
+uv run python "$HERE/report.py" --set "$SET" "$OUT"

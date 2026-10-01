@@ -1,18 +1,21 @@
 """Summarise one M1-14 acceptance run (`run.sh`) and grade its answers.
 
-    uv run python docs/triage-claude-code/report.py OUT_DIR
-    uv run python docs/triage-claude-code/report.py --list    # id<TAB>check, for run.sh
+    uv run python docs/triage-claude-code/report.py [--set holdout] OUT_DIR
+    uv run python docs/triage-claude-code/report.py [--set holdout] --list   # id<TAB>check
 
 Reads OUT_DIR/streams/<id>.jsonl (one `claude -p "/chipgraph:triage ..."` stream per
 sample). The answer of a sample is the last `triage` tool result of the main session (the
 report the command prints): its label, its backend (rule, small, large) and confidence.
 Writes OUT_DIR/answers.jsonl and grades it with evals/triage/grade.py. Subagents may only
 call `pending_decisions`; any other subagent tool call is listed and fails the run.
+`--set holdout` uses the holdout set (`evals/triage/holdout.yml`, logs in
+`evals/triage/logs-holdout/`) instead of the 22 samples of `faults.yml`.
 Exit code: grade.py's (0 pass, 1 fail).
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -23,6 +26,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 LOGS = REPO / "evals" / "triage" / "logs"
+LOGS_BY_SET = {"default": LOGS, "holdout": REPO / "evals" / "triage" / "logs-holdout"}
 SUBAGENT_TOOLS = ("__pending_decisions",)
 
 
@@ -112,17 +116,17 @@ def _answer(sid: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def list_samples() -> int:
+def list_samples(sample_set: str = "default") -> int:
     grade = _grade_module()
-    for sample in grade.load_samples():
-        meta = json.loads((LOGS / f"{sample.id}.json").read_text())
+    for sample in grade.load_samples(grade.SETS[sample_set]):
+        meta = json.loads((LOGS_BY_SET[sample_set] / f"{sample.id}.json").read_text())
         print(f"{sample.id}\t{meta.get('check') or '-'}")
     return 0
 
 
-def main(out: Path) -> int:
+def main(out: Path, sample_set: str = "default") -> int:
     grade = _grade_module()
-    samples = grade.load_samples()
+    samples = grade.load_samples(grade.SETS[sample_set])
     answers = []
     cost = 0.0
     models: Counter[str] = Counter()
@@ -187,9 +191,14 @@ def main(out: Path) -> int:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--list"]:
-        sys.exit(list_samples())
-    if len(sys.argv) != 2:
+    parser = argparse.ArgumentParser(usage=__doc__)
+    parser.add_argument("--set", choices=sorted(LOGS_BY_SET), default="default")
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("out", type=Path, nargs="?")
+    args = parser.parse_args()
+    if args.list:
+        sys.exit(list_samples(args.set))
+    if args.out is None:
         print(__doc__, file=sys.stderr)
         sys.exit(2)
-    sys.exit(main(Path(sys.argv[1])))
+    sys.exit(main(args.out, args.set))
