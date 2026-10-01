@@ -1,0 +1,7 @@
+{
+  "id": "h2-12",
+  "cmd": "chipgraph check --only spec_schema --block timer",
+  "exit_code": 1,
+  "check": "spec_schema",
+  "verilator": "5.052"
+}

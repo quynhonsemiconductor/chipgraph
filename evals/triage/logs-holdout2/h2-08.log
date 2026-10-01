@@ -1,0 +1,2 @@
+FAIL   ports_diff gpio 1 issues
+  rtl/tiny_gpio.sv:23  [ports_diff.direction] port 'pin_dir' of IP 'gpio': spec direction 'input' but RTL 'output'

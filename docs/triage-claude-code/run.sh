@@ -8,7 +8,8 @@
 # decider tiers, written into the copy's profile (`models.tiers`); MAX_TURNS (default 30
 # per sample); ONLY (space-separated sample ids, default every sample of the set); SET
 # (default: the 22 samples of evals/triage/faults.yml; `holdout`: evals/triage/holdout.yml,
-# logs from evals/triage/logs-holdout/, graded only, never used to tune rules).
+# logs from evals/triage/logs-holdout/; `holdout2`: evals/triage/holdout2.yml, logs from
+# evals/triage/logs-holdout2/; the holdouts are graded only, never used to tune triage).
 #
 # What it does:
 #   1. copies examples/tinysoc to OUT_DIR/tinysoc (its own git repo; the example is not
@@ -39,7 +40,8 @@ SET="${SET:-default}"
 case "$SET" in
   default) LOG_DIR="$REPO/evals/triage/logs" ;;
   holdout) LOG_DIR="$REPO/evals/triage/logs-holdout" ;;
-  *) echo "run.sh: unknown SET=$SET (use default or holdout)" >&2; exit 2 ;;
+  holdout2) LOG_DIR="$REPO/evals/triage/logs-holdout2" ;;
+  *) echo "run.sh: unknown SET=$SET (use default, holdout or holdout2)" >&2; exit 2 ;;
 esac
 
 # OUT_DIR is deleted first: accept only /tmp/cg-triage-<name> (after resolving symlinks).

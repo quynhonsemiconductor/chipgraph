@@ -1,0 +1,9 @@
+tb_top_irq: start
+tb_top_irq: [40000] write word 0x0 = 0x00000000
+tb_top_irq: [60000] write word 0x1 = 0x00000014
+tb_top_irq: [80000] write word 0x2 = 0x00000001
+tb_top_irq: [721000] read  word 0x0 = 0x00000000
+tb_top_irq: [731000] read  word 0x2 = 0x00000000
+[731000] %Fatal: tb_top_irq.sv:94: Assertion failed in tb_top_irq: tb_top_irq: TIMEOUT: timer_irq still low 64 cycles after CTRL.EN=1 (COMPARE=20, COUNT=0, CTRL=0x0)
+%Error: tb/tb_top_irq.sv:94: Verilog $stop
+Aborting...

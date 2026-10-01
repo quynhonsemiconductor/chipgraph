@@ -1,6 +1,7 @@
 """Generate the `/triage` sample logs from injected faults (task M1-14).
 
-    uv run python evals/triage/gen_logs.py [--set holdout] [--only ID ...] [--out DIR] [--check]
+    uv run python evals/triage/gen_logs.py [--set holdout|holdout2] [--only ID ...] [--out DIR]
+                                           [--check]
 
 Every sample in `faults.yml` is produced the same way, so its label is fixed by the fault
 that was injected and never by a model:
@@ -25,6 +26,10 @@ times, speeds and memory sizes become `N`. Running this twice gives byte-identic
 `--set holdout` does the same for the holdout set: `holdout.yml` (ids `hold-NN`, used only
 for grading, never for writing triage rules) into `logs-holdout/`; its testbenches are
 named relative to `tb/` (for example `holdout/tb_soc_regs.sv`) and copied to `tb/<name>`.
+
+`--set holdout2` is the second holdout set: `holdout2.yml` (ids `h2-NN`, grading only) into
+`logs-holdout2/`, testbenches under `tb/holdout2/`. It adds one fault kind, `env`: extra
+environment variables for the command (for example a stale `VERILATOR_ROOT`).
 
 CI does not run this (it needs Verilator); `tests/evals/test_triage_samples.py` checks the
 committed logs against `faults.yml`. Needs `verilator` (5.x) and `make` on `PATH`.
@@ -54,11 +59,29 @@ LOGS = HERE / "logs"
 TB_DIR = HERE / "tb"
 HOLDOUT = HERE / "holdout.yml"
 LOGS_HOLDOUT = HERE / "logs-holdout"
+HOLDOUT2 = HERE / "holdout2.yml"
+LOGS_HOLDOUT2 = HERE / "logs-holdout2"
 # Sample sets: (faults file, logs directory, id prefix). `default` is the set the triage
-# rules were written against; `holdout` is for grading only.
-SETS = {"default": (FAULTS, LOGS, "log"), "holdout": (HOLDOUT, LOGS_HOLDOUT, "hold")}
+# rules were written against; `holdout` and `holdout2` are for grading only.
+SETS = {
+    "default": (FAULTS, LOGS, "log"),
+    "holdout": (HOLDOUT, LOGS_HOLDOUT, "hold"),
+    "holdout2": (HOLDOUT2, LOGS_HOLDOUT2, "h2"),
+}
 LABELS = ("infra", "rtl", "tb", "spec")
 DEFAULT_TIMEOUT_S = 300.0
+# The variables every command gets from `_env`; a sample's `env` adds to them, never resets one.
+_BASE_ENV = (
+    "PATH",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "LC_ALL",
+    "LANG",
+    "TERM",
+    "NO_COLOR",
+    "COLUMNS",
+    "PYTHONHASHSEED",
+)
 
 _TIMES = (
     (re.compile(r"[Ww]alltime \d+(?:\.\d+)? s(?: \([^)]*\))?"), "walltime N s"),
@@ -96,6 +119,7 @@ class Sample:
     chmod: tuple[tuple[str, int], ...] = ()
     path_only: tuple[str, ...] | None = None
     ulimit: str | None = None
+    env: tuple[tuple[str, str], ...] = ()
     timeout_s: float = DEFAULT_TIMEOUT_S
     raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
@@ -151,6 +175,14 @@ def load_samples(path: Path = FAULTS, *, prefix: str = "log") -> list[Sample]:
             not isinstance(ulimit, str) or not re.fullmatch(r"-[a-z] \d+", ulimit)
         ):
             raise FaultError(f"{sid}: 'ulimit' must look like '-f 0'")
+        env = fault.get("env") or {}
+        if not isinstance(env, dict) or not all(
+            isinstance(k, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", k) and isinstance(v, str)
+            for k, v in env.items()
+        ):
+            raise FaultError(f"{sid}: 'env' must map variable names (A-Z0-9_) to strings")
+        if set(env) & set(_BASE_ENV):
+            raise FaultError(f"{sid}: 'env' may not set {sorted(set(env) & set(_BASE_ENV))}")
         samples.append(
             Sample(
                 id=sid,
@@ -170,6 +202,7 @@ def load_samples(path: Path = FAULTS, *, prefix: str = "log") -> list[Sample]:
                 if path_only is None
                 else _strings(path_only, f"{sid}.fault.path_only"),
                 ulimit=ulimit,
+                env=tuple(sorted(env.items())),
                 timeout_s=float(item.get("timeout_s", DEFAULT_TIMEOUT_S)),
                 raw=item,
             )
@@ -283,7 +316,7 @@ def run_sample(sample: Sample) -> tuple[str, dict[str, Any]]:
         work = Path(tmp)
         root = work / "tinysoc"
         _prepare(sample, root)
-        base_env = _env(_tool_path(sample, work), work)
+        base_env = {**_env(_tool_path(sample, work), work), **dict(sample.env)}
         if sample.ingest:
             # Setup, not the sample: ingest always runs with the full PATH.
             ingest_env = _env(_tool_path(_with_full_path(sample), work), work)

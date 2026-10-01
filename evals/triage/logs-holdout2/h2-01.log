@@ -1,0 +1,36 @@
+tb_top_scoreboard: start
+tb_top_scoreboard: read  0x0 => 0x00000000
+tb_top_scoreboard: read  0x1 => 0x00000000
+tb_top_scoreboard: read  0x2 => 0x00000000
+tb_top_scoreboard: read  0x3 => 0x00000000
+tb_top_scoreboard: read  0x4 => 0x00000000
+tb_top_scoreboard: read  0x6 => 0x00000000
+tb_top_scoreboard: read  0x7 => 0x00000000
+tb_top_scoreboard: read  0x8 => 0x00000000
+tb_top_scoreboard: read  0x9 => 0x00000000
+tb_top_scoreboard: read  0xa => 0x00000000
+tb_top_scoreboard: read  0xb => 0x00000000
+tb_top_scoreboard: read  0xc => 0x00000000
+tb_top_scoreboard: read  0xd => 0x00000000
+tb_top_scoreboard: read  0xe => 0x00000000
+tb_top_scoreboard: read  0xf => 0x00000000
+tb_top_scoreboard: write 0x1 <= 0x00001234
+tb_top_scoreboard: write 0x4 <= 0xc3c3c35a
+tb_top_scoreboard: write 0x6 <= 0x0000000f
+tb_top_scoreboard: read  0x1 => 0x00001234
+tb_top_scoreboard: read  0x4 => 0x0000005a
+tb_top_scoreboard: MISMATCH read 0x4: dut=0x0000005a model=0xc3c3c35a
+tb_top_scoreboard: read  0x5 => 0x00000096
+tb_top_scoreboard: read  0x6 => 0x0000000f
+tb_top_scoreboard: write 0x0 <= 0x00000042
+tb_top_scoreboard: write 0x4 <= 0x000000a5
+tb_top_scoreboard: write 0x6 <= 0xffffff3c
+tb_top_scoreboard: read  0x0 => 0x00000042
+tb_top_scoreboard: read  0x4 => 0x000000a5
+tb_top_scoreboard: read  0x6 => 0x0000003c
+tb_top_scoreboard: read  0x7 => 0x00000000
+tb_top_scoreboard: read  0xc => 0x00000000
+tb_top_scoreboard: 28 checks, 1 mismatch(es)
+tb_top_scoreboard: TEST FAILED
+%Error: tb/tb_top_scoreboard.sv:142: Verilog $stop
+Aborting...

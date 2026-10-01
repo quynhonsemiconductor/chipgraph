@@ -1,9 +1,10 @@
 name: evals
 
 # Real-model evals (task M1-17): `chipgraph eval` with runtime claude-code (headless
-# Claude Code, haiku main session by default) on the ask, triage and triage-holdout
-# suites. Never on push or pull requests: started by hand or weekly. The framework itself
-# is checked on every PR by the fake-runtime tests in the normal CI (tests/evals).
+# Claude Code, haiku main session by default) on the ask, triage, triage-holdout and
+# triage-holdout2 suites. Never on push or pull requests: started by hand or weekly. The
+# framework itself is checked on every PR by the fake-runtime tests in the normal CI
+# (tests/evals).
 #
 # Auth: the repository secret CHIPGRAPH_EVALS_CLAUDE_TOKEN, a Claude Code OAuth token of
 # a separate account (`claude setup-token`), passed to `claude` as
@@ -17,7 +18,7 @@ on:
       suite:
         description: Suite to run
         type: choice
-        options: [all, ask, triage, triage-holdout]
+        options: [all, ask, triage, triage-holdout, triage-holdout2]
         default: all
       main_model:
         description: Main session model
@@ -94,7 +95,7 @@ jobs:
           EVAL_OUT: ${{ runner.temp }}/eval-report
         run: |
           set -u
-          if [ "$SUITE" = all ]; then suites="ask triage triage-holdout"; else suites="$SUITE"; fi
+          if [ "$SUITE" = all ]; then suites="ask triage triage-holdout triage-holdout2"; else suites="$SUITE"; fi
           mkdir -p "$EVAL_OUT"
           failed=""
           for suite in $suites; do

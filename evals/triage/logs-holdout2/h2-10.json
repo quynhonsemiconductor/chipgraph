@@ -1,0 +1,7 @@
+{
+  "id": "h2-10",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" rtl/tiny_gpio.sv tb/tb_gpio_pins.sv --top-module tb_gpio_pins && obj_dir/Vtb_gpio_pins +verilator+quiet",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}
