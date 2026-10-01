@@ -1,0 +1,2 @@
+FAIL   spec_schema gpio 1 issues
+  doc/specs/TINY_GPIO_MAS.md:62  [field.msb_lt_lsb] field 'field:gpio.DATA_OUT.DATA_OUT' has msb 0 < lsb 7

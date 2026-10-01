@@ -1,0 +1,7 @@
+tb_timer_sva: start
+tb_timer_sva: [40000] write 0x0 = 0x00000000
+tb_timer_sva: [60000] write 0x1 = 0x00000006
+tb_timer_sva: [80000] write 0x2 = 0x00000001
+[145000] %Error: tb_timer_sva.sv:57: Assertion failed in tb_timer_sva.a_irq_after_match: a_irq_after_match: COUNT reached COMPARE=0x6 but irq=0 in the same cycle
+%Error: tb/tb_timer_sva.sv:57: Verilog $stop
+Aborting...

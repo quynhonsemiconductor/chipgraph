@@ -1,6 +1,6 @@
 """Deterministic grader for the `/triage` evals (task M1-14; reused by M1-17).
 
-    python evals/triage/grade.py ANSWERS.jsonl [--set holdout | --faults FILE] [--json]
+    python evals/triage/grade.py ANSWERS.jsonl [--set holdout|holdout2 | --faults FILE] [--json]
 
 ANSWERS.jsonl has one JSON object per line, one per sample log:
 
@@ -14,7 +14,8 @@ per sample, the accuracy, the confusion matrix (true label x answered label) and
 accuracy by `decide()` backend (rule, small, large; `none` for no label).
 
 `--set holdout` grades against `holdout.yml` instead (the holdout set, ids `hold-NN`, used
-only for grading); `--faults` takes any file of the same schema.
+only for grading); `--set holdout2` against `holdout2.yml` (the second holdout set, ids
+`h2-NN`, grading only); `--faults` takes any file of the same schema.
 
 The run passes when the accuracy is at least 80 %. Exit code: 0 pass, 1 fail, 2 bad input.
 """
@@ -32,7 +33,8 @@ import yaml
 
 DEFAULT_FAULTS = Path(__file__).resolve().parent / "faults.yml"
 HOLDOUT_FAULTS = Path(__file__).resolve().parent / "holdout.yml"
-SETS = {"default": DEFAULT_FAULTS, "holdout": HOLDOUT_FAULTS}
+HOLDOUT2_FAULTS = Path(__file__).resolve().parent / "holdout2.yml"
+SETS = {"default": DEFAULT_FAULTS, "holdout": HOLDOUT_FAULTS, "holdout2": HOLDOUT2_FAULTS}
 LABELS = ("infra", "rtl", "tb", "spec")
 BACKENDS = ("rule", "small", "large", "none")
 MIN_ACCURACY = 0.8

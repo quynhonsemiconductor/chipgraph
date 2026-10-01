@@ -105,6 +105,13 @@ SUITES: dict[str, Suite] = {
         EVALS / "triage" / "logs-holdout",
         description="/triage on the held-out logs: >= 80 % correct",
     ),
+    "triage-holdout2": Suite(
+        "triage-holdout2",
+        "triage",
+        EVALS / "triage" / "holdout2.yml",
+        EVALS / "triage" / "logs-holdout2",
+        description="/triage on the second held-out logs: >= 80 % correct",
+    ),
 }
 """The suites `chipgraph eval` knows, by name."""
 

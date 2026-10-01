@@ -1,0 +1,7 @@
+{
+  "id": "h2-04",
+  "cmd": "chipgraph check --only spec_schema --block gpio",
+  "exit_code": 1,
+  "check": "spec_schema",
+  "verilator": "5.052"
+}

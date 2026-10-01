@@ -1,0 +1,2 @@
+%Error: verilator: VERILATOR_ROOT is set to inconsistent path. Suggest leaving it unset.
+%Error: VERILATOR_ROOT=tools/verilator-4.228/share/verilator

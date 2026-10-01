@@ -33,7 +33,13 @@ def test_runs_by_hand_or_weekly_never_on_push_or_pr() -> None:
     inputs = triggers["workflow_dispatch"]["inputs"]
     assert set(inputs) == {"suite", "main_model", "budget_usd"}
     assert inputs["main_model"]["default"] == "haiku"
-    assert inputs["suite"]["options"] == ["all", "ask", "triage", "triage-holdout"]
+    assert inputs["suite"]["options"] == [
+        "all",
+        "ask",
+        "triage",
+        "triage-holdout",
+        "triage-holdout2",
+    ]
     assert data["permissions"] == {"contents": "read"}
 
 
@@ -65,7 +71,7 @@ def test_runs_chipgraph_eval_and_uploads_its_report_as_an_artifact() -> None:
     assert "uv run chipgraph eval" in script and "--runtime claude-code" in script
     assert '--main-model "$MAIN_MODEL"' in script and '--budget-usd "$BUDGET_USD"' in script
     assert '--out "$EVAL_OUT/$suite"' in script
-    assert "ask triage triage-holdout" in script
+    assert "ask triage triage-holdout triage-holdout2" in script
     assert "GITHUB_STEP_SUMMARY" in script and "summary.md" in script
     out_dir = run["env"]["EVAL_OUT"]
 

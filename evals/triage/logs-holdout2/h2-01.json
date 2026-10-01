@@ -1,0 +1,7 @@
+{
+  "id": "h2-01",
+  "cmd": "verilator --binary --timing --timescale 1ns/1ps --quiet -CFLAGS -w -MAKEFLAGS \"-s --no-print-directory\" -f filelists/top.f tb/tb_top_scoreboard.sv --top-module tb_top_scoreboard && obj_dir/Vtb_top_scoreboard +verilator+quiet",
+  "exit_code": 1,
+  "check": null,
+  "verilator": "5.052"
+}
