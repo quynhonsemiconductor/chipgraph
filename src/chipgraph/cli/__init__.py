@@ -1369,6 +1369,121 @@ def triage_cmd(
         raise typer.Exit(code=1)
 
 
+# --- eval --------------------------------------------------------------------------
+
+_EVAL_PACKAGE = "chipgraph_evals"
+
+
+def _evals_harness() -> object:
+    """`evals/harness/` of this chipgraph checkout, loaded as the package `chipgraph_evals`.
+
+    The evals are not part of the installed package; they are looked up next to the
+    source tree (an editable install), then upward from the current directory.
+    """
+    import importlib.util
+
+    if _EVAL_PACKAGE in sys.modules:
+        return sys.modules[_EVAL_PACKAGE]
+    checkout = Path(__file__).resolve().parents[3]
+    for root in (checkout, Path.cwd().resolve(), *Path.cwd().resolve().parents):
+        harness = root / "evals" / "harness"
+        if (harness / "__init__.py").is_file():
+            break
+    else:
+        raise AppError("chipgraph eval runs in a chipgraph checkout: evals/harness/ not found")
+    spec = importlib.util.spec_from_file_location(
+        _EVAL_PACKAGE, harness / "__init__.py", submodule_search_locations=[str(harness)]
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_EVAL_PACKAGE] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[_EVAL_PACKAGE]
+        raise
+    return module
+
+
+@app.command("eval")
+@_handle_errors
+def eval_cmd(
+    ctx: typer.Context,
+    suite: Annotated[str, typer.Argument(help="ask, triage or triage-holdout.")],
+    runtime: Annotated[
+        Literal["fake", "claude-code"],
+        typer.Option("--runtime", help="fake: scripted, no model (CI); claude-code: real."),
+    ] = "fake",
+    main_model: Annotated[
+        str, typer.Option("--main-model", help="claude-code: the main session's model.")
+    ] = "haiku",
+    small_model: Annotated[
+        str, typer.Option("--small-model", help="claude-code triage: the small decider tier.")
+    ] = "haiku",
+    large_model: Annotated[
+        str, typer.Option("--large-model", help="claude-code triage: the large decider tier.")
+    ] = "opus",
+    budget_usd: Annotated[
+        float,
+        typer.Option(
+            "--budget-usd", min=0.01, help="claude-code: stop once the suite cost reaches this."
+        ),
+    ] = 3.0,
+    time_limit: Annotated[
+        int, typer.Option("--time-limit", min=1, help="claude-code: suite time limit, seconds.")
+    ] = 3600,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Report directory (default: a new temporary directory)."),
+    ] = None,
+    only: Annotated[
+        str | None, typer.Option("--only", help="Only these ids, comma-separated.")
+    ] = None,
+) -> None:
+    """Run an eval suite (Inspect AI) and grade it with its deterministic grader.
+
+    Writes the Inspect log, answers.jsonl and summary.json/summary.md to --out. The fake
+    runtime calls no model. claude-code runs one headless `claude -p` per sample on a
+    tinysoc copy with the dev plugin, under --budget-usd and --time-limit; auth is
+    CLAUDE_CODE_OAUTH_TOKEN when set, else the logged-in Claude Code account.
+    Exit 0 pass (or no data yet), 1 fail, 2 error.
+    """
+    import tempfile
+    from typing import Any
+
+    try:
+        import inspect_ai  # noqa: F401
+    except ImportError as exc:
+        raise AppError(
+            "chipgraph eval needs Inspect AI: run `uv sync` (dev group) or `uv sync --extra evals`"
+        ) from exc
+    harness: Any = _evals_harness()
+    state: CliState = ctx.obj
+    out_dir = out if out is not None else Path(tempfile.mkdtemp(prefix=f"cg-eval-{suite}-"))
+    options = harness.EvalOptions(
+        runtime=runtime,
+        main_model=main_model,
+        small_model=small_model,
+        large_model=large_model,
+        budget_usd=budget_usd,
+        time_limit_s=time_limit,
+        only=tuple(i for i in (only or "").replace(",", " ").split() if i),
+    )
+    try:
+        result = harness.run_suite(
+            suite, out_dir, options, progress=lambda line: typer.echo(line, err=True)
+        )
+    except harness.EvalError as exc:
+        raise AppError(str(exc)) from exc
+    if state.json_output:
+        typer.echo(json.dumps(result.summary, indent=2))
+    else:
+        typer.echo((out_dir / "summary.md").read_text(encoding="utf-8").rstrip())
+        typer.echo(f"report: {out_dir}")
+    if result.exit_code:
+        raise typer.Exit(code=result.exit_code)
+
+
 # --- mcp ---------------------------------------------------------------------------
 
 

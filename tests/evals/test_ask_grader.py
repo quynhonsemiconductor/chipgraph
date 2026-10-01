@@ -91,19 +91,35 @@ def _answers(tmp_path: Path, answers: list[dict[str, object]]) -> Path:
 
 
 def _perfect() -> list[dict[str, object]]:
-    """A hand-written, all-correct answer set, citing a matching line or key per question."""
+    """An all-correct answer set: each reference answer, citing a matching line or key."""
     out: list[dict[str, object]] = []
     for q in grade.load_questions(QUESTIONS):
         if q.unknown:
             out.append({"id": q.id, "answer": "I don't know", "citations": [], "unknown": True})
             continue
-        facts = " ".join(alts[0] for alts in q.facts)
         cite = q.expected[0]
         if ":" in cite and "-" in cite.rpartition(":")[2] and not cite.startswith("model:"):
             path, _, lines = cite.rpartition(":")
             cite = f"{path}:{lines.partition('-')[2]}"  # the last line of the range
-        out.append({"id": q.id, "answer": f"Answer: {facts}", "citations": [cite]})
+        out.append({"id": q.id, "answer": q.reference, "citations": [cite]})
     return out
+
+
+def test_every_answerable_question_has_a_reference_that_states_its_facts() -> None:
+    for q in grade.load_questions(QUESTIONS):
+        if q.unknown:
+            assert not q.reference, q.id
+            continue
+        assert q.reference, q.id
+        assert all(grade.states_fact(q.reference, alts) for alts in q.facts), q.id
+
+
+def test_no_fact_is_a_bare_number() -> None:
+    # A bare digit is found in almost any answer; facts name the context or the unit.
+    for q in grade.load_questions(QUESTIONS):
+        for alts in q.facts:
+            for alt in alts:
+                assert not alt.strip().isdigit(), (q.id, alt)
 
 
 def test_perfect_answers_pass(tmp_path: Path) -> None:
@@ -118,7 +134,7 @@ def test_perfect_answers_pass(tmp_path: Path) -> None:
 def test_grader_counts_failures_by_kind(tmp_path: Path) -> None:
     answers = {a["id"]: a for a in _perfect()}
     # q01: a wrong citation; q02: a missing fact; q03: said unknown; q04: not checked.
-    answers["q01"] = {"id": "q01", "answer": "0", "citations": ["chip.yml:1"]}
+    answers["q01"] = {"id": "q01", "answer": "COMPARE resets to 0.", "citations": ["chip.yml:1"]}
     answers["q02"] = {**answers["q02"], "answer": "It is at 0x2."}
     answers["q03"] = {"id": "q03", "answer": "I don't know", "citations": [], "unknown": True}
     answers["q04"] = {**answers["q04"], "checked": False}
@@ -149,6 +165,62 @@ def test_ninety_percent_passes_and_one_invented_answer_fails(tmp_path: Path) -> 
     answers["q20"] = {"id": "q20", "answer": "1000 gates", "citations": ["rtl/tiny_gpio.sv:1"]}
     report = grade.grade(questions, grade.load_answers(_answers(tmp_path, list(answers.values()))))
     assert report.invented == 1 and not report.passed
+
+
+# --- facts: word boundaries and regexes ------------------------------------------------
+
+
+def test_literal_facts_match_on_word_boundaries() -> None:
+    assert grade.states_fact("DIR is at offset 0x2, RW.", ("0x2",))
+    assert not grade.states_fact("DIR is at offset 0x20.", ("0x2",))
+    assert not grade.states_fact("DIR is at offset 10x2.", ("0x2",))
+    assert grade.states_fact("only wdata[7:0] is used", ("[7:0]",))
+    assert grade.states_fact("Access: RW", ("rw",))
+    assert not grade.states_fact("Access: rwx", ("rw",))
+    assert grade.states_fact("owned by the GPIO block", ("gpio", "tiny_gpio"))
+    assert grade.states_fact("owned by tiny_gpio", ("gpio", "tiny_gpio"))
+
+
+def test_regex_facts() -> None:
+    assert grade.states_fact("It clears the interrupt", ("re:\\bclear(s|ed|ing)?\\b",))
+    assert not grade.states_fact("It is unclear", ("re:\\bclear(s|ed|ing)?\\b",))
+    pattern = grade.fact_pattern("re:ACTIVE[- ]LOW")
+    assert pattern.search("rst_n is active-low") is not None  # case-insensitive
+
+
+def _fact_check(qid: str, text: str) -> bool:
+    [question] = [q for q in grade.load_questions(QUESTIONS) if q.id == qid]
+    return grade.grade_one(question, {"answer": text, "citations": [question.expected[0]]}).passed
+
+
+@pytest.mark.parametrize(
+    ("qid", "right", "wrong"),
+    [
+        ("q01", "COMPARE has a reset value of 0.", "COMPARE resets to 1; it is at offset 0x0."),
+        ("q01", "It is 0 after reset.", "COMPARE (bit 0) resets to 0xFF."),
+        ("q02", "DIR is at offset 0x2, RW.", "DIR is at offset 0x1, RW; 2 fields."),
+        ("q05", "pin_out is 8 bits wide.", "pin_out is 32 bits wide; DIR has 8 entries."),
+        ("q05", "pin_out is [7:0].", "pin_out is 128 bits wide."),
+        ("q06", "only the low 8 bits, wdata[7:0]", "all 32 bits of wdata; 8 registers"),
+        ("q07", "addr is 4 bits wide", "addr is 2 bits wide per block; 4 blocks"),
+        ("q08", "interrupt line 0", "interrupt line 1; base 0x0, offset 0"),
+        ("q09", "gpio's base address is 0x4", "gpio's base is 0x40; it has 4 registers"),
+        ("q11", "rst_n is active low", "rst_n is active high, never low"),
+    ],
+)
+def test_a_wrong_answer_with_the_digit_elsewhere_fails(qid: str, right: str, wrong: str) -> None:
+    assert _fact_check(qid, right)
+    assert not _fact_check(qid, wrong)
+
+
+def test_bad_facts_are_rejected(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.yml"
+    for fact in ('"re:("', '"re:"'):
+        bad.write_text(
+            f"questions:\n  - id: q1\n    expected: [{{cite: 'model:x'}}]\n    facts: [[{fact}]]\n"
+        )
+        with pytest.raises(grade.GradeError):
+            grade.load_questions(bad)
 
 
 def test_citation_matching() -> None:
