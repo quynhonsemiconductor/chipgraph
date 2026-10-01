@@ -79,6 +79,10 @@ EOF
 
 TOOLS="mcp__plugin_chipgraph_chipgraph__triage mcp__plugin_chipgraph_chipgraph__pending_decisions"
 TOOLS="$TOOLS mcp__plugin_chipgraph_chipgraph__answer_decision Agent"
+# Triage needs none of these. Denying them for the session (and so for every subagent)
+# keeps other plugins' agents and skills installed on this machine out of the run: in a
+# first run, a Haiku main session sometimes reached for one of them instead of `triage`.
+DENY="Bash Read Write Edit MultiEdit NotebookEdit Glob Grep Skill WebFetch WebSearch"
 
 (cd "$REPO" && uv run python "$HERE/report.py" --list) > "$OUT/samples.tsv"
 
@@ -99,6 +103,7 @@ while IFS=$'\t' read -r id check; do
       --max-turns "$MAX_TURNS" \
       --plugin-dir "$OUT/plugin" \
       --allowedTools "$TOOLS" \
+      --disallowedTools "$DENY" \
       --output-format stream-json --verbose \
       < /dev/null > "$OUT/streams/$id.jsonl" 2> "$OUT/streams/$id.stderr"
   ) || echo "claude exited $?" >> "$OUT/streams/$id.stderr"

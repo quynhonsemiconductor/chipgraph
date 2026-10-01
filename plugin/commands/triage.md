@@ -10,8 +10,9 @@ project; a second word, if any, is the id of the check that produced it.
 You do not classify the log yourself: the chipgraph engine does, with its rules, and asks
 a model through the decider subagent only when no rule decides.
 
-1. Call `mcp__plugin_chipgraph_chipgraph__triage` with `path` = the log path and, if a
-   check id was given, `check_id` = that id.
+1. Your **first** tool call is `mcp__plugin_chipgraph_chipgraph__triage` with `path` =
+   the log path and, if a check id was given, `check_id` = that id. The engine reads the
+   file itself: do not look for it, and do not start any subagent to find or read it.
 2. If the result's `status` is `deferred`, run the **decider loop** (the same loop as
    `/chipgraph:decide`), then call `triage` again with exactly the same arguments:
    1. Call `mcp__plugin_chipgraph_chipgraph__pending_decisions`.
@@ -36,6 +37,7 @@ a model through the decider subagent only when no rule decides.
 Rules:
 
 - Never pick or change the label yourself; print what `triage` returned.
-- Do not read or write files, run commands, or call any other tool.
+- Do not read or write files, run commands, or call any other tool. The only subagent
+  you ever start is `chipgraph:decider`, and only for an entry of `pending_decisions`.
 - A label is advice: it never blocks a build. `infra` means fix the environment and retry
   without counting a try; `spec` means ask the spec owner before changing anything.

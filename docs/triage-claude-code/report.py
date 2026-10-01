@@ -147,6 +147,9 @@ def main(out: Path) -> int:
         for c in calls:
             if c["parent"] is not None and not c["name"].endswith(SUBAGENT_TOOLS):
                 foreign.append(f"{sample.id}:{c['name']}")
+        for kind, _ in agents:
+            if kind != "chipgraph:decider":  # the main session may start no other agent
+                foreign.append(f"{sample.id}:Agent({kind})")
         answer = _answer(sample.id, calls)
         answers.append(answer)
         cost += float(result.get("total_cost_usd") or 0.0)
@@ -174,7 +177,7 @@ def main(out: Path) -> int:
     print(f"  total_cost_usd: {cost:.4f}")
     print(f"  output tokens by model (modelUsage): {dict(models)}")
     print(f"  decider subagents by model: {dict(deciders)}")
-    print(f"  subagent calls to other tools (must be none): {foreign}")
+    print(f"  other agents or subagent tools (must be none): {foreign}")
     print(f"  timing: {timing.read_text().strip() if timing.is_file() else '?'}")
     print("  no API key used: ANTHROPIC_API_KEY unset by run.sh")
     print(f"== grade ({answers_path})")
