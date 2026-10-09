@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import json
 import shutil
@@ -61,7 +62,7 @@ def test_fake_ask_suite_passes_end_to_end(tmp_path: Path) -> None:
     )
     assert (metrics["unanswerable"], metrics["said_unknown"], metrics["invented"]) == (5, 5, 0)
     assert summary["verdict"] == "PASS" and summary["runtime"] == "fake"
-    assert summary["inspect_ai"] == "0.3.273"
+    assert summary["inspect_ai"] == importlib.metadata.version("inspect-ai")
     assert summary["samples"] == {"total": 20, "run": 20, "not_run": {}}
     assert "PASS" in (out / "summary.md").read_text()
 
