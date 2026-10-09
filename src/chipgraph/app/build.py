@@ -22,6 +22,7 @@ from chipgraph.core.engine.scheduler import AgentStub, Executor, Scheduler
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.runtime import AgentRuntimeExecutor, TaskQueue
+from chipgraph.core.runtime.roles import RoleError, check_agent_rules
 from chipgraph.core.state.trace import Tracer
 
 
@@ -115,6 +116,10 @@ def make_scheduler(
         graph = build_graph(rules, resolver, repo=ctx.store.repo)
         graph.select(target)
     except GraphError as exc:
+        raise AppError(str(exc)) from exc
+    try:  # every agent rule must fit its role's tool table (DESIGN.md 5.1)
+        check_agent_rules(graph.rules, graph.instances.values())
+    except RoleError as exc:
         raise AppError(str(exc)) from exc
 
     run_executor = RunExecutor(ctx)

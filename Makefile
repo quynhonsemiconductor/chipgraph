@@ -39,10 +39,12 @@ schemas:
 		echo "schemas: added by task M0-02"; \
 	else \
 		uv run python -m chipgraph.core.contracts.export; \
+		uv run python -m chipgraph.core.runtime.roles.schema; \
 	fi
 
 schemas-check:
 	uv run python -m chipgraph.core.contracts.export --check
+	uv run python -m chipgraph.core.runtime.roles.schema --check
 
 image:
 	docker build -t chipgraph-eda -f docker/Dockerfile .

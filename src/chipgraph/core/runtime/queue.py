@@ -11,9 +11,11 @@ keeps that hand-over as state, under the state backend (never in the repo tree):
 
 A task moves ``ready -> dispatched -> submitted -> accepted | rejected |
 budget_exhausted | needs_human``; a ``rejected`` task is dispatched again until its
-``tries`` are used up. Every file has a single writer, so the engine and the harness's
-write guard (a separate process) never overwrite each other's updates: the guard owns
-the agent bindings and their tool-call counts, the engine owns everything else.
+``tries`` are used up. Each dispatch also records what the task's agent must not read
+(``denied_reads``, from its role's read policy), for the harness's guard. Every file has
+a single writer, so the engine and the harness's write guard (a separate process) never
+overwrite each other's updates: the guard owns the agent bindings and their tool-call
+counts, the engine owns everything else.
 
 Pure Python over JSON files: no subprocess, no VCS, no knowledge of any harness.
 """
@@ -23,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -32,6 +34,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 
 from chipgraph.core.contracts import AgentResult, ModelTier, RuleId
 from chipgraph.core.plugin_api.types import AgentTask
+from chipgraph.core.runtime.roles import find_role, model_ladder
 from chipgraph.core.state.layout import StateLayout
 
 TaskStatus = Literal[
@@ -90,6 +93,14 @@ class AgentTaskRecord(BaseModel):
     tier: ModelTier = Field(default="medium", description="Model tier for the first attempt.")
     escalate: ModelTier | None = Field(
         default=None, description="Model tier for later attempts, if the rule escalates."
+    )
+    denied_reads: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Repo-relative paths and globs the agent must not read (its role's read policy "
+            "resolved against the project); set on every dispatch. The guard refuses reads "
+            "of them, and listings or searches that could reach them."
+        ),
     )
     status: TaskStatus = Field(default="ready", description="Where the task is in its life.")
     attempts: int = Field(default=0, ge=0, description="Rejected submissions so far.")
@@ -236,6 +247,9 @@ class TaskQueue:
         the work it did no longer holds: an `accepted` task whose inputs changed or whose
         outputs no longer hash as accepted, or a `budget_exhausted`/`needs_human` task
         whose inputs changed (a person fixed the spec, say). Otherwise it is unchanged.
+
+        The model tiers come from the task's role (`RoleSpec.default_tier`,
+        `escalate_to`) unless the rule's budget sets `tier` or `escalate` itself.
         """
         task_id = task.instance.instance_id
         existing = self.get(task_id)
@@ -250,6 +264,7 @@ class TaskQueue:
                     return existing
             else:
                 return existing
+        tier, escalate = model_ladder(find_role(task.role), task.budget)
         record = AgentTaskRecord(
             task_id=task_id,
             rule_id=task.instance.rule_id,
@@ -257,8 +272,8 @@ class TaskQueue:
             skills=task.skills,
             allowed_writes=task.allowed_writes,
             tries=task.budget.tries,
-            tier=task.budget.tier,
-            escalate=task.budget.escalate,
+            tier=tier,
+            escalate=escalate,
             tool_call_cap=tool_call_cap,
             inputs_hash=inputs_hash,
             dispatches=existing.dispatches if existing is not None else 0,
@@ -277,9 +292,19 @@ class TaskQueue:
         return record
 
     def dispatch(
-        self, task_id: str, *, run_id: str, baseline: Mapping[str, str]
+        self,
+        task_id: str,
+        *,
+        run_id: str,
+        baseline: Mapping[str, str],
+        denied_reads: Iterable[str] = (),
     ) -> AgentTaskRecord:
-        """Hand the task out: `ready`/`rejected` -> `dispatched`, with a new baseline."""
+        """Hand the task out: `ready`/`rejected` -> `dispatched`, with a new baseline.
+
+        `denied_reads` (the role's read policy resolved against the project as it is
+        now) replaces the record's, in the same write as the status change, so the
+        guard never sees the task dispatched without it.
+        """
         record = self._transition(task_id, OPEN_STATUSES, "dispatch")
         _write_atomic(
             self.baselines_dir / f"{state_key(task_id)}.json",
@@ -291,6 +316,7 @@ class TaskQueue:
                     "status": "dispatched",
                     "dispatches": record.dispatches + 1,
                     "run_id": run_id,
+                    "denied_reads": tuple(sorted(set(denied_reads))),
                 }
             )
         )
