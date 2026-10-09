@@ -88,7 +88,7 @@ Spike là thử nhanh để giảm rủi ro. Kết quả là một ghi chú ng�
 |---|---|---|
 | S1 | Claude Agent SDK (0.2.x) có chạy với endpoint tương thích Anthropic của GLM không? Có tool calling, MCP, giới hạn tool không? | D24, M1-10 |
 | S2 | pyslang 11 trích được hierarchy, port, param, instance, clock/reset trên RTL của QSoC không (gồm wrapper có AUTO của emacs và IP vendor)? | M1-04 |
-| S3 | Edalize 0.6 + cocotb 2.1 + Verilator 5.052 chạy một testbench trên macOS và Linux không? | M2-05 |
+| S3 | Edalize 0.6 + cocotb 2.1 + Verilator 5.052 chạy một testbench trên macOS và Linux không? **Kết quả (`docs/spikes/S3.md`):** có, nếu Edalize chỉ `configure` còn chipgraph tự chạy `make`/simulator qua `Runner` và tự đặt env cocotb (`GPI_USERS`). M2-05 cần ghi thêm `pyproject.toml` (extra `sim`, entry point), parser cocotb (`adapters/parser/cocotb.py` hoặc trong `edalize.py`), và `g++ liblz4-dev zlib1g-dev iverilog` (apt) trong `.github/workflows/ci.yml` hoặc `docker/Dockerfile` | M2-05 |
 | S4 | NVIDIA OpenShell 0.1 chạy được trên macOS của team không, hay dùng container? | D11, M1-11 |
 | S5 | MCP Python SDK 2.x: server stdio, và plugin Claude Code gọi được tool của nó | M0-14 |
 | S7 | **Runtime `claude-code`:** plugin lặp `next_task` → subagent của vai → `submit`; subagent giới hạn được tool và model; hook `PreToolUse` chặn ghi ngoài `outputs`; nhiều subagent chạy song song; đọc được token và chi phí từ event `result` cuối của `claude -p` (`usage`, `total_cost_usd`, `modelUsage` theo model); không cần OpenTelemetry | M1-11 |
