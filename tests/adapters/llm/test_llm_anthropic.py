@@ -37,7 +37,7 @@ def _clean_sdk_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _message(
-    text: str = "hi back", *, model: str = "claude-sonnet-4-5-20250929", **usage: int
+    text: str = "hi back", *, model: str = "claude-sonnet-5-5-20260401", **usage: int
 ) -> dict[str, Any]:
     return {
         "id": "msg_test",
@@ -93,7 +93,7 @@ def test_maps_the_request_and_the_response() -> None:
     assert str(sent.url) == "https://api.anthropic.com/v1/messages"
     assert sent.headers["x-api-key"] == "test-key-anthropic"
     assert server.body() == {
-        "model": "claude-sonnet-4-5",
+        "model": "claude-sonnet-5-5",
         "max_tokens": 99,
         "system": "you are terse",
         "messages": [
@@ -103,7 +103,7 @@ def test_maps_the_request_and_the_response() -> None:
     }
     assert response.text == "hi back"
     assert (response.input_tokens, response.output_tokens) == (12, 3)
-    assert response.model == "claude-sonnet-4-5-20250929"
+    assert response.model == "claude-sonnet-5-5-20260401"
 
 
 def test_no_system_field_without_a_system_message() -> None:
@@ -249,7 +249,7 @@ def test_guarded_anthropic_retries_overload_then_succeeds() -> None:
     assert len(server.requests) == 2
     assert sleep.delays == [0.5]
     assert guard.usage.input_tokens == 12
-    assert guard.usage.cost_usd > 0  # claude-sonnet-4-5-20250929 has a default price
+    assert guard.usage.cost_usd > 0  # claude-sonnet-5-5-20260401 has a default price
 
 
 def test_guarded_anthropic_does_not_retry_a_bad_request() -> None:

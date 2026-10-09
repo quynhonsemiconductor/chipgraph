@@ -8,7 +8,7 @@ from chipgraph.core.plugin_api.types import LlmMessage, LlmRequest
 
 def make_request(
     *texts: str,
-    model: str = "claude-sonnet-4-5",
+    model: str = "claude-sonnet-5-5",
     system: str | None = None,
     labels: tuple[DataLabel, ...] = (),
     max_tokens: int = 64,
