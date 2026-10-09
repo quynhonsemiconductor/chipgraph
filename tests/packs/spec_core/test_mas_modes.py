@@ -158,7 +158,7 @@ def test_declared_wins_inside_verification(tmp_path: Path) -> None:
     body = _verification_mas(
         [
             "`BLK_001` A declared item wins over inference.",
-            "An item with no tag is inferred.",
+            "An item with no tag, in a file that declares IDs, is missing its ID.",
         ]
     )
     path = _write(tmp_path, body, "BLK_MAS.md")
@@ -167,9 +167,9 @@ def test_declared_wins_inside_verification(tmp_path: Path) -> None:
     reqs = model.by_kind("requirement")
     sources = {r.name: r.attrs["id_source"] for r in reqs}
     assert sources["BLK_001"] == "declared"
-    # Exactly one inferred item, and the declared one is not also inferred.
-    inferred = [r for r in reqs if r.attrs["id_source"] == "inferred"]
-    assert len(inferred) == 1
+    # The declared item is not also inferred; the untagged one is recorded once, as
+    # missing its ID (not inferred), because the file declares IDs.
+    assert sorted(sources.values()) == ["declared", "missing"]
     assert model.get("requirement:BLK_001") is not None
 
 

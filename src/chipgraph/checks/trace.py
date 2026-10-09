@@ -7,9 +7,11 @@ A layer-5 (process) cross check (DESIGN.md 4.8, DECISIONS D37). It reads the Des
 * `test.unknown_req` -- a test mentions a string that matches the profile's requirement
   `id_pattern` for some block but is not a requirement in the model (a stale or mistyped
   REQ-ID).
-* an `info` per block with *inferred* requirements (D37): inferred requirements have no
-  stable ID to grep for, so instead of one failure each, one `info` says how many a block
-  has and that they cannot be traced by ID. The message says they are inferred.
+* `req.inferred_untraceable` -- an `info` per block with requirements that have no
+  declared ID: *inferred* ones (D37) and Verification items *missing* their ID in a file
+  that declares IDs (`spec_schema` reports each of those as `requirement.missing_id`).
+  They have no stable ID to grep for, so instead of one failure each, one `info` says how
+  many a block has, of which kind, and that they cannot be traced by ID.
 
 A missing model is a whole-check `error` (run `chipgraph ingest` first). With a `block`
 param (`chipgraph check --block`), only that block's requirements and its inferred summary
@@ -115,10 +117,11 @@ def _trace_issues(
         if r.attrs.get("id_source") == "declared"
         and (block_key is None or r.attrs.get("block") == block_key)
     ]
-    inferred = [
+    # No declared ID: inferred (D37) or missing in a file that declares IDs.
+    untraceable = [
         r
         for r in requirements
-        if r.attrs.get("id_source") == "inferred"
+        if r.attrs.get("id_source") in ("inferred", "missing")
         and (block_key is None or r.attrs.get("block") == block_key)
     ]
 
@@ -155,24 +158,38 @@ def _trace_issues(
                     )
                 )
 
-    # inferred: one info per block, not one failure per requirement (D37).
-    by_block: dict[str, int] = {}
-    for req in inferred:
+    # No declared ID: one info per block, not one failure per requirement (D37).
+    by_block: dict[str, dict[str, int]] = {}
+    for req in untraceable:
         b = str(req.attrs.get("block") or "")
-        by_block[b] = by_block.get(b, 0) + 1
+        counts = by_block.setdefault(b, {"inferred": 0, "missing": 0})
+        counts[str(req.attrs.get("id_source"))] += 1
     for b in sorted(by_block):
         issues.append(
             Issue(
                 rule="req.inferred_untraceable",
                 severity="info",
-                msg=(
-                    f"{by_block[b]} inferred requirement(s) in {b or '(no block)'} cannot be "
-                    "traced by ID (they are inferred, not declared REQ-IDs)"
-                ),
+                msg=_untraceable_msg(b or "(no block)", by_block[b]),
             )
         )
 
     return issues
+
+
+def _untraceable_msg(block: str, counts: dict[str, int]) -> str:
+    """The `req.inferred_untraceable` message for one block's requirements with no ID."""
+    inferred, missing = counts["inferred"], counts["missing"]
+    if not missing:
+        return (
+            f"{inferred} inferred requirement(s) in {block} cannot be traced by ID "
+            "(they are inferred, not declared REQ-IDs)"
+        )
+    parts = [f"{inferred} inferred"] if inferred else []
+    parts.append(f"{missing} Verification item(s) missing an ID (requirement.missing_id)")
+    return (
+        f"{inferred + missing} requirement(s) in {block} cannot be traced by ID: "
+        f"{', '.join(parts)}; none of them is a declared REQ-ID"
+    )
 
 
 def _block_id_regexes(model: DesignModel, req_cfg: RequirementsCfg) -> list[re.Pattern[str]]:

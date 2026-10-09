@@ -17,9 +17,11 @@ project: qsoc
 packs: []
 
 # Requirement IDs (DECISIONS D37). Seven MAS files tag each Verification item with an ID
-# like `DMA_001`; the other six (TIMER, PWM, RAM, SCRC, SYSDBG, Interrupt_Map) have none
+# like `DMA_001` (SCRC: `SCRC_CLK_001`); the other five (TIMER, PWM, RAM, SYSDBG, Interrupt_Map) have none
 # yet, so `infer: verification` keys each of their numbered Verification items by block
 # and content hash. A declared ID always wins. Drop `infer` once every MAS has IDs.
+# In a MAS that has IDs, a Verification item without one is `requirement.missing_id`
+# (spec_schema). Rules and checks: docs/REQUIREMENT_IDS.md in the chipgraph repository.
 spec:
   chip:
     path: util/qsoc_contract.yml
@@ -65,7 +67,14 @@ adapters:
   duplicate: { use: duplicate, scope: ["design/**/*.sv", "design/**/*.v"] }
   # QSoC has no DV tests yet: report untraced requirements, but do not block, until DV
   # starts (then drop `severity`).
-  trace: { use: trace, tests: ["design/*/dv/**/*", "dv/**/*"], severity: warning }
+  # `id_pattern` is what a test string must look like to count as a requirement ID, so a
+  # stale one is reported as `test.unknown_req`; it must be set here, the check does not
+  # read the per-block patterns.
+  trace:
+    use: trace
+    tests: ["design/*/dv/**/*", "dv/**/*"]
+    id_pattern: '{BLOCK}_\d{3}'
+    severity: warning
   connect: { use: connect }
   hardcode:
     use: hardcode
@@ -121,7 +130,10 @@ blocks:
     layout: { spec: ["doc/specs/QNSC_ROM_MAS.md", "doc/specs/QNSC_BOOT_SPEC.md"] }
     spec:
       requirements: { id_pattern: '(?:ROM|BOOT)_\d{3}' }
-  scrc: {}
+  scrc:
+    # SCRC ids carry an area: SCRC_CLK_001, SCRC_RST_001.
+    spec:
+      requirements: { id_pattern: 'SCRC_[A-Z]+_\d{3}' }
   spi:
     # The contract names spi's two interrupts by peripheral (D38).
     instances: [spi, spi_device, spi_host]
