@@ -56,6 +56,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Tool versions in the image
+        run: |
+          set -o pipefail
+          {
+            echo "### chipgraph-eda:test toolchain"
+            echo '```'
+            docker run --rm chipgraph-eda:test sh -c '
+              echo "verilator: $(verilator --version) ($(command -v verilator))"
+              echo "iverilog:  $(iverilog -V 2>&1 | head -n 1) ($(command -v vvp))"
+              echo "g++:       $(g++ --version | head -n 1)"
+              echo "python:    $(uv run --no-sync python --version)"
+              uv run --no-sync python -c "import importlib.metadata as m; print(\"edalize:  \", m.version(\"edalize\")); print(\"cocotb:   \", m.version(\"cocotb\"))"
+            '
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Run the tinysoc e2e suite inside the image
         env:
           REPORT_DIR: ${{ runner.temp }}/e2e-report
