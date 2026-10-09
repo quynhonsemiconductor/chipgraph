@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S3 spike: the whole experiment, as run locally and by .github/workflows/spike-s3.yml.
+# S3 spike: the whole experiment, as run locally and, for the Linux result, by a throwaway workflow (see docs/spikes/S3.md).
 #
 #   docs/spikes/s3/run.sh OUT_DIR [PYTHON] [PREFERENCE]
 #
