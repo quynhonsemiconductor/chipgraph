@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -211,3 +212,66 @@ def test_outcome_mapping() -> None:
     assert (exhausted.ok, exhausted.failure_label) == (False, "verification")
     assert "budget_exhausted" in exhausted.message
     assert outcome_for(AgentResult(status="failed"), task_id=TASK).failure_label == "verification"
+
+
+# --- M2-01: tiers from the role, denied_reads -----------------------------------------
+
+
+def _role_task(role: str, budget: Budget) -> AgentTask:
+    instance = RuleInstance(
+        rule_id="demo/write_a",
+        outputs=(ArtifactRef(kind="tb", path="dv/a.py"),),
+        instance_id=TASK,
+    )
+    return AgentTask(instance=instance, role=role, allowed_writes=("dv/a.py",), budget=budget)
+
+
+def _reject(queue: TaskQueue) -> AgentTaskRecord:
+    queue.dispatch(TASK, run_id="r1", baseline={})
+    queue.mark_submitted(TASK)
+    return queue.reject(TASK, result=_failed(), reasons=("check failed",))
+
+
+def test_tiers_come_from_the_role_and_escalate_after_a_rejection(queue: TaskQueue) -> None:
+    record = queue.enqueue(
+        _role_task("tb-author", Budget(tries=3)), inputs_hash="h", output_hashes={}
+    )
+    assert (record.tier, record.escalate, record.current_tier) == ("medium", "large", "medium")
+    assert _reject(queue).current_tier == "large"
+
+
+def test_a_rule_tier_overrides_the_role(queue: TaskQueue) -> None:
+    task = _role_task("author", Budget(tries=3, tier="large"))
+    record = queue.enqueue(task, inputs_hash="h", output_hashes={})
+    assert (record.tier, record.escalate) == ("large", None)
+    assert _reject(queue).current_tier == "large"
+
+
+def test_an_unknown_role_keeps_the_rule_budget(queue: TaskQueue) -> None:
+    record = queue.enqueue(_role_task("writer", Budget()), inputs_hash="h", output_hashes={})
+    assert (record.tier, record.escalate) == ("medium", None)
+
+
+def test_dispatch_records_denied_reads(queue: TaskQueue) -> None:
+    queue.enqueue(_role_task("tb-author", Budget()), inputs_hash="h", output_hashes={})
+    assert queue.require(TASK).denied_reads == ()
+    record = queue.dispatch(
+        TASK, run_id="r1", baseline={}, denied_reads=["rtl/b.sv", "rtl/**", "rtl/b.sv"]
+    )
+    assert record.denied_reads == ("rtl/**", "rtl/b.sv")
+    assert queue.require(TASK).denied_reads == ("rtl/**", "rtl/b.sv")
+    queue.mark_submitted(TASK)
+    queue.reject(TASK, result=_failed(), reasons=("x",))
+    again = queue.dispatch(TASK, run_id="r2", baseline={}, denied_reads=["rtl/c.sv"])
+    assert again.denied_reads == ("rtl/c.sv",)  # recomputed on every dispatch
+
+
+def test_an_old_record_without_denied_reads_still_loads(queue: TaskQueue) -> None:
+    queue.enqueue(_task(), inputs_hash="h", output_hashes={})
+    path = next(queue.tasks_dir.glob("*.json"))
+    data = json.loads(path.read_text())
+    data.pop("denied_reads")
+    path.write_text(json.dumps(data))
+    record = queue.require(TASK)
+    assert record.denied_reads == ()
+    assert queue.dispatch(TASK, run_id="r1", baseline={}).status == "dispatched"
