@@ -186,9 +186,10 @@ template's guidance. Before pasting (b), confirm the read and write behaviour st
 RO, WO and RSVD against the team's bus rules. Two follow-ups outside the template:
 
 - SCRC numbers its items `SCRC_<AREA>_NNN` (`SCRC_CLK_001`, `SCRC_RST_001`), which
-  `{BLOCK}_\d{3}` does not match, so chipgraph infers its 21 items today. Either rule (a)
-  allows an optional area and the profile uses `{BLOCK}_(?:[A-Z]+_)?\d{3}`, or SCRC
-  moves to `SCRC_NNN` once, before tests cite its IDs.
+  `{BLOCK}_\d{3}` does not match. The example profile therefore gives the `scrc` block its
+  own pattern, `SCRC_[A-Z]+_\d{3}`, and its 21 items are declared IDs. The template rule
+  (a) may allow this shape, or SCRC may move to `SCRC_NNN` once; either way the profile
+  pattern follows.
 - TIMER, PWM, RAM, SYSDBG and Interrupt_Map have no IDs yet. Once they do, drop `infer`
   from the profile (D37).
 

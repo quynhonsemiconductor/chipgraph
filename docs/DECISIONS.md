@@ -415,6 +415,9 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
   cho 6 MAS còn thiếu; lead bàn với team. Làm xong thì tắt `infer`.
 - **Chi tiết:** quy tắc ID, `requirement.missing_id` và các check liên quan ở
   [`REQUIREMENT_IDS.md`](REQUIREMENT_IDS.md).
+- **Bổ sung (2026-10-09):** SCRC đã có ID, dạng `SCRC_<AREA>_NNN` (`SCRC_CLK_001`), nên chỉ còn 5 MAS
+  chưa có ID (TIMER, PWM, RAM, SYSDBG, Interrupt_Map). Profile mẫu của QSoC khai pattern riêng cho
+  `scrc`; trên QSoC hiện có 84 REQ khai và 54 REQ suy ra.
 
 ## D38. Block là IP, instance nối vào IP bằng quan hệ `instance_of` — Chốt (2026-09-30)
 
