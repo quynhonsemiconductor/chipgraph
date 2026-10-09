@@ -22,7 +22,7 @@ def test_is_an_llm_provider() -> None:
 def test_echoes_the_last_message_by_default() -> None:
     response = asyncio.run(FakeProvider().complete(make_request("one two", "three four five")))
     assert response.text == "three four five"
-    assert response.model == "claude-sonnet-4-5"
+    assert response.model == "claude-sonnet-5-5"
 
 
 def test_queue_of_replies_in_order_then_runs_out() -> None:

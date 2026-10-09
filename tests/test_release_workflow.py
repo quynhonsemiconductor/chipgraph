@@ -48,5 +48,7 @@ def test_pypi_uploads_need_the_reviewed_environment_and_publish_the_built_files(
         steps = jobs[name]["steps"]
         assert any(s.get("uses", "").startswith("actions/download-artifact@") for s in steps)
         assert jobs[name]["permissions"] == {"id-token": "write"}
-    assert "id-token" not in str(jobs["smoke-testpypi"].get("permissions", {}))
+    # the smoke test only installs from the public index: no token at all, not even
+    # the workflow-level `contents: read`
+    assert jobs["smoke-testpypi"]["permissions"] == {}
     assert jobs["build"]["outputs"]["version"] == "${{ steps.version.outputs.version }}"

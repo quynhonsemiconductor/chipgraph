@@ -27,6 +27,11 @@ class ModelPrice(BaseModel):
 
 
 DEFAULT_PRICES: Mapping[str, ModelPrice] = {
+    "claude-opus-5-5": ModelPrice(input_per_mtok=4.0, output_per_mtok=20.0),
+    "claude-sonnet-5-5": ModelPrice(input_per_mtok=2.0, output_per_mtok=10.0),
+    # Haiku 5.5 is $0.10 / $0.50 up to 100k prompt tokens and $0.50 / $2.50 above; one
+    # flat price cannot show both, so this is the higher one: a budget cap stays safe.
+    "claude-haiku-5-5": ModelPrice(input_per_mtok=0.5, output_per_mtok=2.5),
     "claude-opus-4-5": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
     "claude-opus-4-1": ModelPrice(input_per_mtok=15.0, output_per_mtok=75.0),
     "claude-opus-4": ModelPrice(input_per_mtok=15.0, output_per_mtok=75.0),

@@ -222,16 +222,16 @@ def test_run_budget_from_a_rule_budget() -> None:
 
 
 def test_cost_with_a_known_price() -> None:
-    # 1000 input words, 200 output words at $3 / $15 per 1M tokens.
-    fake = FakeProvider(lambda _: " ".join(["w"] * 200), model="claude-sonnet-4-5-20250929")
+    # 1000 input words, 200 output words at $2 / $10 per 1M tokens.
+    fake = FakeProvider(lambda _: " ".join(["w"] * 200), model="claude-sonnet-5-5-20260401")
     guard = _guard(fake)
     asyncio.run(guard.complete(make_request(" ".join(["w"] * 1000))))
     usage = guard.usage
     assert (usage.calls, usage.input_tokens, usage.output_tokens) == (1, 1000, 200)
-    assert usage.cost_usd == pytest.approx(0.006)
+    assert usage.cost_usd == pytest.approx(0.004)
     assert usage.unpriced_calls == 0
-    per_model = usage.per_model["claude-sonnet-4-5-20250929"]
-    assert per_model.cost_usd == pytest.approx(0.006)
+    per_model = usage.per_model["claude-sonnet-5-5-20260401"]
+    assert per_model.cost_usd == pytest.approx(0.004)
 
 
 def test_cost_of_an_unknown_model_is_unknown_but_tokens_count() -> None:
@@ -256,6 +256,14 @@ def test_price_lookup() -> None:
         input_per_mtok=15.0, output_per_mtok=75.0
     )
     assert price_for("claude-opus-4-9", DEFAULT_PRICES) is None
+    # The current lineup (list prices of the Claude models page, checked 2026-10-09).
+    assert price_for("claude-sonnet-5-5", DEFAULT_PRICES) == ModelPrice(
+        input_per_mtok=2.0, output_per_mtok=10.0
+    )
+    assert price_for("claude-opus-5-5", DEFAULT_PRICES) == ModelPrice(
+        input_per_mtok=4.0, output_per_mtok=20.0
+    )
+    assert price_for("claude-haiku-5-5", DEFAULT_PRICES) is not None
     custom = {"glm-x": ModelPrice(input_per_mtok=0.5, output_per_mtok=2.0)}
     assert price_for("glm-x", {**DEFAULT_PRICES, **custom}) == custom["glm-x"]
 

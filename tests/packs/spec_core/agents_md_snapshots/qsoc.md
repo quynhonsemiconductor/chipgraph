@@ -99,6 +99,7 @@ Per-block overrides:
 | Block | ID pattern | Inferred from "Verification" |
 |---|---|---|
 | `rom` | `(?:ROM\|BOOT)_\d{3}` | yes |
+| `scrc` | `SCRC_[A-Z]+_\d{3}` | yes |
 
 ### Path exceptions
 
