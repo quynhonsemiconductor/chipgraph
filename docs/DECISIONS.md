@@ -413,6 +413,8 @@ phương án đã cân nhắc và vì sao chọn. Research gốc nằm ở [`RES
   là chế độ tạm.
 - **Việc riêng, ngoài chipgraph:** team QSoC ghi quy ước `<BLOCK>_NNN` vào template MAS và thêm ID
   cho 6 MAS còn thiếu; lead bàn với team. Làm xong thì tắt `infer`.
+- **Chi tiết:** quy tắc ID, `requirement.missing_id` và các check liên quan ở
+  [`REQUIREMENT_IDS.md`](REQUIREMENT_IDS.md).
 
 ## D38. Block là IP, instance nối vào IP bằng quan hệ `instance_of` — Chốt (2026-09-30)
 

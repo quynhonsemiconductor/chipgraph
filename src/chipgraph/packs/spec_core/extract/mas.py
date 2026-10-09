@@ -10,7 +10,11 @@ What it extracts (see DESIGN.md 4.1-4.5, 4.8 and DECISIONS D37):
 * **Requirements** -- declared REQ-IDs (matched by :meth:`RequirementsCfg.id_regex`) and,
   when ``requirements.infer == "verification"``, one inferred requirement per top-level
   numbered item of the ``infer_heading`` section. Declared wins over inferred. An
-  inferred key is a content hash, so renumbering the list does not change it.
+  inferred key is a content hash, so renumbering the list does not change it. In a file
+  that declares at least one ID, a top-level numbered ``infer_heading`` item that neither
+  starts with an ID nor names one is recorded with ``attrs.id_source = "missing"`` (in
+  both modes, never also as inferred) and an ``attrs.suggested_id`` when one can be
+  proposed; ``spec_schema`` reports it as ``requirement.missing_id``.
 * **Interface ports** -- one :class:`PortEntity` per signal of the interface table(s),
   keyed ``port:spec.<block>.<signal>`` (the ``spec`` part keeps them apart from RTL
   ports for the M1-07 ``ports_diff``).
@@ -229,11 +233,16 @@ def _extract_requirements(
                     builder, block_key, id_regex, declared, row.cells[0], row.cells[0], row.line
                 )
 
-    if cfg.infer != "verification":
+    has_declared = bool(declared)
+    if not has_declared and cfg.infer != "verification":
         return
 
-    # Inferred requirements: each top-level numbered item of the infer_heading section.
-    inferred: dict[str, int] = {}  # key -> first source line
+    # Each top-level numbered item of the infer_heading section with no ID of its own:
+    # in a file that declares IDs it is a requirement *missing* its ID; otherwise, in the
+    # `infer: verification` mode, an *inferred* requirement (D37).
+    suggester = _IdSuggester(declared, id_regex) if has_declared else None
+    mention = _mention_regex(id_regex)
+    hashed: dict[str, int] = {}  # content-hash key -> first source line
     for section in md.iter_sections_by_title(doc, cfg.infer_heading):
         top_indent = _min_ordered_indent(section.list_items)
         for item in section.list_items:
@@ -242,7 +251,10 @@ def _extract_requirements(
             token = tx.strip_markup_token(tx.first_token(tx.strip_leading_number(item.text)))
             if token and id_regex.fullmatch(token):
                 continue  # declared wins; already emitted above
-            _emit_inferred(builder, block, block_key, item, inferred)
+            if suggester is not None and not mention.search(item.text):
+                _emit_hashed(builder, block, block_key, item, hashed, "missing", suggester)
+            elif cfg.infer == "verification":
+                _emit_hashed(builder, block, block_key, item, hashed, "inferred", None)
 
 
 def _try_declare(
@@ -278,31 +290,99 @@ def _try_declare(
     )
 
 
-def _emit_inferred(
-    builder: _Builder, block: str, block_key: str, item: md.ListItem, inferred: dict[str, int]
+def _emit_hashed(
+    builder: _Builder,
+    block: str,
+    block_key: str,
+    item: md.ListItem,
+    hashed: dict[str, int],
+    id_source: Literal["inferred", "missing"],
+    suggester: _IdSuggester | None,
 ) -> None:
+    """Emit a Verification item with no ID, keyed by block and content hash (D37).
+
+    ``id_source`` is ``"missing"`` (the file declares IDs and this item neither starts
+    with nor names one) or ``"inferred"`` (any other item without an ID of its own, in the
+    ``infer: verification`` mode). A ``missing`` item carries ``attrs.suggested_id`` when
+    ``suggester`` can propose one.
+    """
     normalized = tx.normalize_item_text(item.text)
     digest = tx.content_hash8(normalized)
     key = make_key("requirement", f"{block}.h{digest}")
-    if key in inferred:
+    if key in hashed:
         # Same text, same key: a second copy would conflict in the model (D37 keys by text).
         builder.diag(
             item.line,
             "warning",
             "req.duplicate_text",
-            f"verification item repeats the text of line {inferred[key]}; not inferred twice",
+            f"verification item repeats the text of line {hashed[key]}; not read twice",
         )
         return
-    inferred[key] = item.line
+    hashed[key] = item.line
+    attrs: dict[str, JSONValue] = {"id_source": id_source, "block": block_key}
+    if suggester is not None:
+        suggested = suggester.next()
+        if suggested is not None:
+            attrs["suggested_id"] = suggested
     builder.entities.append(
         RequirementEntity(
             key=key,
             name=_short_name(normalized),
             text=normalized or None,
             source=builder.prov(item.line),
-            attrs={"id_source": "inferred", "block": block_key},
+            attrs=attrs,
         )
     )
+
+
+def _mention_regex(id_regex: re.Pattern[str]) -> re.Pattern[str]:
+    """``id_regex`` anywhere in a text, as a whole word (``-`` counts as a word character).
+
+    A Verification item that names an ID anywhere (``1. Count load (`REQ-TIM-002`): ...``)
+    is tied to that requirement, so it is not reported as missing its ID.
+    """
+    return re.compile(rf"(?<![\w-])(?:{id_regex.pattern})(?![\w-])")
+
+
+_ID_NUMBER = re.compile(r"^(.*?)(\d+)$")
+
+
+class _IdSuggester:
+    """Proposes the next free requirement ID of a file, in line order.
+
+    From the file's declared IDs it takes the prefix family that fits ``<prefix><digits>``
+    (the most frequent prefix; ties go to the family with the higher number), keeps its
+    zero-padding width and proposes ``max + 1``, then ``max + 2``, ... on each call, so
+    suggestions within a file never collide. A suggestion that does not fully match the
+    block's ``id_regex`` is withheld (``None``).
+    """
+
+    def __init__(self, declared: Iterable[str], id_regex: re.Pattern[str]) -> None:
+        self._id_regex = id_regex
+        families: dict[str, list[tuple[int, int]]] = {}  # prefix -> [(number, width)]
+        for ident in declared:
+            match = _ID_NUMBER.match(ident)
+            if match:
+                digits = match.group(2)
+                families.setdefault(match.group(1), []).append((int(digits), len(digits)))
+        self._prefix: str | None = None
+        self._next = 0
+        self._width = 0
+        if families:
+            prefix, members = max(
+                families.items(), key=lambda kv: (len(kv[1]), max(n for n, _ in kv[1]))
+            )
+            self._prefix = prefix
+            self._next = max(n for n, _ in members) + 1
+            self._width = max(w for _, w in members)
+
+    def next(self) -> str | None:
+        """The next suggested ID, or ``None`` when no valid one can be proposed."""
+        if self._prefix is None:
+            return None
+        candidate = f"{self._prefix}{self._next:0{self._width}d}"
+        self._next += 1
+        return candidate if self._id_regex.fullmatch(candidate) else None
 
 
 def _requirement_text(full_text: str, token: str) -> str:

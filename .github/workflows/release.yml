@@ -77,6 +77,8 @@ jobs:
   smoke-testpypi:
     needs: [build, publish-testpypi]
     runs-on: ubuntu-latest
+    # Installs from the public TestPyPI index and checks out nothing: it needs no token.
+    permissions: {}
     steps:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:

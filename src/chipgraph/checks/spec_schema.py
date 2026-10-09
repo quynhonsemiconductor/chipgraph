@@ -7,7 +7,12 @@ ingest` built (DESIGN.md 4.4 "Schema", 4.8 layer 1):
 - a field whose bits fall outside its register's width (32 when the width is unknown),
   or overlap another field of the same register, or have `msb < lsb`;
 - a spec port with no direction, or no width;
-- a requirement with empty text.
+- a requirement with empty text;
+- `requirement.missing_id`: in a MAS file that declares at least one requirement ID, a
+  top-level numbered item of its Verification section (`requirements.infer_heading`) that
+  carries no ID (the extractor records it with `attrs.id_source = "missing"`). The issue
+  points at the item's line and, when one can be proposed, names the next free ID of the
+  file (`attrs.suggested_id`). See docs/REQUIREMENT_IDS.md.
 
 Scope: with a `--block` (D38 IP block), only entities of that block (or its instances)
 are checked; without one, the whole model is checked.
@@ -227,6 +232,21 @@ def _requirement_issues(model: DesignModel, scope: set[str] | None) -> list[Issu
         assert isinstance(req, RequirementEntity)
         if scope is not None and not _requirement_in_scope(req, scope):
             continue
+        if req.attrs.get("id_source") == "missing":
+            file, line = _prov(req)
+            suggested = req.attrs.get("suggested_id")
+            hint = f" Suggested next ID: {suggested}" if isinstance(suggested, str) else ""
+            issues.append(
+                Issue(
+                    file=file,
+                    line=line,
+                    rule="requirement.missing_id",
+                    severity="error",
+                    msg=(
+                        f"Verification item has no ID; the other items of this file have one.{hint}"
+                    ),
+                )
+            )
         if req.text is None or not req.text.strip():
             file, line = _prov(req)
             issues.append(
@@ -246,8 +266,8 @@ def _requirement_in_scope(req: RequirementEntity, scope: set[str]) -> bool:
     block = _entity_block(req)
     if block is not None:
         return block in scope
-    # A requirement key is `requirement:<block>.h<hash>` (inferred, D37) or
-    # `requirement:<ID>` (declared). Only the inferred form carries a block; a declared
+    # A requirement key is `requirement:<block>.h<hash>` (inferred or missing, D37) or
+    # `requirement:<ID>` (declared). Only the hashed form carries a block; a declared
     # ID that names no block is left to a whole-model run.
     _, _, rest = req.key.partition(":")
     head = rest.split(".", 1)[0]
