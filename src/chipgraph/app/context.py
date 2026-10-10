@@ -13,7 +13,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from chipgraph.adapters.review.file import FileReview
+from chipgraph.adapters.review.file import FileReview, ReviewError
+from chipgraph.adapters.review.github import GitHubReview
 from chipgraph.app.errors import AppError
 from chipgraph.core.config.errors import ConfigError
 from chipgraph.core.config.loader import ResolvedProfile
@@ -60,6 +61,9 @@ class AppContext:
     gates: GateEvaluator
     backend: LocalBackend | None = None
     local_plugins: tuple[LocalPluginRecord, ...] = ()
+    pr_review: GitHubReview | None = None
+    """The PR review adapter when the profile selects `review: {use: github}`; `review`
+    stays the `file` adapter, which keeps waivers, baselines and light gates."""
 
     @property
     def profile(self) -> Profile | None:
@@ -108,6 +112,14 @@ class AppContext:
         review = FileReview(layout.decisions_dir)
         gates = GateEvaluator(review, store)
 
+        pr_review: GitHubReview | None = None
+        review_cfg = resolved.profile.review if resolved is not None else None
+        if review_cfg is not None and review_cfg.use == "github":
+            try:
+                pr_review = GitHubReview.from_config(review_cfg, state_dir=layout.state_dir)
+            except ReviewError as exc:
+                raise AppError(f"review: {exc}") from exc
+
         return cls(
             root=root,
             resolved=resolved,
@@ -118,6 +130,7 @@ class AppContext:
             gates=gates,
             backend=backend,
             local_plugins=local_plugins,
+            pr_review=pr_review,
         )
 
     @staticmethod

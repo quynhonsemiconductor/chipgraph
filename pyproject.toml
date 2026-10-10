@@ -68,6 +68,7 @@ anthropic-compatible = "chipgraph.adapters.llm.anthropic:anthropic_compatible"
 
 [project.entry-points."chipgraph.adapters.review"]
 file = "chipgraph.adapters.review.file:FileReview"
+github = "chipgraph.adapters.review.github:GitHubReview"
 
 [project.entry-points."chipgraph.adapters.extractor"]
 pyslang = "chipgraph.adapters.tool.pyslang:PyslangExtractor"
