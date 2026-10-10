@@ -462,6 +462,18 @@ class ResolvedProfile:
                     ),
                 )
             )
+        max_parallel = self.profile.fanout.max_parallel
+        cpus = os.cpu_count()
+        if max_parallel is not None and cpus is not None and max_parallel > cpus:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key="fanout.max_parallel",
+                    message=(
+                        f"{max_parallel} branches at once is more than this machine's {cpus} CPUs"
+                    ),
+                )
+            )
 
         for index, plugin in enumerate(self.profile.plugins):
             issues.append(
