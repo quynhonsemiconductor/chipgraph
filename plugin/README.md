@@ -114,21 +114,40 @@ existing `.chipgraph.yml` without `force=true`. The command prints the preview, 
 `claude -p`, which cannot ask). Then: `chipgraph config check`, `chipgraph doctor`,
 `chipgraph ingest`.
 
-### `/chipgraph:run [target]` (M1-11)
+### `/chipgraph:run [target]` (M1-11, M2-02b)
 
 The build loop. `next_task` → one role subagent per task, all in parallel → `submit` each
-→ repeat until `done` or `waiting`. The main session never writes files itself.
+→ repeat until `done`, or until the engine stops (`stopped: true`), at most 12 rounds.
+The main session never writes files itself, never starts more subagents than the engine
+hands out, and never retries a stopped task by hand: the stop conditions are written
+into the command's prompt.
 
 - `next_task(target)`: runs the build; every agent rule it reaches becomes a task; it
-  hands out the ready ones (each with `task_id`, `agent`, `model`, `outputs`), or says
-  `done`, or `waiting` (a gate to approve, a question for a person, a failure).
+  hands out the ready ones (each with `task_id`, `agent`, `model`, `outputs`, `try`,
+  `tries_left`), or says `done`, or `stopped` with `waiting`, the `blocked` entries (a
+  gate to approve, a question for a person, a failure; a stopped task with its `label`,
+  `status` and `handoff`; every rule that depends on one, with `blocked_by`) and the
+  run's `handoff` (HANDOFF.md). A task is never handed out more than `tries +
+  max_infra_retries` (2) times in one budget cycle, nor once it is `budget_exhausted`
+  or `needs_human`.
 - `get_context(task_id)`: the task's inputs as text, its outputs (the only files it may
-  write), role, skills (with their text, `skill_texts`) and checks. Refused when an input
-  is labelled `nda` (every model here is a cloud model), or is of a kind the task's role
-  must not see (`rtl` for `tb-author`).
-- `submit(task_id, result)`: the engine checks that only the task's outputs changed
-  since it was handed out, that they exist, and runs the rule's checks; then accepts,
-  or rejects with reasons and counts a try (`budget.tries`).
+  write), role, skills (with their text, `skill_texts`) and checks; after a rejection,
+  `previous_rejection` holds the redo instruction (the failure's label, each failing
+  check and its issues as `file:line`) and `previous_label` the label. Refused when an
+  input is labelled `nda` (every model here is a cloud model), or is of a kind the
+  task's role must not see (`rtl` for `tb-author`).
+- `submit(task_id, result)`: the engine checks the attempt at once: only the task's
+  outputs changed since it was handed out, they exist and are not empty, and the rule's
+  checks pass. The answer's `status` is `accepted`, `rejected`, `budget_exhausted` or
+  `needs_human`, with the failure's `label` (`context`, `constraint`, `verification`,
+  `planning`, `infra`), `failed_checks` (issues with `file:line`), `redo` (the bounded
+  redo text), `next_tier`/`next_model` (the role's escalation tier after the first failed
+  try), `tries_left`, `budget` (`used`, `allowed`, `infra_retries`), and, when the task
+  stopped, `stop_reason` (`tries`, `stagnation`: the same outputs and failures twice in
+  a row, `infra`, `planning`) and `handoff`. An `infra` failure (a check that errored, a
+  tool that cannot run) uses no try, at most 2 times. When the budget is gone the
+  engine journals the stop (`rule_fail` with the label) and writes HANDOFF.md at once;
+  the task stays stopped until an input changes or `chipgraph rewind <task>`.
   A review task (`"reply": "review"`, agent `chipgraph:critic`, M2-09) writes no file:
   the main session passes the critic's JSON review as `result.review`; the engine
   validates it against the diff the critic was shown and writes the report itself.
@@ -154,7 +173,9 @@ the spec and interface only, and the guard refuses it any read (below).
 `/chipgraph:run` removes only `Bash, NotebookEdit, Skill, WebFetch, WebSearch`: its
 subagents need the file tools, and the write guard bounds them. Acceptance runs on
 tinysoc: `MAIN_MODEL=opus docs/runtime-claude-code/run.sh /tmp/cg-cc-opus`, and for the
-roles `docs/roles-claude-code/run.sh /tmp/cg-roles-haiku`.
+roles `docs/roles-claude-code/run.sh /tmp/cg-roles-haiku`, and for the agent loop (one
+task fixed on its second try, one that ends in HANDOFF) `docs/agent-loop-claude-code/run.sh
+/tmp/cg-loop-haiku`.
 
 ## MCP server
 

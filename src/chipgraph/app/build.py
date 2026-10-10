@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from importlib import resources
 from pathlib import Path
 
-from chipgraph.adapters.runtime.claude_code import ClaudeCodeRuntime
+from chipgraph.adapters.runtime.claude_code import ClaudeCodeExecutor, ClaudeCodeRuntime
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
@@ -22,7 +22,7 @@ from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules
 from chipgraph.core.engine.scheduler import AgentStub, Executor, Scheduler
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
-from chipgraph.core.runtime import AgentRuntimeExecutor, TaskQueue
+from chipgraph.core.runtime import TaskQueue
 from chipgraph.core.runtime.roles import RoleError, check_agent_rules
 from chipgraph.core.state.trace import Tracer
 
@@ -107,7 +107,7 @@ def agent_executor(ctx: AppContext) -> Executor:
     """
     profile = ctx.require_profile().profile
     if profile.runtime == "claude-code":
-        return AgentRuntimeExecutor(ClaudeCodeRuntime(TaskQueue(ctx.layout), ctx.store))
+        return ClaudeCodeExecutor(ClaudeCodeRuntime(TaskQueue(ctx.layout), ctx.store))
     if profile.runtime in ctx.registry.names("runtime"):
         runtime = ctx.registry.get("runtime", profile.runtime)
         return AgentRuleExecutor(runtime, store=ctx.store, layout=ctx.layout)
