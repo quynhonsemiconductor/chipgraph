@@ -54,6 +54,15 @@ class StateLayout:
         return self.state_dir / "cache"
 
     @property
+    def tmp_dir(self) -> Path:
+        """Scratch space for disposable work (e.g. fan-out workspaces): ``<state>/tmp``.
+
+        Under the local backend this is inside the repo's working tree, so callers that
+        must never write there (fan-out) use the system temp directory instead.
+        """
+        return self.state_dir / "tmp"
+
+    @property
     def decisions_dir(self) -> Path:
         """Human-auditable gate/waiver decisions: ``<root>/.chipgraph/decisions``.
 
