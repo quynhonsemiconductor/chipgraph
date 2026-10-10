@@ -16,6 +16,7 @@ from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
 from chipgraph.app.executors import HumanExecutor, RunExecutor
 from chipgraph.core.contracts import RuleSpec
+from chipgraph.core.engine.agent_rule import AgentRuleExecutor
 from chipgraph.core.engine.graph import ForeachResolver, GraphError, build_graph
 from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules
 from chipgraph.core.engine.scheduler import AgentStub, Executor, Scheduler
@@ -98,11 +99,18 @@ def agent_executor(ctx: AppContext) -> Executor:
     """The executor for `kind: agent` rules, chosen by the profile's `runtime` (D35).
 
     `claude-code` queues each agent task for the user's Claude Code session (the plugin
-    command runs it and hands it back over MCP). The API runtimes arrive in M1-11b;
-    until then their agent rules fail with the scheduler's `AgentStub` message.
+    command runs it and hands it back over MCP). Any other runtime runs in-process: when
+    an `AgentRuntime` plugin is registered under the profile's runtime name, its agent
+    rules run in the engine's loop (`AgentRuleExecutor`: write, check at once, triage,
+    retry within the budget, DESIGN.md 5.2). No such plugin ships yet (the API runtimes
+    arrive later), so without one agent rules fail with the scheduler's `AgentStub`.
     """
-    if ctx.require_profile().profile.runtime == "claude-code":
+    profile = ctx.require_profile().profile
+    if profile.runtime == "claude-code":
         return AgentRuntimeExecutor(ClaudeCodeRuntime(TaskQueue(ctx.layout), ctx.store))
+    if profile.runtime in ctx.registry.names("runtime"):
+        runtime = ctx.registry.get("runtime", profile.runtime)
+        return AgentRuleExecutor(runtime, store=ctx.store, layout=ctx.layout)
     return AgentStub()
 
 
