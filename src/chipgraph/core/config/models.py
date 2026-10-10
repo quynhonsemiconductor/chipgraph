@@ -8,6 +8,7 @@ conventions (layout, naming, templates, checks).
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Literal, Self
 
@@ -197,6 +198,38 @@ class DecisionsCfg(BaseModel):
     store: Literal["repo", "state"] = Field(
         default="repo", description="Where gate/waiver decisions are stored."
     )
+
+
+FANOUT_DEFAULT_MAX_PARALLEL = 4
+"""The most fan-out branches run at once when the profile does not say (capped by CPUs)."""
+
+
+class FanoutCfg(BaseModel):
+    """How a fan-out runs its branches (DESIGN 5.3): how many at once, how long each may take.
+
+    `max_parallel` unset means `min(4, cpu count)`; a profile sets it lower for an API rate
+    limit or an EDA license count. `branch_timeout_s` unset means no limit.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_parallel: int | None = Field(
+        default=None,
+        ge=1,
+        description="Branches run at once; unset means min(4, cpu count).",
+    )
+    branch_timeout_s: float | None = Field(
+        default=None,
+        gt=0,
+        description="Seconds a branch may run before it is stopped; unset means no limit.",
+    )
+
+    def effective_max_parallel(self, cpu_count: int | None = None) -> int:
+        """`max_parallel`, or `min(4, cpu_count)` (the machine's CPUs when not given)."""
+        if self.max_parallel is not None:
+            return self.max_parallel
+        cpus = cpu_count if cpu_count is not None else (os.cpu_count() or 1)
+        return max(1, min(FANOUT_DEFAULT_MAX_PARALLEL, cpus))
 
 
 DecideTier = Literal["small", "large"]
@@ -518,6 +551,10 @@ class Profile(BaseModel):
     decide: DecideCfg = Field(
         default_factory=DecideCfg,
         description="Thresholds of the fast decision layer decide(): rule, small, large model.",
+    )
+    fanout: FanoutCfg = Field(
+        default_factory=FanoutCfg,
+        description="Fan-out limits: branches at once, time per branch (DESIGN 5.3).",
     )
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Glob pattern to path-specific exception rule."
