@@ -24,6 +24,10 @@ Payload keys relied on (as written by ``Scheduler._process_instance``/``_execute
   ids from an optional ``payload["blocked"]`` list on the last ``run_stop`` event if present,
   and otherwise reports no blocked instances. This is forward-compatible with the scheduler
   later being extended to record that list; it is not a change to the scheduler itself.
+
+A HANDOFF.md is a snapshot of the run that wrote it. When an agent task stops, the file is
+written at once, for the run that dispatched the task's last try; a task accepted after that
+still shows as waiting there. The next ``next_task`` or ``build`` writes its own, accurate one.
 """
 
 from __future__ import annotations
@@ -57,7 +61,9 @@ _AGENT_NEXT_STEP = {
         "`chipgraph build {target}`"
     ),
     "infra": (
-        "check the tool or connection (`chipgraph doctor`), then `chipgraph resume {run_id}`"
+        "check the tool or connection (`chipgraph doctor`), then `chipgraph rewind {instance}` "
+        "and `chipgraph build {target}`: the stop is remembered until the instance is rewound "
+        "or an input changes, so `resume` would not run it again"
     ),
     "exhausted": (
         "read the last failures of `{instance}`; fix the cause (its inputs, the rule or "
