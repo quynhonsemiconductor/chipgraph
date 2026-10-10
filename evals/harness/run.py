@@ -14,6 +14,7 @@ from typing import Any
 
 from . import report as report_mod
 from .project import copy_tinysoc, dev_plugin
+from .review import ClaudeCodeReviewRuntime, FakeReviewRuntime, enable_review
 from .runtimes import (
     RUNTIMES,
     ClaudeCodeRuntime,
@@ -51,8 +52,9 @@ class EvalOptions:
     time_limit_s: float = DEFAULT_TIME_LIMIT_S
     only: tuple[str, ...] = ()
     fake_overrides: Mapping[str, Any] = field(default_factory=dict)
-    """`fake` runtime only: scripted replies by id (an ask answer object, a triage label)
-    instead of the correct ones, so a test can make the run fail on purpose."""
+    """`fake` runtime only: scripted replies by id (an ask answer object, a triage label,
+    fields of a review reply) instead of the correct ones, so a test can make the run
+    fail on purpose."""
 
 
 @dataclass(frozen=True)
@@ -141,11 +143,12 @@ def run_suite(
             raise EvalError("runtime claude-code needs the `claude` CLI on PATH")
         env, auth = claude_auth(environ)
         models = {"main": options.main_model}
-        models.update(
-            {"asker": "haiku"}
-            if suite.kind == "ask"
-            else {"small": options.small_model, "large": options.large_model}
-        )
+        if suite.kind == "ask":
+            models["asker"] = "haiku"
+        elif suite.kind == "review":
+            models["critic"] = options.large_model
+        else:
+            models.update(small=options.small_model, large=options.large_model)
         info.update(
             models=models,
             auth=auth,
@@ -162,13 +165,38 @@ def run_suite(
         tiers = None
         if options.runtime == "claude-code" and suite.kind == "triage":
             tiers = {"small": options.small_model, "large": options.large_model}
+        elif options.runtime == "claude-code" and suite.kind == "review":
+            tiers = {"large": options.large_model}
         project = copy_tinysoc(work / "tinysoc", suite, tiers=tiers)
         runtime: Runtime
+        if suite.kind == "review":
+            enable_review(project)
+            (work / "samples").mkdir()
         if options.runtime == "fake":
             if suite.kind == "ask":
                 runtime = FakeAskRuntime(project, options.fake_overrides)
+            elif suite.kind == "review":
+                runtime = FakeReviewRuntime(
+                    project, work / "samples", suite, options.fake_overrides
+                )
             else:
                 runtime = FakeTriageRuntime(project, suite, options.fake_overrides)
+        elif suite.kind == "review":
+            assert claude is not None
+            streams_dir = out / "streams"
+            streams_dir.mkdir(exist_ok=True)
+            runtime = ClaudeCodeReviewRuntime(
+                suite,
+                base=project,
+                work=work / "samples",
+                plugin_dir=dev_plugin(work / "plugin"),
+                streams_dir=streams_dir,
+                main_model=options.main_model,
+                spend=Spend(options.budget_usd, options.time_limit_s),
+                claude=claude,
+                env=env,
+                progress=progress,
+            )
         else:
             assert claude is not None
             streams_dir = out / "streams"

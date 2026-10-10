@@ -1,4 +1,4 @@
-"""JSON Schema files for the role and skill files, under `schemas/roles/`.
+"""JSON Schema files for the role and skill files and the review reply, under `schemas/roles/`.
 
     python -m chipgraph.core.runtime.roles.schema [--check] [--out DIR]
 
@@ -12,10 +12,11 @@ import json
 import sys
 from pathlib import Path
 
+from chipgraph.core.runtime.roles.review import ReviewReport
 from chipgraph.core.runtime.roles.skills import SkillSpec
 from chipgraph.core.runtime.roles.spec import RoleSpec
 
-SCHEMA_MODELS = (RoleSpec, SkillSpec)
+SCHEMA_MODELS = (RoleSpec, SkillSpec, ReviewReport)
 """The models whose schemas are committed, as `<Model>.schema.json`."""
 
 

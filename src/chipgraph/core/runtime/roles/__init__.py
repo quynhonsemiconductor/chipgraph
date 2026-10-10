@@ -6,6 +6,8 @@
 - `SkillSpec`, `load_skills` (`skills`): skills the packs provide, checked per role.
 - `policy`: the tool table applied to rules (`check_agent_rules`), to a task's model
   tiers (`model_ladder`) and to what its agent may read (`denied_reads`).
+- `ReviewReport`, `review_problems` (`review`): the structured reply of a role that
+  writes no files (the Critic), from which the engine writes the task's output.
 
 Generic: no harness, tool or project names. A runtime maps the abstract capabilities to
 its own tools (runtime `claude-code`: `chipgraph.adapters.runtime.claude_code.agents`).
@@ -21,6 +23,14 @@ from chipgraph.core.runtime.roles.policy import (
     static_prefix,
 )
 from chipgraph.core.runtime.roles.registry import find_role, get_role, list_roles, roles_dir
+from chipgraph.core.runtime.roles.review import (
+    ReviewComment,
+    ReviewReport,
+    ReviewScope,
+    diff_hunks,
+    parse_review,
+    review_problems,
+)
 from chipgraph.core.runtime.roles.skills import (
     SkillError,
     SkillId,
@@ -46,6 +56,9 @@ __all__ = [
     "Capability",
     "LayoutValue",
     "ReadPolicy",
+    "ReviewComment",
+    "ReviewReport",
+    "ReviewScope",
     "RoleError",
     "RoleId",
     "RoleSpec",
@@ -57,14 +70,17 @@ __all__ = [
     "check_agent_rules",
     "covers_denied",
     "denied_reads",
+    "diff_hunks",
     "find_role",
     "get_role",
     "list_roles",
     "load_skills",
     "model_ladder",
+    "parse_review",
     "parse_role_file",
     "parse_skill_file",
     "path_denied",
+    "review_problems",
     "roles_dir",
     "split_frontmatter",
     "static_prefix",

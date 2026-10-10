@@ -45,6 +45,10 @@ def runtime_solver(suite: Suite, runtime: Runtime, items: dict[str, Any]) -> Cal
             state.output.completion = run.note or "no answer"
         elif suite.kind == "ask":
             state.output.completion = str(run.answer.get("answer", ""))
+        elif suite.kind == "review":
+            review = run.answer.get("review") or {}
+            comments = len(review.get("comments") or [])
+            state.output.completion = f"{review.get('verdict', 'no review')}: {comments} comment(s)"
         else:
             state.output.completion = str(run.answer.get("label"))
         return state

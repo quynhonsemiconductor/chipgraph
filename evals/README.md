@@ -14,9 +14,10 @@ chipgraph eval SUITE [--runtime fake|claude-code] [--main-model haiku]
 ```
 
 Suites: `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`),
-`triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`) and `triage-holdout2`
-(`triage/holdout2.yml` and `triage/logs-holdout2/`). The holdouts have the schema of
-`faults.yml`; a suite whose file does not exist reports `NO DATA` and exits 0.
+`triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`), `triage-holdout2`
+(`triage/holdout2.yml` and `triage/logs-holdout2/`) and `review` (`review/defects.yml`,
+below). The holdouts have the schema of `faults.yml`; a suite whose file does not exist
+reports `NO DATA` and exits 0.
 
 It is built on [Inspect AI](https://inspect.aisi.org.uk/) (`inspect-ai`, pinned in the
 `evals` extra and the dev group): `harness/` makes one Inspect `Task` per suite, its
@@ -217,3 +218,35 @@ it, it is spent too.
   holdout` also works) and grades it. Report its result with the run; never commit it.
 - `SET=holdout2 docs/triage-claude-code/run.sh /tmp/cg-triage-holdout2` and
   `chipgraph eval triage-holdout2 --runtime claude-code` run it with a real model.
+
+## `review/`: the Critic review of planted defects (task M2-09)
+
+- `review/defects.yml`: 20 sample changes to tinysoc's RTL. 16 plant one defect each, in
+  9 classes (reset value, width, counter off by one, register offset or decode, bit
+  order, missing REQ behaviour, unintended latch, hard-coded constant, spec mismatch),
+  with the REQ or spec line it breaks and the `file:line` a correct review points at; 4
+  are clean (comment only, formatting, two behaviour-preserving rewrites), to count
+  false alarms. `tests/evals/test_eval_review.py` checks that every edit still applies
+  to `examples/tinysoc` and lands on its line.
+- `review/grade.py ANSWERS.jsonl [--json]`: the deterministic grader. One answer per
+  line, `{"id", "review"}` (the report the engine wrote, or null). A defect is caught
+  when a comment is on its file within 3 lines and has its class (or an accepted
+  alternative) or its REQ id; a clean sample is a false alarm when its review has a
+  `blocker` or `major` comment. It reports recall, recall by class, false alarms and a
+  precision proxy (the share of blocker/major comments that point at a planted defect).
+  Pass: recall >= 70 % (at least 12 of 16) and at most 1 false alarm of 4.
+
+`chipgraph eval review` runs each sample in its own committed tinysoc copy with the
+`digital-rtl` pack on and the change left in the working tree, so the rule
+`digital-rtl/review[block=<block>]` diffs it against HEAD. `fake`: the real
+`next_task`, `get_context` (diff, spec and model slices) and `submit` (validation, the
+engine writing `reports/review/<block>.json`) with a scripted Critic reply that names the
+planted defect. `claude-code`: one `claude -p "/chipgraph:run <target>"` per sample; the
+main session on `--main-model` (default haiku), the `chipgraph:critic` subagent on the
+`large` tier, `--large-model` (default opus). Not measured yet: expect an opus critic to
+cost more per sample than triage, so raise `--budget-usd` for the 20 samples:
+
+```bash
+uv run chipgraph eval review
+uv run chipgraph eval review --runtime claude-code --budget-usd 10 --out /tmp/cg-eval-review
+```

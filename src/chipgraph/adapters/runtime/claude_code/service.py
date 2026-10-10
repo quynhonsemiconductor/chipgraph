@@ -12,6 +12,11 @@ Code session::
                         is one of the task's outputs, the outputs exist, the rule's
                         checks pass; accept, or reject and count an attempt
 
+A role that writes no files but has `engine_writes` (the Critic) reviews a change
+instead (`review`): its context holds the diff, the spec slice and the model slice; its
+reply is a JSON review the main session passes as `result.review`; `submit` validates it
+and the engine itself writes it as the task's one output.
+
 The engine decides everything (P3): which task, which role, which files, which checks.
 Claude Code only runs the model. Each role's tool table (`chipgraph.core.runtime.roles`)
 picks the subagent (`chipgraph:<role>`), its model per attempt (the role's tier, then its
@@ -36,6 +41,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from chipgraph.adapters.runtime.claude_code import review as review_mod
 from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
 from chipgraph.app.build import make_scheduler, pack_search_paths
@@ -58,6 +64,7 @@ from chipgraph.core.runtime import (
     task_for,
 )
 from chipgraph.core.runtime.roles import (
+    ReviewReport,
     RoleSpec,
     SkillError,
     SkillSet,
@@ -65,7 +72,9 @@ from chipgraph.core.runtime.roles import (
     denied_reads,
     find_role,
     load_skills,
+    parse_review,
     path_denied,
+    review_problems,
 )
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.artifacts import hash_file
@@ -94,6 +103,13 @@ class SubmitReport(BaseModel):
     assumptions: tuple[str, ...] = Field(default=(), description="Assumptions the agent made.")
     open_questions: tuple[str, ...] = Field(
         default=(), description="Questions for a person; required when status is needs_human."
+    )
+    review: dict[str, Any] | str | None = Field(
+        default=None,
+        description=(
+            "Review tasks only (agent chipgraph:critic): the subagent's JSON review, as an "
+            "object or its text. The engine validates it and writes it as the task's output."
+        ),
     )
 
 
@@ -255,6 +271,19 @@ def _engine_outputs(graph: BuildGraph) -> set[str]:
 
 
 def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> dict[str, Any]:
+    if review_mod.is_review_role(find_role(record.role)):
+        prompt = (
+            f"You are doing chipgraph review task {record.task_id!r}. First call get_context "
+            f"with task_id={record.task_id!r}; write no file; finish with the review as one "
+            "JSON object."
+        )
+        extra: dict[str, Any] = {"reply": "review"}
+    else:
+        prompt = (
+            f"You are doing chipgraph task {record.task_id!r}. First call get_context with "
+            f"task_id={record.task_id!r}, then write only the files in its outputs."
+        )
+        extra = {}
     return {
         "task_id": record.task_id,
         "rule": record.rule_id,
@@ -268,10 +297,8 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
         "tries": record.tries,
         "tool_calls": queue.tool_calls(record.task_id),
         "tool_call_cap": record.tool_call_cap,
-        "prompt": (
-            f"You are doing chipgraph task {record.task_id!r}. First call get_context with "
-            f"task_id={record.task_id!r}, then write only the files in its outputs."
-        ),
+        "prompt": prompt,
+        **extra,
     }
 
 
@@ -439,6 +466,17 @@ def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleIns
 
 
 def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec, ...]) -> str:
+    if review_mod.is_review_role(role):
+        follow = " Follow the instructions in `skill_texts`." if skills else ""
+        return (
+            "Review the change in `review.diff` against `review.spec` and `review.model`. "
+            "You write no file and have no shell: reply with one JSON object that follows "
+            "`review.reply_schema`, with `target`, `base` and `head` as in `review`. Every "
+            "comment is on a file:line inside the diff and quotes its evidence as "
+            f"'path:line text'; no comments means no findings.{follow} On submit the engine "
+            "checks the review against this diff and writes it to `outputs[0]`; an invalid "
+            "review is rejected and uses a try."
+        )
     reading = (
         "You may read other project files for style."
         if role is None or role.can_read_files
@@ -518,6 +556,19 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
             entry["missing"] = True
         inputs.append(entry)
 
+    review: dict[str, Any] | None = None
+    if review_mod.is_review_role(role):
+        scope, review = await review_mod.build_review(ctx, graph, rule, instance)
+        nda_diff = sorted(p for p in scope.files if _is_nda(ctx, p, "public"))
+        if nda_diff:
+            question = (
+                f"task {task_id!r} reviews files labelled 'nda' ({', '.join(nda_diff)}); "
+                "runtime claude-code sends context to a cloud model, so it is refused. Run "
+                "the review with a local runtime, or have a person do it."
+            )
+            raise _refuse(ctx, queue, record, question, {"nda": nda_diff})
+        review_mod.save_scope(ctx, task_id, record.dispatches, scope)
+
     _emit(
         ctx,
         record.run_id,
@@ -526,7 +577,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         {"phase": "context", "attempt": record.dispatches},
     )
     root = ctx.root.resolve()
-    return {
+    answer: dict[str, Any] = {
         "task_id": task_id,
         "rule": rule.id,
         "description": rule.description,
@@ -544,6 +595,9 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "inputs": inputs,
         "instructions": _instructions(role, rule, skills),
     }
+    if review is not None:
+        answer["review"] = review
+    return answer
 
 
 # --- submit -----------------------------------------------------------------------------
@@ -552,6 +606,37 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
 def _check_reason(result: CheckResult) -> str:
     msgs = "; ".join(i.msg for i in result.issues[:5]) or result.log_tail[-500:]
     return f"check {result.check_id} {result.status}: {msgs}".strip()
+
+
+async def _take_review(
+    ctx: AppContext,
+    graph: BuildGraph,
+    rule: RuleSpec,
+    instance: RuleInstance,
+    record: AgentTaskRecord,
+    report: SubmitReport,
+) -> tuple[ReviewReport | None, list[str]]:
+    """Validate a review task's reply and write it as the task's output (the engine does).
+
+    Returns the review, or `None` and the reasons it is refused (nothing is written).
+    """
+    if report.review is None:
+        return None, [
+            "review: a review task is submitted with `review`, the subagent's JSON review "
+            "(see review.reply_schema in its context)"
+        ]
+    parsed, problems = parse_review(report.review)
+    if parsed is not None:
+        scope = review_mod.load_scope(ctx, record.task_id, record.dispatches)
+        if scope is None:  # get_context was not called for this dispatch
+            scope = await review_mod.review_scope(ctx, graph, rule, instance)
+        problems = review_problems(parsed, scope)
+    if parsed is None or problems:
+        return None, [f"review: {p}" for p in problems]
+    out = ctx.root / record.allowed_writes[0]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(parsed.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
+    return parsed, []
 
 
 async def submit(
@@ -563,6 +648,12 @@ async def submit(
     is missing, or one of the rule's checks fails. A rejection counts an attempt; the
     last try turns the task `budget_exhausted`. A report with `status: needs_human`
     hands the task to a person without using a try.
+
+    A review task (its role writes no files and has `engine_writes`) is submitted with
+    `report.review`: rejected when it is missing, not JSON, not a `ReviewReport`, or
+    invalid for the diff its context showed (`review_problems`); otherwise the engine
+    writes it as the task's one output and then runs the usual checks. A valid review
+    is accepted whatever its verdict: AI findings never block the build (DESIGN.md 4.8).
     """
     ctx.require_profile()
     _require_runtime(ctx)
@@ -573,6 +664,12 @@ async def submit(
         raise AppError(f"task {task_id!r} is {record.status}, not dispatched; call next_task")
     graph = _graph(ctx)
     rule, instance = _instance(graph, task_id)
+    reviewing = review_mod.is_review_role(find_role(record.role))
+    if report.review is not None and not reviewing:
+        raise AppError(
+            f"task {task_id!r} is not a review task (role {record.role!r}): submit it "
+            "without `review`"
+        )
 
     if report.status == "needs_human":
         if not report.open_questions:
@@ -598,6 +695,10 @@ async def submit(
 
     record = queue.mark_submitted(task_id)
     try:
+        review: ReviewReport | None = None
+        review_reasons: list[str] = []
+        if reviewing:
+            review, review_reasons = await _take_review(ctx, graph, rule, instance, record, report)
         allowed = set(record.allowed_writes)
         now = await snapshot(ctx, extra=record.allowed_writes)
         changed = _changed(queue.baseline(task_id), now)
@@ -613,15 +714,19 @@ async def submit(
         }
         engine = _engine_outputs(graph)
         outside = [p for p in changed if p not in allowed and p not in others and p not in engine]
-        missing = [p for p in record.allowed_writes if not (ctx.root / p).is_file()]
+        missing = (
+            []
+            if review_reasons
+            else [p for p in record.allowed_writes if not (ctx.root / p).is_file()]
+        )
 
         checks: list[CheckResult] = []
-        if not outside and not missing:
+        if not outside and not missing and not review_reasons:
             runner = ProfileCheckRunner(ctx)
             for check_id in rule.checks:
                 checks.append(await runner.run(check_id, instance))
 
-        reasons: list[str] = []
+        reasons: list[str] = list(review_reasons)
         if outside:
             reasons.append(f"changed files outside the task's outputs: {', '.join(outside)}")
         if missing:
@@ -651,21 +756,18 @@ async def submit(
 
     for check in checks:
         _emit(ctx, record.run_id, task_id, "check_result", check.model_dump(mode="json"))
-    _emit(
-        ctx,
-        record.run_id,
-        task_id,
-        "agent_turn",
-        {
-            "phase": "submit",
-            "status": record.status,
-            "attempt": record.dispatches,
-            "reasons": reasons,
-            "files_written": list(result.files_written),
-            "assumptions": list(report.assumptions),
-            "open_questions": list(report.open_questions),
-        },
-    )
+    payload: dict[str, Any] = {
+        "phase": "submit",
+        "status": record.status,
+        "attempt": record.dispatches,
+        "reasons": reasons,
+        "files_written": list(result.files_written),
+        "assumptions": list(report.assumptions),
+        "open_questions": list(report.open_questions),
+    }
+    if review is not None:
+        payload["review"] = {"verdict": review.verdict, "comments": len(review.comments)}
+    _emit(ctx, record.run_id, task_id, "agent_turn", payload)
     return _submit_answer(
         record, accepted=accepted, reasons=reasons, outside=outside, missing=missing, checks=checks
     )

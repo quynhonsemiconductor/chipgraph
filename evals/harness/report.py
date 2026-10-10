@@ -116,6 +116,19 @@ def markdown(summary: dict[str, Any]) -> str:
             f"- unanswerable: {metrics['said_unknown']}/{metrics['unanswerable']} said unknown; "
             f"invented: {metrics['invented']} (needs <= {th['max_invented']})",
         ]
+    elif "recall" in metrics:
+        th = metrics["thresholds"]
+        by_class = ", ".join(
+            f"{k} {v['caught']}/{v['total']}" for k, v in metrics["by_class"].items()
+        )
+        lines += [
+            f"- planted defects caught: {metrics['caught']}/{metrics['defects']} "
+            f"(recall {_pct(metrics['recall'])}; needs >= {_pct(th['min_recall'])})",
+            f"- false alarms: {metrics['false_alarms']}/{metrics['clean']} clean diffs "
+            f"(needs <= {th['max_false_alarms']}); precision proxy "
+            f"{_pct(metrics['precision_proxy'])}",
+            f"- by class: {by_class}",
+        ]
     else:
         lines.append(
             f"- accuracy: {metrics['correct']}/{metrics['total']} "

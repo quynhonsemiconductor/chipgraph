@@ -76,6 +76,53 @@ def test_triage_and_critic_cannot_run_agent_rules() -> None:
         _check(_agent("p/c", "critic", [], ["a.txt"]))
 
 
+# --- M2-09: a critic rule with the one output the engine writes from its reply ----------
+
+
+def test_a_critic_rule_with_one_engine_written_report_passes() -> None:
+    _check(_agent("p/review", "critic", [{"model": "block/a"}], ["reports/review/a.json"]))
+
+
+def test_the_review_rule_of_the_digital_rtl_pack_passes() -> None:
+    from chipgraph.app.build import builtin_packs_dir
+    from chipgraph.core.engine.rules import load_pack_rules
+    from chipgraph.core.plugin_api.pack import discover_packs
+
+    packs_dir = builtin_packs_dir()
+    assert packs_dir is not None
+    rules = load_pack_rules(discover_packs([packs_dir])["digital-rtl"])
+    blocks = StaticForeach({"blocks": [{"block": "timer"}, {"block": "gpio"}]})
+    graph = build_graph(rules, blocks)
+    check_agent_rules(graph.rules, graph.instances.values())
+    assert sorted(graph.instances) == [
+        "digital-rtl/review[block=gpio]",
+        "digital-rtl/review[block=timer]",
+    ]
+
+
+def test_a_critic_rule_that_wants_an_agent_written_output_is_rejected() -> None:
+    with pytest.raises(RoleError, match=r"'critic' writes no files.*'rtl/a\.sv' is a 'rtl'"):
+        _check(_agent("p/c", "critic", [], ["rtl/a.sv"]))
+    with pytest.raises(RoleError, match=r"'critic' writes no files.*'doc/review\.md' is a 'doc'"):
+        _check(_agent("p/c", "critic", [], ["doc/review.md"]))
+
+
+def test_a_critic_rule_with_two_outputs_is_rejected() -> None:
+    with pytest.raises(RoleError, match=r"exactly one output \(it has 2\)"):
+        _check(_agent("p/c", "critic", [], ["reports/a.json", "reports/b.json"]))
+
+
+def test_a_role_that_writes_nothing_without_engine_writes_is_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chipgraph.core.runtime.roles import policy
+
+    plain = get_role("critic").model_copy(update={"engine_writes": ()})
+    monkeypatch.setattr(policy, "find_role", lambda _: plain)
+    with pytest.raises(RoleError, match="writes no files, so it cannot produce"):
+        _check(_agent("p/c", "critic", [], ["reports/a.json"]))
+
+
 def test_plan_and_proposal_roles_write_one_file() -> None:
     with pytest.raises(RoleError, match=r"only its plan file.*has 2"):
         _check(_agent("p/plan", "planner", [], ["plan/a.md", "plan/b.md"]))

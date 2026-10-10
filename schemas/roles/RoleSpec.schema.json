@@ -76,6 +76,29 @@
       "title": "Dispatch",
       "type": "boolean"
     },
+    "engine_writes": {
+      "default": [],
+      "description": "For a role that writes no files (write_scope 'none'): the artifact kinds of the one output the engine writes from the role's structured reply. A rule of this role then declares exactly that one output; the role itself never writes it.",
+      "items": {
+        "enum": [
+          "spec",
+          "rtl",
+          "tb",
+          "sva",
+          "report",
+          "plan",
+          "model",
+          "doc",
+          "diagram",
+          "script",
+          "config",
+          "other"
+        ],
+        "type": "string"
+      },
+      "title": "Engine Writes",
+      "type": "array"
+    },
     "escalate_to": {
       "anyOf": [
         {

@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ReviewComment": {
+      "additionalProperties": false,
+      "description": "One finding: where it is, what is wrong, what it rests on, what to do.",
+      "properties": {
+        "category": {
+          "description": "What kind of problem, lower_snake_case (the review skill lists them).",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Category",
+          "type": "string"
+        },
+        "claim": {
+          "description": "What is wrong, in one or two sentences.",
+          "title": "Claim",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "What the claim rests on, quoted: 'path:line text' (a spec or code line), 'path:start-end text' or 'model:<key> text'. Mandatory.",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "file": {
+          "description": "Repo-relative file the comment is on.",
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique in the review, e.g. 'R1'.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "line": {
+          "description": "Line in the new version of `file`, inside the diff.",
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "req_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The requirement id the comment is about, if any.",
+          "title": "Req Id"
+        },
+        "severity": {
+          "description": "blocker | major (request changes), minor | nit.",
+          "enum": [
+            "blocker",
+            "major",
+            "minor",
+            "nit"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "suggestion": {
+          "default": "",
+          "description": "What to change, if known.",
+          "title": "Suggestion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "file",
+        "line",
+        "claim",
+        "evidence"
+      ],
+      "title": "ReviewComment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A review task's reply: what was reviewed, the comments, the verdict.",
+  "properties": {
+    "base": {
+      "description": "The base ref of the diff, as given.",
+      "minLength": 1,
+      "title": "Base",
+      "type": "string"
+    },
+    "comments": {
+      "default": [],
+      "description": "The findings; empty means no findings.",
+      "items": {
+        "$ref": "#/$defs/ReviewComment"
+      },
+      "title": "Comments",
+      "type": "array"
+    },
+    "head": {
+      "description": "The head ref of the diff, as given.",
+      "minLength": 1,
+      "title": "Head",
+      "type": "string"
+    },
+    "reviewed": {
+      "description": "Repo-relative files looked at; every file of the diff when no comments.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Reviewed",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "summary": {
+      "description": "One short paragraph: what changed and the verdict's reason.",
+      "title": "Summary",
+      "type": "string"
+    },
+    "target": {
+      "description": "What was reviewed (the block), as given.",
+      "minLength": 1,
+      "title": "Target",
+      "type": "string"
+    },
+    "verdict": {
+      "description": "approve, or changes_requested.",
+      "enum": [
+        "approve",
+        "changes_requested"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target",
+    "base",
+    "head",
+    "reviewed",
+    "summary",
+    "verdict"
+  ],
+  "title": "ReviewReport",
+  "type": "object"
+}

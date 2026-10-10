@@ -16,7 +16,7 @@ REPO = EVALS.parent
 TINYSOC = REPO / "examples" / "tinysoc"
 PLUGIN = REPO / "plugin"
 
-SuiteKind = Literal["ask", "triage"]
+SuiteKind = Literal["ask", "triage", "review"]
 
 
 def load_grader(kind: SuiteKind) -> ModuleType:
@@ -52,7 +52,7 @@ class Suite:
         return self.data.is_file()
 
     def items(self) -> list[Any]:
-        """The grader's items: `Question`s (ask) or `Sample`s (triage), in file order."""
+        """The grader's items: `Question`s (ask) or `Sample`s (triage, review), in file order."""
         if self.kind == "ask":
             return list(self.grader.load_questions(self.data))
         return list(self.grader.load_samples(self.data))
@@ -71,16 +71,22 @@ class Suite:
         return str(check) if check else None
 
     def prompt(self, item: Any) -> str:
-        """The command arguments for one item: the question, or `logs/<id>.log [check]`."""
+        """The command arguments for one item: the question, `logs/<id>.log [check]`, or
+        the review target (`digital-rtl/review[block=<block>]`)."""
         if self.kind == "ask":
             return str(item.question)
+        if self.kind == "review":
+            return str(item.target)
         check = self.check_id(item.id)
         return f"logs/{item.id}.log" + (f" {check}" if check else "")
 
     def target(self, item: Any) -> list[str]:
-        """What a correct answer holds: the expected citations (or `unknown`), the label."""
+        """What a correct answer holds: the expected citations (or `unknown`), the label,
+        or where the planted defect is (`clean` for a clean sample)."""
         if self.kind == "ask":
             return ["unknown"] if item.unknown else list(item.expected)
+        if self.kind == "review":
+            return ["clean"] if item.clean else [f"{item.at_file}:{item.at_line}"]
         return [str(item.label)]
 
 
@@ -111,6 +117,15 @@ SUITES: dict[str, Suite] = {
         EVALS / "triage" / "holdout2.yml",
         EVALS / "triage" / "logs-holdout2",
         description="/triage on the second held-out logs: >= 80 % correct",
+    ),
+    "review": Suite(
+        "review",
+        "review",
+        EVALS / "review" / "defects.yml",
+        description=(
+            "Critic review of tinysoc diffs with planted defects: recall >= 70 % "
+            "(>= 12 of 16), <= 1 false alarm on 4 clean diffs"
+        ),
     ),
 }
 """The suites `chipgraph eval` knows, by name."""

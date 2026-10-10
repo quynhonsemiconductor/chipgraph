@@ -1,10 +1,11 @@
 """The chipgraph evals framework (task M1-17), on Inspect AI, behind `chipgraph eval`.
 
 One Inspect `Task` per suite (`suites`): the dataset comes from the suite's YAML file
-(`ask/tinysoc.yml`, `triage/faults.yml`, `triage/holdout.yml`), the solver from the
-runtime, and the scorer is the suite's deterministic grader (`ask/grade.py`,
-`triage/grade.py`), unchanged: a sample's score is the grader's verdict on its answer,
-and the run's verdict is the grader's report on all of them.
+(`ask/tinysoc.yml`, `triage/faults.yml`, `triage/holdout.yml`, `review/defects.yml`), the
+solver from the runtime, and the scorer is the suite's deterministic grader
+(`ask/grade.py`, `triage/grade.py`, `review/grade.py`), unchanged: a sample's score is
+the grader's verdict on its answer, and the run's verdict is the grader's report on all
+of them.
 
 Runtimes (`runtimes`):
 
@@ -16,6 +17,9 @@ Runtimes (`runtimes`):
 - `claude-code`: one headless `claude -p "/chipgraph:<cmd> ..."` per sample, on a fresh
   tinysoc copy with the dev plugin (`claude_code`); a per-sample budget flag, a suite
   budget on the summed `total_cost_usd` and a suite time limit.
+
+The `review` suite (task M2-09) has its own runtimes (`review`): each sample is its own
+tinysoc copy with a planted change, reviewed by the rule `digital-rtl/review`.
 
 `run_suite` runs one suite and writes, in its output directory, the Inspect log
 (`logs/`), the answers in the graders' JSONL format (`answers.jsonl`) and a short summary
