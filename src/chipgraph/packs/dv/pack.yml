@@ -1,0 +1,14 @@
+schema_version: 1
+name: dv
+version: 0.1.0
+description: >-
+  Design verification (DESIGN.md 8.2): the rule `dv/tb_module`, a cocotb test for each
+  block written by the testbench Author from the spec and the interface only (never the
+  RTL), and its skill `dv/cocotb`. The interface comes from the Design Model, or from the
+  module's declaration only (`interface.py`, `declaration.py`); the `tb_static` check
+  reads the written test without a simulator.
+provides:
+  rules:
+    - rules
+  skills:
+    - skills/dv

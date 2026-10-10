@@ -1,0 +1,38 @@
+# The testbench of one block, written without seeing its RTL (DESIGN.md 5.1, 5.3 F1;
+# task M2-06).
+#
+# For each block a `tb-author` task writes a cocotb 2.1 test module from the block's spec
+# side of the Design Model (`block/{block}`: requirements with ids, registers and fields,
+# interrupts, clock and reset), the module's interface (`interface/{block}`: the spec's
+# ports, else the model's RTL ports, else the module's declaration only, read by the
+# engine with pyslang) and the block's spec documents (the profile layout's `spec`). It
+# never gets an rtl-kind input: the role's read policy denies `rtl`, the rule validator
+# refuses such an input, `get_context` refuses to serve one, and the guard refuses reads
+# of the RTL paths. What `submit` tells it of a failed check is filtered the same way.
+#
+# Params: `block` (from `foreach: blocks`); `module`, optional: the module under test.
+# Without it the interface is the block's top module (in the Design Model, else the
+# `tb_static` adapter's `top` template). The Planner's per-module expansion (M2-03, wired
+# in M2-11) will set `module` and write one test per module; until then the test file is
+# named after the block.
+#
+# Checks: `tb_static` (no simulator, no RTL: the file compiles, imports cocotb, has a
+# `@cocotb.test()` coroutine, uses only interface ports, reads no file, cites every
+# requirement id). A profile that sets `adapters.tb_static.sim` also runs the test on the
+# RTL with that sim adapter once the static checks pass (see `checks/tb_static.py`).
+rule: tb_module
+kind: agent
+role: tb-author
+description: >-
+  Write a cocotb test module for the block from its spec, requirements and interface
+  only: one test per requirement group, each citing its requirement ids.
+foreach: blocks
+inputs:
+  - model: "block/{block}"
+  - model: "interface/{block}"
+outputs:
+  - "dv/{block}/test_{block}.py"
+checks: [tb_static]
+skills: [dv/cocotb]
+budget:
+  tries: 3

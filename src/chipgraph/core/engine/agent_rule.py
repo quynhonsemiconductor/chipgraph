@@ -19,6 +19,11 @@ one attempt at a time) can reuse them without this loop:
   escalates the model tier after the first failed try, and says when and why it is
   exhausted (`tries` | `tokens` | `cost` | `stagnation`);
 - `render_feedback`: the bounded redo instruction for the next try;
+- `FeedbackFilter`: what a role whose read policy denies some artifacts (the testbench
+  Author, `rtl`) is shown of a failed check: no issue in a denied file, no denied path,
+  no source excerpt, and a note when something was withheld. The loop below applies it
+  to the redo text of such a role (denying by the role's kinds and globs; a runtime that
+  knows the task's denied paths passes them too);
 - `attempt_checks`: the checks the engine adds itself (missing inputs, missing or empty
   outputs, files written outside the outputs).
 
@@ -58,11 +63,12 @@ from chipgraph.core.engine.decide import (
     Question,
     decide,
 )
+from chipgraph.core.engine.graph import kind_for
 from chipgraph.core.engine.scheduler import CheckRunner, ExecContext, ExecEventType, ExecOutcome
 from chipgraph.core.plugin_api.protocols import AgentRuntime
 from chipgraph.core.plugin_api.types import AgentTask
 from chipgraph.core.runtime.executor import instance_inputs_hash, task_for
-from chipgraph.core.runtime.roles import find_role, model_ladder
+from chipgraph.core.runtime.roles import find_role, model_ladder, path_denied
 from chipgraph.core.state.artifacts import ArtifactStore
 from chipgraph.core.state.layout import StateLayout
 
@@ -484,13 +490,15 @@ def render_feedback(
     max_issues_per_check: int = 8,
     max_log_chars: int = 600,
     max_chars: int = 6000,
+    withheld: int = 0,
 ) -> str:
     """The redo instruction for the next try: what failed, where, and what to fix.
 
     Lists each failing check with up to `max_issues_per_check` `file:line` issues (at
-    most `max_issues` in all), the tail of its log when it has no issue, the label and
+    most `max_issues` in all), the tail of its log when it has no error issue, the label and
     a hint for it. Bounded: long logs and messages are cut, and the whole text is at
-    most `max_chars` characters.
+    most `max_chars` characters. `withheld` (from `FeedbackFilter.apply`, over the
+    same `results`) adds `WITHHELD_NOTE`, so the agent knows some output was hidden.
     """
     bad = failing(results)
     head = f"Attempt {attempt} failed" if attempt is not None else "The last attempt failed"
@@ -508,15 +516,153 @@ def render_feedback(
         shown += min(take, len(errors))
         if len(errors) > take:
             lines.append(f"  - … and {len(errors) - take} more issue(s)")
-        if not errors and result.log_tail.strip():
+        # No error issue explains the failure (none, or only warnings; or a filter
+        # withheld them): the log's tail is the explanation.
+        if not any(i.severity == "error" for i in errors) and result.log_tail.strip():
             tail = result.log_tail.strip()[-max_log_chars:]
             lines.append("  log tail:")
             lines.extend(f"    {line}" for line in tail.splitlines())
     lines.extend(["", f"What to fix: {_FIX_HINT[label]}"])
+    note = f"\n\n{WITHHELD_NOTE}" if withheld else ""
     text = "\n".join(lines)
-    if len(text) > max_chars:
-        text = text[: max_chars - 2] + "\n…"
-    return text
+    if len(text) + len(note) > max_chars:
+        text = text[: max(max_chars - len(note) - 2, 0)] + "\n…"
+    return text + note
+
+
+# --- feedback for a role that must not see some artifacts --------------------------------
+
+WITHHELD_NOTE = (
+    "Some check output was withheld: it points into files your role must not see (the "
+    "design). A failure in the design was hidden; fix the test only if the spec says so, "
+    "otherwise report needs_human with the question."
+)
+"""Added to the redo instruction when `FeedbackFilter.apply` withheld anything."""
+
+_EXCERPT_RE = re.compile(r"^\s*(?:\d+\s*)?\|")
+"""A source excerpt line of a compiler message: a line-number gutter, `   12 |   ...`, or
+the gutter of its caret line, `      |    ^~~`."""
+_CARET_RE = re.compile(r"^\s*[\^~]+[\s\^~]*$")
+"""A caret line with no gutter: only `^` and `~` under a quoted source line."""
+_PATH_TOKEN_RE = re.compile(r"[^\s'\"`()\[\]{}<>,;:|=]+")
+"""A run of characters that may be a file path (paths are matched, then checked)."""
+
+
+def _looks_like_path(token: str) -> bool:
+    return "/" in token or "." in token.strip(".")
+
+
+class FeedbackFilter(BaseModel):
+    """What a role must not be shown of a failed check (DESIGN.md 5.1: the testbench
+    Author never sees the design).
+
+    A path is denied when it matches one of `denied` (repo-relative paths and globs, as
+    `path_denied` reads them; an absolute path under `root` is made relative first), or
+    when its file kind (`kind_for`, by suffix) is one of `kinds`. `apply` then
+
+    - drops every issue whose `file` is denied;
+    - replaces each denied path in an issue's message with `<kind>` (the first of
+      `kinds`, else `<withheld>`), and cuts message lines that are source excerpts
+      (a `NN |` gutter, a caret line);
+    - drops every line of the log tail that names a denied path or is a source excerpt;
+
+    and keeps the rest: issues in other files (the role's own outputs) and plain
+    behavioural text (`expected 0x2, got 0x0`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = Field(default=1, description="Schema version of this model.")
+    denied: tuple[str, ...] = Field(
+        default=(), description="Repo-relative paths and globs the role must not see."
+    )
+    kinds: tuple[str, ...] = Field(
+        default=(), description="Artifact kinds the role must not see (matched by suffix)."
+    )
+    root: str | None = Field(
+        default=None, description="Absolute project root, to relativise absolute paths."
+    )
+
+    @classmethod
+    def for_role(
+        cls, role_id: str | None, *, denied: Iterable[str] = (), root: str | None = None
+    ) -> FeedbackFilter | None:
+        """The filter for a task of `role_id`, or `None` when its role may see everything.
+
+        `denied` is the task's own list (its `denied_reads`, when the runtime computed
+        one); the role's `deny_globs` are always added.
+        """
+        role = find_role(role_id) if role_id is not None else None
+        if role is None or role.read_policy.mode != "deny":
+            return None
+        policy = role.read_policy
+        return cls(
+            denied=tuple(dict.fromkeys((*denied, *policy.deny_globs))),
+            kinds=tuple(policy.deny_kinds),
+            root=root,
+        )
+
+    @property
+    def placeholder(self) -> str:
+        """What a denied path is replaced with in a message."""
+        return f"<{self.kinds[0]}>" if self.kinds else "<withheld>"
+
+    def denies(self, path: str | None) -> bool:
+        """Whether `path` (repo-relative or absolute, maybe with `:line`) is denied."""
+        if not path:
+            return False
+        text = path.strip().replace("\\", "/")
+        if self.root is not None:
+            root = self.root.rstrip("/") + "/"
+            if text.startswith(root):
+                text = text[len(root) :]
+        while text.startswith("./"):
+            text = text[2:]
+        if self.kinds and kind_for(text) in self.kinds:
+            return True
+        return not text.startswith("/") and path_denied(text, self.denied)
+
+    def _scrub(self, text: str, *, drop_named: bool) -> tuple[str, int]:
+        """`text` without excerpt lines and denied paths; and how much was withheld."""
+        kept: list[str] = []
+        withheld = 0
+        for line in text.splitlines():
+            if _EXCERPT_RE.match(line) or _CARET_RE.match(line):
+                withheld += 1
+                continue
+            named = [
+                m.group(0)
+                for m in _PATH_TOKEN_RE.finditer(line)
+                if _looks_like_path(m.group(0)) and self.denies(m.group(0))
+            ]
+            if named and drop_named:
+                withheld += 1
+                continue
+            for token in sorted(set(named), key=len, reverse=True):
+                line = line.replace(token, self.placeholder)
+            withheld += bool(named)
+            kept.append(line)
+        return "\n".join(kept), withheld
+
+    def apply(self, results: Iterable[CheckResult]) -> tuple[tuple[CheckResult, ...], int]:
+        """`results` as the role may see them, and the number of items withheld."""
+        shown: list[CheckResult] = []
+        withheld = 0
+        for result in results:
+            issues: list[Issue] = []
+            for issue in result.issues:
+                if self.denies(issue.file):
+                    withheld += 1
+                    continue
+                msg, cut = self._scrub(issue.msg, drop_named=False)
+                withheld += cut
+                if cut and not msg.strip():  # the message was all source excerpt
+                    continue
+                issues.append(issue if msg == issue.msg else issue.model_copy(update={"msg": msg}))
+            tail, cut = self._scrub(result.log_tail, drop_named=True)
+            withheld += cut
+            shown.append(result.model_copy(update={"issues": tuple(issues), "log_tail": tail}))
+        return tuple(shown), withheld
 
 
 def failure_signature(results: Iterable[CheckResult]) -> str:
@@ -783,6 +929,14 @@ class _InstanceRun:
         self.infra_note: str | None = None
         self.last_label: FailureLabel = "infra"
         self.last_results: tuple[CheckResult, ...] = ()
+        self.shown = FeedbackFilter.for_role(rule.role, root=str(executor.store.root.resolve()))
+
+    def redo(self, results: Sequence[CheckResult], label: FailureLabel, **kw: Any) -> str:
+        """`render_feedback` over what the role may see (`FeedbackFilter`)."""
+        if self.shown is None:
+            return render_feedback(results, label, **kw)
+        visible, withheld = self.shown.apply(results)
+        return render_feedback(visible, label, withheld=withheld, **kw)
 
     # --- one call ----------------------------------------------------------------
 
@@ -983,7 +1137,7 @@ class _InstanceRun:
                 return self.stop(spent, label)
             if self.budget.state.infra_failures > self.executor.max_infra_retries:
                 return self.stop("infra", label)
-            self.infra_note = render_feedback(results, "infra", max_chars=1500)
+            self.infra_note = self.redo(results, "infra", max_chars=1500)
             return None
 
         self.infra_note = None
@@ -1002,7 +1156,7 @@ class _InstanceRun:
         reason = self.budget.exhausted
         if reason is not None:
             return self.stop(reason, label)
-        self.feedback = render_feedback(results, label, attempt=self.budget.state.tries_used)
+        self.feedback = self.redo(results, label, attempt=self.budget.state.tries_used)
         self.previous = [r.check_id for r in failing(results)]
         return None
 
@@ -1142,6 +1296,7 @@ __all__ = [
     "OUTPUTS_CHECK",
     "RUNTIME_CHECK",
     "STICKY_STOPS",
+    "WITHHELD_NOTE",
     "WRITES_CHECK",
     "AgentRuleExecutor",
     "AgentStop",
@@ -1149,6 +1304,7 @@ __all__ = [
     "BudgetState",
     "ExhaustReason",
     "FailureClassifier",
+    "FeedbackFilter",
     "LabelMap",
     "StopReason",
     "StopStore",
