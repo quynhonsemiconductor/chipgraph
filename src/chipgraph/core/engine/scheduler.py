@@ -4,18 +4,21 @@ from a killed run, and rewinds a rule instance so it (and everything downstream)
 
 The scheduler itself never talks to a tool, an LLM, or a human: it depends only on the
 small protocols below (`Executor`, `CheckRunner`, `GateChecker`), so M0-09..M0-11 and M2
-plug in real implementations without this module changing.
+plug in real implementations without this module changing. A `CheckingExecutor` (the
+agent rule loop) runs the rule's checks itself through an `ExecContext`, which hands it
+the scheduler's check runner and journal; the scheduler then does not run them again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from chipgraph import __version__
 from chipgraph.core.contracts.artifact import ArtifactRef
@@ -54,6 +57,13 @@ class ExecOutcome(BaseModel):
     ok: bool
     message: str = ""
     failure_label: FailureLabel | None = None
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Extra keys merged into the payload of the instance's `rule_done`/`rule_fail` "
+            "event (e.g. an agent rule's summary and open questions)."
+        ),
+    )
 
 
 @runtime_checkable
@@ -61,6 +71,47 @@ class Executor(Protocol):
     """Runs one rule instance and reports whether it succeeded."""
 
     async def execute(self, rule: RuleSpec, instance: RuleInstance) -> ExecOutcome: ...
+
+
+ExecEventType = Literal["agent_turn", "tool_call"]
+"""The journal events an executor may add itself; the scheduler owns every other type."""
+
+
+@dataclass(frozen=True)
+class ExecContext:
+    """What the scheduler hands a `CheckingExecutor` for one rule instance.
+
+    `run_check` runs one check id through the scheduler's `CheckRunner`, with the same
+    tracing span and `check_result` journal event as the scheduler's own check step;
+    it is `None` when the scheduler has no check runner (then there are no checks to
+    run, as for any other executor). `emit` appends an `agent_turn`/`tool_call` event
+    for the instance to the run's journal.
+    """
+
+    run_id: str
+    run_check: Callable[[str], Awaitable[CheckResult]] | None
+    emit: Callable[[ExecEventType, dict[str, Any]], None]
+
+
+@runtime_checkable
+class CheckingExecutor(Executor, Protocol):
+    """An `Executor` that runs the rule's checks itself, inside its own loop.
+
+    The agent rule loop (`agent_rule.py`) checks every attempt at once and retries on
+    failure, so the scheduler calls `execute_checked` instead of `execute` and does not
+    run the rule's checks again after an ok outcome: an ok outcome means they passed.
+    """
+
+    async def execute_checked(
+        self, rule: RuleSpec, instance: RuleInstance, ctx: ExecContext
+    ) -> ExecOutcome: ...
+
+
+@runtime_checkable
+class RewindAware(Protocol):
+    """An executor that keeps per-instance state `Scheduler.rewind` must clear."""
+
+    def forget(self, instance_id: str) -> None: ...
 
 
 @runtime_checkable
@@ -78,7 +129,10 @@ class GateChecker(Protocol):
 
 
 class AgentStub:
-    """An `Executor` for `kind='agent'` rules, which arrive in M2 (see agent_rule.py)."""
+    """The `Executor` for `kind='agent'` rules when no agent runtime is configured.
+
+    With a runtime, agent rules run in `agent_rule.AgentRuleExecutor`'s loop.
+    """
 
     async def execute(self, rule: RuleSpec, instance: RuleInstance) -> ExecOutcome:
         return ExecOutcome(ok=False, failure_label="infra", message="agent rules arrive in M2")
@@ -183,6 +237,11 @@ class Scheduler:
         ids = {instance_id} | self.graph.downstream(instance_id)
         for iid in ids:
             self.records.delete(iid)
+            # An executor may remember that an instance stopped (an agent rule whose
+            # budget ran out): a rewind is the person's go-ahead to try it again.
+            for executor in self.executors.values():
+                if isinstance(executor, RewindAware):
+                    executor.forget(iid)
         return ids
 
     # --- run/resume shared machinery --------------------------------------------------
@@ -416,8 +475,13 @@ class Scheduler:
         self.records.delete(iid)
 
         exec_span_name = tracing.SPAN_INVOKE_AGENT if rule.kind == "agent" else tracing.SPAN_EXECUTE
+        checked = isinstance(executor, CheckingExecutor)
         with self.tracer.span(exec_span_name) as exec_span:
-            outcome = await executor.execute(rule, instance)
+            if isinstance(executor, CheckingExecutor):
+                ctx = self._exec_context(rid, journal, instance)
+                outcome = await executor.execute_checked(rule, instance, ctx)
+            else:
+                outcome = await executor.execute(rule, instance)
             if not outcome.ok:
                 exec_span.error(outcome.message or "execution failed")
         if not outcome.ok:
@@ -428,22 +492,15 @@ class Scheduler:
                 "rule_fail",
                 iid,
                 failure_label=label,
-                payload={"message": outcome.message},
+                payload={**outcome.payload, "message": outcome.message},
             )
             _fail(label, outcome.message)
             return "failed", label
 
-        if self.checks is not None:
+        # A `CheckingExecutor` already ran (and passed) the rule's checks.
+        if self.checks is not None and not checked:
             for check_id in rule.checks:
-                check_attrs = {tracing.CHECK_ID: check_id}
-                with self.tracer.span(tracing.SPAN_CHECK, **check_attrs) as check_span:
-                    result = await self.checks.run(check_id, instance)
-                    check_span.set(tracing.CHECK_STATUS, result.status)
-                    if not result.ok:
-                        check_span.error(f"check {check_id} failed")
-                self._emit(
-                    journal, rid, "check_result", iid, payload=result.model_dump(mode="json")
-                )
+                result = await self._run_check(rid, journal, instance, check_id)
                 if not result.ok:
                     message = f"check {check_id} failed"
                     self._emit(
@@ -473,8 +530,44 @@ class Scheduler:
 
         record = self._build_record(instance)
         self.records.put(record)
-        self._emit(journal, rid, "rule_done", iid, payload={})
+        self._emit(journal, rid, "rule_done", iid, payload=dict(outcome.payload))
         return "done", None
+
+    async def _run_check(
+        self, rid: str, journal: Journal, instance: RuleInstance, check_id: str
+    ) -> CheckResult:
+        """Run one check for `instance`: traced, and journaled as a `check_result` event."""
+        assert self.checks is not None
+        check_attrs = {tracing.CHECK_ID: check_id}
+        with self.tracer.span(tracing.SPAN_CHECK, **check_attrs) as check_span:
+            result = await self.checks.run(check_id, instance)
+            check_span.set(tracing.CHECK_STATUS, result.status)
+            if not result.ok:
+                check_span.error(f"check {check_id} failed")
+        self._emit(
+            journal,
+            rid,
+            "check_result",
+            instance.instance_id,
+            payload=result.model_dump(mode="json"),
+        )
+        return result
+
+    def _exec_context(self, rid: str, journal: Journal, instance: RuleInstance) -> ExecContext:
+        """The `ExecContext` a `CheckingExecutor` gets for `instance` in run `rid`."""
+        iid = instance.instance_id
+
+        async def run_check(check_id: str) -> CheckResult:
+            return await self._run_check(rid, journal, instance, check_id)
+
+        def emit(type_: ExecEventType, payload: dict[str, Any]) -> None:
+            if type_ not in ("agent_turn", "tool_call"):
+                raise SchedulerError(f"an executor may not emit {type_!r} events")
+            self._emit(journal, rid, type_, iid, payload=payload)
+
+        return ExecContext(
+            run_id=rid, run_check=run_check if self.checks is not None else None, emit=emit
+        )
 
     def _build_record(self, instance: RuleInstance) -> ProductionRecord:
         path_inputs = [ref for ref in instance.inputs if ref.path is not None]
@@ -530,10 +623,14 @@ class Scheduler:
 __all__ = [
     "AgentStub",
     "CheckRunner",
+    "CheckingExecutor",
+    "ExecContext",
+    "ExecEventType",
     "ExecOutcome",
     "Executor",
     "GateChecker",
     "GateStatus",
+    "RewindAware",
     "RunSummary",
     "Scheduler",
     "SchedulerError",

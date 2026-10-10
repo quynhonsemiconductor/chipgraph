@@ -14,6 +14,10 @@ Payload keys relied on (as written by ``Scheduler._process_instance``/``_execute
   ``event.failure_label`` carries the :class:`FailureLabel`.
 - ``gate_wait``: ``payload["gate"]`` is the (already-formatted) gate id.
 - ``rule_fail``/``agent_turn``: an optional ``payload["open_questions"]`` list of strings.
+- ``rule_fail`` of an agent rule (``core/engine/agent_rule.py``): ``payload["agent"]``, the
+  loop's summary (status, tries, max_tries, infra_failures, reason, label, failed_checks,
+  failures, tokens, cost, stopped_earlier); read into :class:`AgentStopInfo` so HANDOFF.md
+  says how many tries were used, why the loop stopped and what failed last.
 - ``run_stop``: only carries *counts* today (``done``, ``failed``, ...), not instance ids.
   The scheduler currently emits no per-instance event for a *blocked* instance (one whose
   dependency failed/waited/was itself blocked), so ``build_handoff`` reads blocked instance
@@ -28,8 +32,9 @@ import os
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 
 from chipgraph.core.contracts.event import Event
 from chipgraph.core.contracts.types import FailureLabel
@@ -38,12 +43,47 @@ from chipgraph.core.state.layout import StateLayout
 
 _FAILURE_NEXT_STEP: dict[FailureLabel, str] = {
     "constraint": "revert the hand edit or approve it, then `chipgraph build {target}`",
+    "context": "add the missing input or output, then `chipgraph resume {run_id}`",
     "verification": "fix the failing check, then `chipgraph resume {run_id}`",
     "infra": "check the tool or connection (`chipgraph doctor`), then `chipgraph resume {run_id}`",
     "planning": "answer the open questions, then `chipgraph resume {run_id}`",
 }
 _DEFAULT_NEXT_STEP = "`chipgraph resume {run_id}`"
+_AGENT_STEP_KEY = {"needs_human": "needs_human", "planning": "needs_human", "infra": "infra"}
+"""An agent stop reason -> its `_AGENT_NEXT_STEP` key; any other reason is `exhausted`."""
+_AGENT_NEXT_STEP = {
+    "needs_human": (
+        "answer the open questions for `{instance}` (update its inputs), then "
+        "`chipgraph build {target}`"
+    ),
+    "infra": (
+        "check the tool or connection (`chipgraph doctor`), then `chipgraph resume {run_id}`"
+    ),
+    "exhausted": (
+        "read the last failures of `{instance}`; fix the cause (its inputs, the rule or "
+        "its budget) or write the output by hand, then `chipgraph rewind {instance}` and "
+        "`chipgraph build {target}`"
+    ),
+}
 _NOTHING_TO_DO = "nothing to do: the target is up to date."
+
+
+class AgentStopInfo(BaseModel):
+    """How an agent rule's loop stopped, from its ``rule_fail`` payload's ``agent`` key."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    status: str = ""
+    reason: str | None = None
+    tries: int = 0
+    max_tries: int = 0
+    infra_failures: int = 0
+    label: FailureLabel | None = None
+    failed_checks: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
+    tokens: int | None = None
+    cost: float | None = None
+    stopped_earlier: bool = False
 
 
 class FailedItem(BaseModel):
@@ -54,6 +94,17 @@ class FailedItem(BaseModel):
     instance: str
     label: FailureLabel | None = None
     message: str = ""
+    agent: AgentStopInfo | None = None
+
+
+def _agent_info(payload: dict[str, Any]) -> AgentStopInfo | None:
+    raw = payload.get("agent")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return AgentStopInfo.model_validate(raw)
+    except ValidationError:
+        return None
 
 
 class WaitingItem(BaseModel):
@@ -112,12 +163,14 @@ def _next_steps(
     for wait_item in waiting_gate:
         steps.append(f"`chipgraph approve {wait_item.gate_id} --instance {wait_item.instance}`")
     for fail_item in failed:
-        template = (
-            _FAILURE_NEXT_STEP.get(fail_item.label, _DEFAULT_NEXT_STEP)
-            if fail_item.label is not None
-            else _DEFAULT_NEXT_STEP
-        )
-        steps.append(template.format(target=target, run_id=run_id))
+        if fail_item.agent is not None and fail_item.agent.reason is not None:
+            key = _AGENT_STEP_KEY.get(fail_item.agent.reason, "exhausted")
+            template = _AGENT_NEXT_STEP[key]
+        elif fail_item.label is not None:
+            template = _FAILURE_NEXT_STEP.get(fail_item.label, _DEFAULT_NEXT_STEP)
+        else:
+            template = _DEFAULT_NEXT_STEP
+        steps.append(template.format(target=target, run_id=run_id, instance=fail_item.instance))
 
     if not steps and not blocked:
         return (_NOTHING_TO_DO,)
@@ -179,7 +232,12 @@ def build_handoff(
         elif status == "failed":
             fail_event = last_rule_fail.get(iid)
             message = str(fail_event.payload.get("message", "")) if fail_event is not None else ""
-            failed.append(FailedItem(instance=iid, label=state.failures.get(iid), message=message))
+            agent = _agent_info(fail_event.payload) if fail_event is not None else None
+            failed.append(
+                FailedItem(
+                    instance=iid, label=state.failures.get(iid), message=message, agent=agent
+                )
+            )
         elif status == "waiting_gate":
             wait_event = last_gate_wait.get(iid)
             gate_id = str(wait_event.payload.get("gate", "")) if wait_event is not None else ""
@@ -256,6 +314,8 @@ def render_markdown(h: Handoff) -> str:
         for fail_item in h.failed:
             label = fail_item.label if fail_item.label is not None else "unlabeled"
             lines.append(f"- `{fail_item.instance}` [{label}]: {fail_item.message}")
+            if fail_item.agent is not None:
+                lines.extend(_render_agent(fail_item.agent))
         lines.append("")
 
     if h.blocked:
@@ -279,6 +339,29 @@ def render_markdown(h: Handoff) -> str:
         lines.append(f"{i}. {step}")
 
     return "\n".join(lines) + "\n"
+
+
+def _render_agent(info: AgentStopInfo) -> list[str]:
+    """The indented detail lines of an agent rule's stop, under its failed item."""
+    used = f"{info.tries} of {info.max_tries} tries"
+    if info.infra_failures:
+        used += f" (+{info.infra_failures} infra failures, not counted)"
+    spent = []
+    if info.tokens is not None:
+        spent.append(f"{info.tokens} tokens")
+    if info.cost is not None:
+        spent.append(f"${info.cost:.4f}")
+    lines = [f"  - agent: {info.status}, reason `{info.reason}`, {used}"]
+    if spent:
+        lines[0] += "; spent " + ", ".join(spent)
+    if info.failures:
+        lines.append(f"  - last failures [{info.label}]:")
+        lines.extend(f"    - {failure}" for failure in info.failures)
+    elif info.failed_checks:
+        lines.append(f"  - last failures [{info.label}]: {', '.join(info.failed_checks)}")
+    if info.stopped_earlier:
+        lines.append("  - stopped in an earlier run; not run again until an input changes")
+    return lines
 
 
 def render_status(state: RunState, *, target: str) -> str:
@@ -311,6 +394,7 @@ def write_handoff(layout: StateLayout, h: Handoff) -> Path:
 
 
 __all__ = [
+    "AgentStopInfo",
     "FailedItem",
     "Handoff",
     "WaitingItem",
