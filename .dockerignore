@@ -17,6 +17,8 @@ venv
 dist
 build
 docs
+!docs/tb-claude-code/
+!docs/tb-claude-code/fixture.py
 doc
 plugin
 .claude-plugin
