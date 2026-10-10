@@ -3,7 +3,10 @@ name: digital-rtl
 version: 0.1.0
 description: >-
   Rules and skills for digital RTL (DESIGN.md 8.2). Ships the Critic review of a block's
-  change: the rule `digital-rtl/review` and the skill `review/diff`.
+  change (the rule `digital-rtl/review`, the skill `review/diff`) and the Planner: the
+  rule `digital-rtl/plan` (skill `plan/modules`, check `plan_check`) and the gate
+  `plan:{block}` on `digital-rtl/plan_expand`, after which rules may say
+  `foreach: plan.modules`.
 provides:
   rules:
     - rules

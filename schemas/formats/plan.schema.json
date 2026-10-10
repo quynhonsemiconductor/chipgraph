@@ -1,0 +1,265 @@
+{
+  "$defs": {
+    "ModuleBudget": {
+      "additionalProperties": false,
+      "description": "How much a module's nodes may spend: tries and the model tier.",
+      "properties": {
+        "tier": {
+          "default": "medium",
+          "description": "The model tier to start with.",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "tries": {
+          "default": 3,
+          "description": "Tries the module's agent task may use.",
+          "minimum": 1,
+          "title": "Tries",
+          "type": "integer"
+        }
+      },
+      "title": "ModuleBudget",
+      "type": "object"
+    },
+    "PlanInterface": {
+      "additionalProperties": false,
+      "description": "A module's interface.",
+      "properties": {
+        "ports": {
+          "default": [],
+          "description": "The module's ports.",
+          "items": {
+            "$ref": "#/$defs/PlanPort"
+          },
+          "title": "Ports",
+          "type": "array"
+        }
+      },
+      "title": "PlanInterface",
+      "type": "object"
+    },
+    "PlanModule": {
+      "additionalProperties": false,
+      "description": "One module of the plan: one dynamic node per downstream rule.",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/ModuleBudget",
+          "description": "The module's tries and model tier."
+        },
+        "depends_on": {
+          "default": [],
+          "description": "Modules of this plan that must be built first.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "interface": {
+          "$ref": "#/$defs/PlanInterface",
+          "description": "The module's ports."
+        },
+        "name": {
+          "description": "The module name (an RTL identifier).",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "reqs": {
+          "default": [],
+          "description": "Requirements it covers: REQ ids or inferred requirement keys.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Reqs",
+          "type": "array"
+        },
+        "summary": {
+          "description": "What the module does, in a sentence or two.",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "writes": {
+          "description": "Every file the module's nodes write (its write set).",
+          "items": {
+            "$ref": "#/$defs/PlanWrite"
+          },
+          "minItems": 1,
+          "title": "Writes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "summary",
+        "writes"
+      ],
+      "title": "PlanModule",
+      "type": "object"
+    },
+    "PlanPort": {
+      "additionalProperties": false,
+      "description": "One port of a module: from the block's interface in the Design Model, or internal.",
+      "properties": {
+        "direction": {
+          "description": "The port direction.",
+          "enum": [
+            "input",
+            "output",
+            "inout"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "internal": {
+          "default": false,
+          "description": "A helper port between modules of the block, not on the block's interface. Not allowed on the block's top module.",
+          "title": "Internal",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The port name, as in the Design Model.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "The port width: bits, or the model's expression.",
+          "title": "Width"
+        }
+      },
+      "required": [
+        "name",
+        "direction",
+        "width"
+      ],
+      "title": "PlanPort",
+      "type": "object"
+    },
+    "PlanWrite": {
+      "additionalProperties": false,
+      "description": "One file a module writes.",
+      "properties": {
+        "path": {
+          "description": "Repo-relative POSIX path of the file.",
+          "title": "Path",
+          "type": "string"
+        },
+        "replaces": {
+          "default": false,
+          "description": "The file exists and this module replaces it (said explicitly).",
+          "title": "Replaces",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "PlanWrite",
+      "type": "object"
+    },
+    "UnassignedReq": {
+      "additionalProperties": false,
+      "description": "A requirement of the block that no module covers, and why.",
+      "properties": {
+        "reason": {
+          "description": "Why no module of this plan covers it.",
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "req": {
+          "description": "The REQ id or inferred requirement key.",
+          "minLength": 1,
+          "title": "Req",
+          "type": "string"
+        }
+      },
+      "required": [
+        "req",
+        "reason"
+      ],
+      "title": "UnassignedReq",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A block's plan: its modules, their write sets and order, and what a person must read.",
+  "properties": {
+    "assumptions": {
+      "default": [],
+      "description": "Assumptions the plan rests on (F4).",
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "block": {
+      "description": "The block this plan is for.",
+      "minLength": 1,
+      "title": "Block",
+      "type": "string"
+    },
+    "modules": {
+      "description": "The modules.",
+      "items": {
+        "$ref": "#/$defs/PlanModule"
+      },
+      "minItems": 1,
+      "title": "Modules",
+      "type": "array"
+    },
+    "open_questions": {
+      "default": [],
+      "description": "Questions the approver must read and answer.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this file.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "top": {
+      "description": "The module that is the block's top (its interface).",
+      "title": "Top",
+      "type": "string"
+    },
+    "unassigned_reqs": {
+      "default": [],
+      "description": "Requirements of the block no module covers, with the reason.",
+      "items": {
+        "$ref": "#/$defs/UnassignedReq"
+      },
+      "title": "Unassigned Reqs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "block",
+    "top",
+    "modules"
+  ],
+  "title": "Plan",
+  "type": "object"
+}

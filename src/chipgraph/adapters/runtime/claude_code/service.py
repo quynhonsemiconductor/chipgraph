@@ -721,7 +721,26 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     }
     if review is not None:
         answer["review"] = review
+    if record.role == "planner":
+        answer["plan"] = _planner_context(ctx, graph, instance)
     return answer
+
+
+def _planner_context(ctx: AppContext, graph: BuildGraph, instance: RuleInstance) -> dict[str, Any]:
+    """A planner task's extra context (M2-03): the block's model slice, the paths it may
+    write, the limits, the naming rule and the plan schema (`digital-rtl` pack)."""
+    from chipgraph.packs.digital_rtl.plan.context import planner_context
+
+    block = instance.params.get("block")
+    if block is None or not instance.outputs or instance.outputs[0].path is None:
+        return {}
+    return planner_context(
+        ctx.root,
+        ctx.require_profile(),
+        list(graph.rules.values()),
+        block,
+        plan_path=instance.outputs[0].path,
+    )
 
 
 # --- submit -----------------------------------------------------------------------------

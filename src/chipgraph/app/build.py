@@ -6,7 +6,7 @@ evaluator (DESIGN.md 3.3, 3.4).
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from importlib import resources
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from chipgraph.app.errors import AppError
 from chipgraph.app.executors import HumanExecutor, RunExecutor
 from chipgraph.core.contracts import RuleSpec
 from chipgraph.core.engine.agent_rule import AgentRuleExecutor
-from chipgraph.core.engine.graph import ForeachResolver, GraphError, build_graph
+from chipgraph.core.engine.graph import ForeachEntry, ForeachResolver, GraphError, build_graph
 from chipgraph.core.engine.rules import RuleLoadError, load_pack_rules
 from chipgraph.core.engine.scheduler import AgentStub, Executor, Scheduler
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
@@ -25,6 +25,9 @@ from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.runtime import TaskQueue
 from chipgraph.core.runtime.roles import RoleError, check_agent_rules
 from chipgraph.core.state.trace import Tracer
+
+PLAN_MODULES = "plan.modules"
+"""The `foreach` selector over the modules of every block's approved plan (M2-03)."""
 
 
 def builtin_packs_dir() -> Path | None:
@@ -44,7 +47,12 @@ def pack_search_paths(ctx: AppContext) -> list[Path]:
     The project's `.chipgraph/packs/`, then the built-in packs, then each entry of
     `$CHIPGRAPH_PACK_PATH`. Two packs with the same name anywhere on the path are an error.
     """
-    paths = [ctx.root / ".chipgraph" / "packs"]
+    return pack_search_paths_for(ctx.root)
+
+
+def pack_search_paths_for(root: Path) -> list[Path]:
+    """`pack_search_paths` for the project at `root`."""
+    paths = [root / ".chipgraph" / "packs"]
     builtin = builtin_packs_dir()
     if builtin is not None:
         paths.append(builtin)
@@ -55,15 +63,19 @@ def pack_search_paths(ctx: AppContext) -> list[Path]:
 
 def load_rules(ctx: AppContext) -> list[RuleSpec]:
     """Load every rule from the packs named in the profile's `packs`."""
-    resolved = ctx.require_profile()
-    search_paths = pack_search_paths(ctx)
+    return rules_for_packs(ctx.root, ctx.require_profile().profile.packs)
+
+
+def rules_for_packs(root: Path, packs: Iterable[str]) -> list[RuleSpec]:
+    """Load every rule of the packs named `packs`, searched for from the project at `root`."""
+    search_paths = pack_search_paths_for(root)
     try:
         available: dict[str, Pack] = discover_packs(search_paths)
     except PluginError as exc:
         raise AppError(str(exc)) from exc
 
     rules: list[RuleSpec] = []
-    for name in resolved.profile.packs:
+    for name in packs:
         pack = available.get(name)
         if pack is None:
             searched = ", ".join(str(p) for p in search_paths)
@@ -76,23 +88,49 @@ def load_rules(ctx: AppContext) -> list[RuleSpec]:
 
 
 class _ProfileForeach:
-    """The M0 `ForeachResolver`: only the `blocks` expression is supported.
+    """The project's `ForeachResolver`: `blocks`, and `plan.modules`.
 
-    It expands to one param set `{"block": b}` per key of `profile.blocks`, sorted.
+    `blocks` expands to one param set `{"block": b}` per key of `profile.blocks`,
+    sorted. `plan.modules` expands to one entry per module of every block's approved
+    plan (`plan_modules`, from the `digital-rtl` pack; each entry carries the module's
+    write set, its dependencies as ordering edges and the approved plan as an input).
     Any other `foreach` expression needs the Design Model, which arrives in M1.
     """
 
-    def __init__(self, block_names: Iterable[str]) -> None:
+    def __init__(
+        self,
+        block_names: Iterable[str],
+        plan_modules: Callable[[], list[ForeachEntry]] | None = None,
+    ) -> None:
         self._blocks = sorted(block_names)
+        self._plan_modules = plan_modules
+        self._plan_entries: list[ForeachEntry] | None = None
 
     def expand(self, expr: str) -> list[dict[str, str]]:
-        if expr != "blocks":
-            raise AppError(f"foreach {expr!r} needs the Design Model (M1)")
-        return [{"block": block} for block in self._blocks]
+        return [dict(entry.params) for entry in self.expand_entries(expr)]
+
+    def expand_entries(self, expr: str) -> list[ForeachEntry]:
+        if expr == "blocks":
+            return [ForeachEntry(params={"block": block}) for block in self._blocks]
+        if expr == PLAN_MODULES and self._plan_modules is not None:
+            if self._plan_entries is None:  # once per graph, however many rules use it
+                self._plan_entries = self._plan_modules()
+            return list(self._plan_entries)
+        raise AppError(f"foreach {expr!r} needs the Design Model (M1)")
 
 
-def _resolver_for(ctx: AppContext) -> ForeachResolver:
-    return _ProfileForeach(ctx.require_profile().profile.blocks)
+def _resolver_for(ctx: AppContext, rules: Iterable[RuleSpec] | None = None) -> ForeachResolver:
+    """The project's resolver for a graph of `rules` (default: the profile's packs' rules)."""
+    rules = load_rules(ctx) if rules is None else list(rules)
+    plan_modules: Callable[[], list[ForeachEntry]] | None = None
+    if any(rule.foreach == PLAN_MODULES for rule in rules):
+        from chipgraph.packs.digital_rtl.plan.resolver import plan_modules as expand_plans
+
+        def _expand() -> list[ForeachEntry]:
+            return expand_plans(ctx, rules)
+
+        plan_modules = _expand
+    return _ProfileForeach(ctx.require_profile().profile.blocks, plan_modules)
 
 
 def agent_executor(ctx: AppContext) -> Executor:
@@ -119,7 +157,7 @@ def make_scheduler(
 ) -> Scheduler:
     """Build a `Scheduler` ready to run/resume `target` for this project."""
     rules = load_rules(ctx)
-    resolver = _resolver_for(ctx)
+    resolver = _resolver_for(ctx, rules)
     try:
         graph = build_graph(rules, resolver, repo=ctx.store.repo)
         graph.select(target)
@@ -149,4 +187,12 @@ def make_scheduler(
     )
 
 
-__all__ = ["agent_executor", "load_rules", "make_scheduler", "pack_search_paths"]
+__all__ = [
+    "PLAN_MODULES",
+    "agent_executor",
+    "load_rules",
+    "make_scheduler",
+    "pack_search_paths",
+    "pack_search_paths_for",
+    "rules_for_packs",
+]
