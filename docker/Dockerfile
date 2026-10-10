@@ -97,6 +97,8 @@ RUN uv sync --locked --no-editable --extra sim --python "${PYTHON_VERSION}"
 
 COPY tests ./tests
 COPY examples ./examples
+# The e2e test of the tb_module flow builds its project from this fixture.
+COPY docs/tb-claude-code/fixture.py ./docs/tb-claude-code/fixture.py
 
 ENTRYPOINT []
 CMD ["uv", "run", "--no-sync", "pytest", "-m", "e2e", "tests/e2e"]
