@@ -159,7 +159,7 @@ def test_exhausted_after_exactly_tries_dispatches_writes_handoff(project: Path) 
     assert f"`{fx.HOPELESS_TASK}` [verification]" in text
     assert "reason `tries`, 2 of 2 tries" in text
     assert "last failures [verification]" in text
-    assert f"{fx.HOPELESS_OUTPUT}:1: this check never passes" in text
+    assert f"{fx.HOPELESS_OUTPUT}:1: the first line must be the signed-off" in text
     assert f"- {fx.DONE_TASK}" in text  # the dependent, blocked
     assert f"`chipgraph rewind {fx.HOPELESS_TASK}`" in text
 
