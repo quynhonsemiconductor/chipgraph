@@ -138,11 +138,23 @@ class RoleSpec(BaseModel):
             "served by another path, such as the fast decision layer."
         ),
     )
+    engine_writes: tuple[ArtifactKind, ...] = Field(
+        default=(),
+        description=(
+            "For a role that writes no files (write_scope 'none'): the artifact kinds of the "
+            "one output the engine writes from the role's structured reply. A rule of this "
+            "role then declares exactly that one output; the role itself never writes it."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_table(self) -> Self:
         if "\n" in self.description:
             raise ValueError("description must be one line")
+        if self.engine_writes and self.write_scope != "none":
+            raise ValueError("engine_writes is only for a role whose write_scope is 'none'")
+        if len(set(self.engine_writes)) != len(self.engine_writes):
+            raise ValueError("engine_writes lists a kind twice")
         if len(set(self.tools)) != len(self.tools):
             raise ValueError("tools lists a capability twice")
         if self.escalate_to is not None and (

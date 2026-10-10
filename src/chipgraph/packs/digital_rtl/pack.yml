@@ -1,0 +1,11 @@
+schema_version: 1
+name: digital-rtl
+version: 0.1.0
+description: >-
+  Rules and skills for digital RTL (DESIGN.md 8.2). Ships the Critic review of a block's
+  change: the rule `digital-rtl/review` and the skill `review/diff`.
+provides:
+  rules:
+    - rules
+  skills:
+    - skills

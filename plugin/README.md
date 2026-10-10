@@ -129,6 +129,9 @@ The build loop. `next_task` → one role subagent per task, all in parallel → 
 - `submit(task_id, result)`: the engine checks that only the task's outputs changed
   since it was handed out, that they exist, and runs the rule's checks; then accepts,
   or rejects with reasons and counts a try (`budget.tries`).
+  A review task (`"reply": "review"`, agent `chipgraph:critic`, M2-09) writes no file:
+  the main session passes the critic's JSON review as `result.review`; the engine
+  validates it against the diff the critic was shown and writes the report itself.
 
 Role subagents (`agents/`), one per role (DESIGN 5.1), generated from the role data in
 `src/chipgraph/core/runtime/roles/data/` (`python -m
@@ -139,7 +142,7 @@ gets a shell or web tools:
 |---|---|---|---|
 | `chipgraph:author` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | the task's outputs | medium, then large |
 | `chipgraph:tb-author` | `Write, Edit, MultiEdit`, `get_context` (no read tools) | the task's outputs | medium, then large |
-| `chipgraph:critic` | `Read, Glob, Grep`, `get_context` | nothing | large |
+| `chipgraph:critic` | `Read, Glob, Grep`, `get_context` | nothing (the engine writes its JSON review) | large |
 | `chipgraph:planner` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its plan file | large |
 | `chipgraph:researcher` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its proposal file | medium, then large |
 

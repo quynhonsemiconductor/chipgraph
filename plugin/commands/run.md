@@ -26,8 +26,11 @@ Repeat:
 4. For every task a subagent finished, call `mcp__plugin_chipgraph_chipgraph__submit`
    with its `task_id` and `result` built from the subagent's report:
    `{"status": "done" or "needs_human", "files_written": [...], "assumptions": [...],
-   "open_questions": [...]}`. Report whether it was accepted; if it was rejected, say
-   why (the `reasons`).
+   "open_questions": [...]}`. For a task whose entry has `"reply": "review"` (agent
+   `chipgraph:critic`), the subagent writes no file and ends with one JSON review
+   object: pass it unchanged as `result` = `{"status": "done", "review": <that JSON
+   object>}`; the engine checks it and writes the review report itself. Report whether
+   it was accepted; if it was rejected, say why (the `reasons`).
 5. Go back to step 1. A rejected task comes back from `next_task` with its reasons,
    until its tries are used up.
 

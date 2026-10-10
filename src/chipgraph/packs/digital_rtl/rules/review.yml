@@ -1,0 +1,27 @@
+# The Critic review of one block's change (DESIGN.md 4.8, 5.1; task M2-09).
+#
+# For each block: a `critic` task gets, with a fresh context (no conversation, no author
+# reasoning, no earlier review), the block's diff (base ref vs the working tree, only the
+# block's files), its spec slice (requirements, interface, registers from the Design
+# Model) and its model slice. The Critic writes no file: it replies with a JSON review
+# (`ReviewReport`, schemas/roles/ReviewReport.schema.json); `submit` validates it and the
+# engine writes it to the one output below. An invalid reply is rejected and uses a try.
+#
+# The base ref is the instance param `base` when there is one, otherwise the merge-base
+# of HEAD with the default branch (so on the default branch itself: HEAD, and the diff is
+# the uncommitted change). Findings never block the build (DESIGN.md 4.8): a valid
+# review is accepted whatever its verdict; people read the verdict.
+rule: review
+kind: agent
+role: critic
+description: >-
+  Review the block's change against its requirements, interface and Design Model; reply
+  with a structured review, which the engine writes as the block's review report.
+foreach: blocks
+inputs:
+  - model: "block/{block}"
+outputs:
+  - "reports/review/{block}.json"
+skills: [review/diff]
+budget:
+  tries: 2

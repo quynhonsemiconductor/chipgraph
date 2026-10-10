@@ -3,8 +3,9 @@
 - `model_ladder`: a task's first tier and escalation tier, from its role unless the rule
   sets its own.
 - `check_agent_rules`: the rule validator for roles: an unknown role, a role agent rules
-  may not use, a rule that breaks its role's write scope, or a rule that gives a role an
-  input of a kind it must not see.
+  may not use, a rule that breaks its role's write scope (a role that writes no files
+  may only have the one output the engine writes from its reply, of a kind its
+  `engine_writes` names), or a rule that gives a role an input of a kind it must not see.
 - `denied_reads`: the repo-relative paths and globs a task's agent must not read, from
   its role's read policy resolved against the project (the build graph's artifacts and
   the profile's layout).
@@ -55,10 +56,16 @@ def check_agent_rules(rules: Mapping[str, RuleSpec], instances: Iterable[RuleIns
                 f"rule {rule.id!r}: role {role.id!r} is not handed out as an agent task "
                 f"({role.description})"
             )
-        elif role.write_scope == "none":
+        elif role.write_scope == "none" and not role.engine_writes:
             problems.append(
                 f"rule {rule.id!r}: role {role.id!r} writes no files, so it cannot produce "
                 "the rule's outputs"
+            )
+        elif role.write_scope == "none" and len(rule.outputs) != 1:
+            problems.append(
+                f"rule {rule.id!r}: role {role.id!r} writes no files; the engine writes "
+                f"exactly one output from its reply, so the rule must have exactly one "
+                f"output (it has {len(rule.outputs)})"
             )
         elif role.write_scope in ("plan", "proposal") and len(rule.outputs) != 1:
             problems.append(
@@ -71,7 +78,20 @@ def check_agent_rules(rules: Mapping[str, RuleSpec], instances: Iterable[RuleIns
         if owner is None or owner.kind != "agent" or owner.role is None:
             continue
         role = find_role(owner.role)
-        if role is None or not role.read_policy.deny_kinds:
+        if role is None:
+            continue
+        if role.dispatch and role.write_scope == "none" and role.engine_writes:
+            for ref in instance.outputs:
+                key = f"{owner.id}:out:{ref.kind}"
+                if ref.kind not in role.engine_writes and key not in seen:
+                    seen.add(key)
+                    kinds = ", ".join(repr(k) for k in role.engine_writes)
+                    problems.append(
+                        f"rule {owner.id!r}: role {role.id!r} writes no files, and the engine "
+                        f"writes only a {kinds} output from its reply, but output "
+                        f"{ref.path!r} is a {ref.kind!r} artifact"
+                    )
+        if not role.read_policy.deny_kinds:
             continue
         for ref in instance.inputs:
             locator = ref.path or ref.model_key

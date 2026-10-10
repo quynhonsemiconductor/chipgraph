@@ -1,0 +1,278 @@
+# Critic review evals (task M2-09): sample diffs on a copy of examples/tinysoc.
+#
+# Each sample is one change to a fresh, committed copy of tinysoc, left uncommitted in
+# the working tree: the review rule `digital-rtl/review[block=<block>]` diffs it against
+# HEAD. A `defect` sample plants one known bug; a `clean` sample is a formatting,
+# comment-only or behaviour-preserving change, there to count false alarms.
+#
+# Fields:
+# - id: `d-NN` (defect) or `c-NN` (clean); `block`: the block whose review sees it.
+# - edits: [{file, find, replace}]: `find` must occur exactly once in `file`.
+# - description: one line, what the change does.
+# Defect samples also have:
+# - class: the defect class, one of the review skill's categories;
+#   `also`: other categories a correct comment may use.
+# - req: the requirement id the change breaks (null when the spec says it outside a REQ).
+# - spec: `path:line` of the spec line it contradicts; `spec_has`: text on that line.
+# - at: {file, line, has}: where a correct review points, in the changed file (`has`:
+#   text on that line after the change).
+#
+# Grading (grade.py): a defect is caught when one comment is on `at.file`, within 3 lines
+# of `at.line`, and its category is `class` (or one of `also`) or its `req_id` is `req`.
+# A clean sample is a false alarm when its review has any `blocker` or `major` comment.
+# The suite passes with recall >= 70 % (at least 12 of the 16 defects) and at most 1
+# false alarm on the 4 clean samples.
+schema_version: 1
+project: examples/tinysoc
+
+samples:
+  - id: d-01
+    block: timer
+    class: reset
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:59
+    spec_has: "`COUNT`"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      count_q   <= 32'd0;\n"
+        replace: "      count_q   <= 32'd1;\n"
+    at: {file: rtl/tiny_timer.sv, line: 28, has: "count_q   <= 32'd1;"}
+    description: COUNT resets to 1; the register map says every register resets to 0.
+
+  - id: d-02
+    block: timer
+    class: counter
+    also: [spec_mismatch]
+    req: REQ-TIM-003
+    spec: doc/specs/TINY_TIMER_MAS.md:75
+    spec_has: REQ-TIM-003
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      if (enable_q && count_q == compare_q) begin\n"
+        replace: "      if (enable_q && count_q == compare_q + 32'd1) begin\n"
+    at: {file: rtl/tiny_timer.sv, line: 51, has: "compare_q + 32'd1"}
+    description: The interrupt fires one count late (COUNT == COMPARE + 1).
+
+  - id: d-03
+    block: timer
+    class: register_map
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:60
+    spec_has: "`COMPARE`"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "          2'd1: compare_q <= wdata;\n"
+        replace: "          2'd3: compare_q <= wdata;\n"
+    at: {file: rtl/tiny_timer.sv, line: 40, has: "2'd3: compare_q"}
+    description: COMPARE is written at offset 0x3 instead of 0x1.
+
+  - id: d-04
+    block: timer
+    class: bit_order
+    also: [spec_mismatch]
+    req: REQ-TIM-005
+    spec: doc/specs/TINY_TIMER_MAS.md:82
+    spec_has: REQ-TIM-005
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      2'd2:    rdata = {30'd0, irq_q, enable_q};\n"
+        replace: "      2'd2:    rdata = {30'd0, enable_q, irq_q};\n"
+    at: {file: rtl/tiny_timer.sv, line: 61, has: "{30'd0, enable_q, irq_q}"}
+    description: CTRL reads back enable in bit 1 and pending in bit 0, swapped.
+
+  - id: d-05
+    block: timer
+    class: missing_req
+    also: [spec_mismatch]
+    req: REQ-TIM-004
+    spec: doc/specs/TINY_TIMER_MAS.md:78
+    spec_has: REQ-TIM-004
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "            enable_q <= wdata[0];\n            if (wdata[1]) begin\n              irq_q <= 1'b0;\n            end\n"
+        replace: "            enable_q <= wdata[0];\n"
+    at: {file: rtl/tiny_timer.sv, line: 42, has: "enable_q <= wdata[0];"}
+    description: The write-1-to-clear of a pending interrupt is gone.
+
+  - id: d-06
+    block: timer
+    class: width
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:60
+    spec_has: "31:0"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "  logic [31:0] compare_q;\n"
+        replace: "  logic [15:0] compare_q;\n"
+    at: {file: rtl/tiny_timer.sv, line: 22, has: "logic [15:0] compare_q;"}
+    description: COMPARE is held in 16 bits; the register is 32 bits wide.
+
+  - id: d-07
+    block: timer
+    class: hard_coded
+    also: [spec_mismatch]
+    req: REQ-TIM-003
+    spec: doc/specs/TINY_TIMER_MAS.md:75
+    spec_has: REQ-TIM-003
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      if (enable_q && count_q == compare_q) begin\n"
+        replace: "      if (enable_q && count_q == 32'd1000) begin\n"
+    at: {file: rtl/tiny_timer.sv, line: 51, has: "32'd1000"}
+    description: The interrupt compares COUNT with a literal 1000 instead of COMPARE.
+
+  - id: d-08
+    block: timer
+    class: spec_mismatch
+    also: [bit_order]
+    req: REQ-TIM-004
+    spec: doc/specs/TINY_TIMER_MAS.md:62
+    spec_has: "`IRQ_CLR`"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "            if (wdata[1]) begin\n"
+        replace: "            if (wdata[0]) begin\n"
+    at: {file: rtl/tiny_timer.sv, line: 43, has: "if (wdata[0]) begin"}
+    description: The interrupt clear listens to bit 0 (EN) instead of bit 1 (IRQ_CLR).
+
+  - id: d-09
+    block: gpio
+    class: reset
+    req: null
+    spec: doc/specs/TINY_GPIO_MAS.md:64
+    spec_has: "`DIR`"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "      dir_q <= 8'd0;\n"
+        replace: "      dir_q <= 8'hFF;\n"
+    at: {file: rtl/tiny_gpio.sv, line: 32, has: "dir_q <= 8'hFF;"}
+    description: DIR resets to all ones (every pin an output); it resets to 0.
+
+  - id: d-10
+    block: gpio
+    class: register_map
+    req: REQ-GPIO-003
+    spec: doc/specs/TINY_GPIO_MAS.md:64
+    spec_has: "`0x2`"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "        2'd2: dir_q <= wdata[7:0];\n"
+        replace: "        2'd1: dir_q <= wdata[7:0];\n"
+    at: {file: rtl/tiny_gpio.sv, line: 36, has: "2'd1: dir_q"}
+    description: DIR is written at offset 0x1 (the read-only DATA_IN) instead of 0x2.
+
+  - id: d-11
+    block: gpio
+    class: bit_order
+    req: REQ-GPIO-001
+    spec: doc/specs/TINY_GPIO_MAS.md:70
+    spec_has: REQ-GPIO-001
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "  assign pin_out = out_q;\n"
+        replace: "  assign pin_out = {out_q[0], out_q[1], out_q[2], out_q[3],\n                    out_q[4], out_q[5], out_q[6], out_q[7]};\n"
+    at: {file: rtl/tiny_gpio.sv, line: 51, has: "assign pin_out = {out_q[0]"}
+    description: pin_out drives DATA_OUT in reversed bit order.
+
+  - id: d-12
+    block: gpio
+    class: width
+    req: null
+    spec: doc/specs/TINY_GPIO_MAS.md:50
+    spec_has: "`pin_in`"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "    input  logic [7:0]   pin_in,\n"
+        replace: "    input  logic [6:0]   pin_in,\n"
+    at: {file: rtl/tiny_gpio.sv, line: 21, has: "logic [6:0]   pin_in"}
+    description: pin_in is 7 bits wide; the interface has 8 input pins.
+
+  - id: d-13
+    block: gpio
+    class: missing_req
+    req: REQ-GPIO-001
+    spec: doc/specs/TINY_GPIO_MAS.md:70
+    spec_has: REQ-GPIO-001
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "        2'd0: out_q <= wdata[7:0];\n"
+        replace: ""
+    at: {file: rtl/tiny_gpio.sv, line: 35, has: "2'd2: dir_q <= wdata[7:0];"}
+    description: A write to DATA_OUT no longer updates the output register.
+
+  - id: d-14
+    block: gpio
+    class: hard_coded
+    also: [spec_mismatch, missing_req]
+    req: REQ-GPIO-002
+    spec: doc/specs/TINY_GPIO_MAS.md:75
+    spec_has: REQ-GPIO-002
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "      2'd1:    rdata = {24'd0, pin_in};\n"
+        replace: "      2'd1:    rdata = {24'd0, 8'h00};\n"
+    at: {file: rtl/tiny_gpio.sv, line: 45, has: "{24'd0, 8'h00}"}
+    description: DATA_IN reads a constant 0 instead of pin_in.
+
+  - id: d-15
+    block: gpio
+    class: latch
+    also: [spec_mismatch, missing_req]
+    req: REQ-GPIO-003
+    spec: doc/specs/TINY_GPIO_MAS.md:80
+    spec_has: REQ-GPIO-003
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "      2'd2:    rdata = {24'd0, dir_q};\n      default: rdata = 32'd0;\n"
+        replace: "      2'd2:    rdata = {24'd0, dir_q};\n"
+    at: {file: rtl/tiny_gpio.sv, line: 46, has: "2'd2:    rdata = {24'd0, dir_q};"}
+    description: The read mux lost its default, so rdata latches for offset 0x3.
+
+  - id: d-16
+    block: top
+    class: register_map
+    req: null
+    spec: chip.yml:29
+    spec_has: "base: 0x4"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  localparam logic [1:0] kSelGpio = 2'd1;\n"
+        replace: "  localparam logic [1:0] kSelGpio = 2'd2;\n"
+    at: {file: rtl/tiny_top.sv, line: 22, has: "kSelGpio = 2'd2;"}
+    description: GPIO is decoded at block select 2 (base 0x8); chip.yml puts it at 0x4.
+
+  - id: c-01
+    block: timer
+    clean: true
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "// A minimal free-running counter with a compare register and a level interrupt.\n"
+        replace: "// A small free-running 32-bit counter with a compare register and a level interrupt.\n"
+    description: Comment only - the header comment is reworded.
+
+  - id: c-02
+    block: gpio
+    clean: true
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "        2'd0: out_q <= wdata[7:0];\n        2'd2: dir_q <= wdata[7:0];\n"
+        replace: "        2'd0:    out_q <= wdata[7:0];\n        2'd2:    dir_q <= wdata[7:0];\n"
+    description: Formatting only - the write case items are aligned like the read mux.
+
+  - id: c-03
+    block: timer
+    clean: true
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      2'd2:    rdata = {30'd0, irq_q, enable_q};\n"
+        replace: "      2'd2:    rdata = {{30{1'b0}}, irq_q, enable_q};\n"
+    description: Correct change - the CTRL readback zero-fill is written as a replication.
+
+  - id: c-04
+    block: top
+    clean: true
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "      default:   rdata = 32'd0;\n"
+        replace: "      default:   rdata = '0;\n"
+    description: Correct change - the default read data uses the fill literal '0.

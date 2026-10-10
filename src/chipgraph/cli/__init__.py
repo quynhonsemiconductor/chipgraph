@@ -1409,7 +1409,9 @@ def _evals_harness() -> object:
 @_handle_errors
 def eval_cmd(
     ctx: typer.Context,
-    suite: Annotated[str, typer.Argument(help="ask, triage, triage-holdout or triage-holdout2.")],
+    suite: Annotated[
+        str, typer.Argument(help="ask, triage, triage-holdout, triage-holdout2 or review.")
+    ],
     runtime: Annotated[
         Literal["fake", "claude-code"],
         typer.Option("--runtime", help="fake: scripted, no model (CI); claude-code: real."),
