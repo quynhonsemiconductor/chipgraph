@@ -1,0 +1,29 @@
+# The human gate on a block's plan (DESIGN.md 6.1; task M2-03).
+#
+# A `gen` rule whose only file input is the plan, gated by `plan:{block}`. The gate covers
+# a rule instance's file inputs, so approving it pins the plan file's hash:
+#
+#   chipgraph plan show <block>                       # read it first
+#   chipgraph approve plan:<block> --instance 'digital-rtl/plan_expand[block=<block>]'
+#
+# Editing the plan afterwards changes its hash and puts the gate back to waiting. Once
+# approved, the `plan_expand` tool checks the plan again and writes the approved plan
+# artifact below. Rules that say `foreach: plan.modules` then get one instance per
+# module (params `block`, `module`), in dependency order, each bounded by the module's
+# write set; with no approved, valid plan they get none.
+rule: plan_expand
+kind: gen
+description: >-
+  After a person approves the block's plan, check it again and write the approved plan
+  (modules in build order, their dependencies and write sets).
+foreach: blocks
+inputs:
+  - artifact: "plan/{block}.plan.yml"
+outputs:
+  - "plan/{block}.approved.json"
+gate: "plan:{block}"
+run:
+  use: plan_expand
+  args:
+    plan: "plan/{block}.plan.yml"
+    out: "plan/{block}.approved.json"

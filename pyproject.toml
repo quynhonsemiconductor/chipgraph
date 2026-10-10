@@ -49,6 +49,7 @@ local = "chipgraph.adapters.runner.local:LocalRunner"
 [project.entry-points."chipgraph.adapters.tool"]
 cmd = "chipgraph.adapters.tool.cmd:CmdTool"
 edalize = "chipgraph.adapters.tool.edalize:EdalizeTool"
+plan_expand = "chipgraph.packs.digital_rtl.plan.expand:PlanExpandTool"
 
 [project.entry-points."chipgraph.adapters.parser"]
 verilator = "chipgraph.adapters.parser.verilator:VerilatorParser"
@@ -68,6 +69,7 @@ trace = "chipgraph.checks.trace:TraceCheck"
 connect = "chipgraph.checks.connect:ConnectCheck"
 hardcode = "chipgraph.checks.hardcode:HardcodeCheck"
 cdc_struct = "chipgraph.checks.cdc_struct:CdcStructCheck"
+plan_check = "chipgraph.checks.plan_check:PlanCheck"
 
 [project.entry-points."chipgraph.adapters.llm"]
 fake = "chipgraph.adapters.llm.fake:FakeProvider"

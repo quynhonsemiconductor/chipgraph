@@ -828,6 +828,32 @@ def approve(
         typer.echo(f"{decision} recorded for gate {gate_id!r} by {who!r}")
 
 
+# --- plan show -----------------------------------------------------------------------
+
+plan_app = typer.Typer(no_args_is_help=True, help="Read a block's plan before approving it.")
+app.add_typer(plan_app, name="plan")
+
+
+@plan_app.command("show")
+@_handle_errors
+def plan_show(ctx: typer.Context, block: Annotated[str, typer.Argument()]) -> None:
+    """Print a block's plan for its approver: modules, REQ coverage, write sets, questions.
+
+    Exit 1 when there is no plan yet or it fails `plan_check`.
+    """
+    from chipgraph.packs.digital_rtl.plan.show import plan_summary, render_text
+
+    state: CliState = ctx.obj
+    app_ctx = _load_ctx(state)
+    summary = plan_summary(app_ctx, block)
+    if state.json_output:
+        typer.echo(json.dumps(summary, indent=2))
+    else:
+        typer.echo(render_text(summary), nl=False)
+    if not summary["exists"] or not summary["ok"]:
+        raise typer.Exit(code=1)
+
+
 # --- baseline ------------------------------------------------------------------------
 
 

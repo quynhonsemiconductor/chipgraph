@@ -71,6 +71,41 @@ class ForeachResolver(Protocol):
         ...
 
 
+class ForeachEntry(BaseModel):
+    """One instance a `foreach` selector expands to, with what the graph enforces for it.
+
+    A plain `ForeachResolver` only gives `params`. A resolver that expands from data a
+    person approved (e.g. a plan's modules) can also bound each instance:
+
+    - `inputs`: extra repo-relative paths the instance consumes (after the rule's own
+      inputs), so it depends on whatever produces them;
+    - `after`: the params (without the base params) of other entries of the *same*
+      expansion that this instance runs after: an ordering edge between instances of
+      one rule;
+    - `writes`: when set, every output of the instance must be one of these paths.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    params: dict[str, str] = Field(description="The instance's param values.")
+    inputs: tuple[str, ...] = Field(default=(), description="Extra input paths.")
+    after: tuple[dict[str, str], ...] = Field(
+        default=(), description="Params of sibling entries this one runs after."
+    )
+    writes: frozenset[str] | None = Field(
+        default=None, description="The only paths the instance may output, when set."
+    )
+
+
+@runtime_checkable
+class EntryForeachResolver(ForeachResolver, Protocol):
+    """A `ForeachResolver` whose expansion also carries inputs, ordering and write sets."""
+
+    def expand_entries(self, expr: str) -> list[ForeachEntry]:
+        """Return one `ForeachEntry` per instance the selector expands to."""
+        ...
+
+
 class StaticForeach:
     """A `ForeachResolver` backed by a fixed mapping, for tests and simple builds."""
 
@@ -115,15 +150,19 @@ def _ref_key(ref: ArtifactRef) -> str:
     return f"{ref.repo}:{locator}"
 
 
-def _param_sets(
+def _entries(
     rule: RuleSpec,
     resolver: ForeachResolver,
     base_params: Mapping[str, str] | None,
-) -> list[dict[str, str]]:
+) -> list[ForeachEntry]:
     base = dict(base_params or {})
     if rule.foreach is None:
-        return [dict(base)]
-    return [{**base, **params} for params in resolver.expand(rule.foreach)]
+        return [ForeachEntry(params=dict(base))]
+    if isinstance(resolver, EntryForeachResolver):
+        entries = resolver.expand_entries(rule.foreach)
+    else:
+        entries = [ForeachEntry(params=params) for params in resolver.expand(rule.foreach)]
+    return [entry.model_copy(update={"params": {**base, **entry.params}}) for entry in entries]
 
 
 def _parse_target(target: str) -> tuple[str, dict[str, str]]:
@@ -260,8 +299,13 @@ def build_graph(
 ) -> BuildGraph:
     """Build a `BuildGraph` from `rules`, expanding `foreach` with `resolver`.
 
+    An `EntryForeachResolver` may also give each instance extra inputs, sibling
+    instances of the same rule to run after (ordering edges), and the write set its
+    outputs must stay inside (see `ForeachEntry`).
+
     Raises `GraphError` for a missing placeholder value, two instances writing the
-    same output (the write-set rule, F2), or a dependency cycle.
+    same output (the write-set rule, F2), an output outside an entry's write set, an
+    ordering edge to an instance that does not exist, or a dependency cycle.
     """
     rules_by_id: dict[str, RuleSpec] = {}
     for rule in rules:
@@ -272,9 +316,12 @@ def build_graph(
     instances: dict[str, RuleInstance] = {}
     producers: dict[str, str] = {}
     spec_fragments: dict[str, str] = {}
+    after: dict[str, tuple[str, ...]] = {}
 
     for rule in rules_by_id.values():
-        for params in _param_sets(rule, resolver, base_params):
+        base = dict(base_params or {})
+        for entry in _entries(rule, resolver, base_params):
+            params = entry.params
             output_refs = tuple(
                 ArtifactRef(
                     repo=repo,
@@ -289,6 +336,12 @@ def build_graph(
                 )
                 for input_spec in rule.inputs
             )
+            declared = {ref.path for ref in input_refs}
+            input_refs += tuple(
+                ArtifactRef(repo=repo, kind=kind_for(path), path=path)
+                for path in dict.fromkeys(entry.inputs)
+                if path not in declared
+            )
 
             instance_id = RuleInstance.make_id(rule.id, params)
             if instance_id in instances:
@@ -296,12 +349,22 @@ def build_graph(
                     f"duplicate instance id {instance_id!r}: 'foreach' for rule {rule.id!r} "
                     "produced the same params twice"
                 )
+            if entry.writes is not None:
+                outside = [ref.path for ref in output_refs if ref.path not in entry.writes]
+                if outside:
+                    raise GraphError(
+                        f"{instance_id!r} would write {', '.join(map(repr, outside))}, outside "
+                        f"the write set its foreach entry grants: {sorted(entry.writes)!r}"
+                    )
             instances[instance_id] = RuleInstance(
                 rule_id=rule.id,
                 params=params,
                 inputs=input_refs,
                 outputs=output_refs,
                 instance_id=instance_id,
+            )
+            after[instance_id] = tuple(
+                RuleInstance.make_id(rule.id, {**base, **sibling}) for sibling in entry.after
             )
 
             for ref in output_refs:
@@ -329,6 +392,13 @@ def build_graph(
             if producer == iid or producer in dep_ids:
                 continue
             dep_ids.append(producer)
+        for sibling in after[iid]:
+            if sibling == iid:
+                raise GraphError(f"{iid!r} is listed to run after itself")
+            if sibling not in instances:
+                raise GraphError(f"{iid!r} runs after {sibling!r}, which is not in the graph")
+            if sibling not in dep_ids:
+                dep_ids.append(sibling)
         deps[iid] = tuple(sorted(dep_ids))
         for producer in dep_ids:
             dependents[producer].append(iid)

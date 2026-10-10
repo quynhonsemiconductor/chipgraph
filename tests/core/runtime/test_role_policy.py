@@ -94,7 +94,7 @@ def test_the_review_rule_of_the_digital_rtl_pack_passes() -> None:
     blocks = StaticForeach({"blocks": [{"block": "timer"}, {"block": "gpio"}]})
     graph = build_graph(rules, blocks)
     check_agent_rules(graph.rules, graph.instances.values())
-    assert sorted(graph.instances) == [
+    assert sorted(i for i in graph.instances if i.startswith("digital-rtl/review")) == [
         "digital-rtl/review[block=gpio]",
         "digital-rtl/review[block=timer]",
     ]

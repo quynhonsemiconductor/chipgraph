@@ -1,0 +1,56 @@
+# A realistic plan for the tinysoc `timer` block (examples/tinysoc), used by the M2-03
+# tests: the existing top `tiny_timer` is replaced and split into a counter and an
+# interrupt module; ports and requirements are the Design Model's.
+schema_version: 1
+block: timer
+top: tiny_timer
+modules:
+  - name: tiny_timer_counter
+    summary: The 32-bit COUNT register; counts while enabled, loads on a write.
+    reqs: [REQ-TIM-001, REQ-TIM-002]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: en, direction: input, width: 1, internal: true }
+        - { name: load, direction: input, width: 1, internal: true }
+        - { name: load_value, direction: input, width: 32, internal: true }
+        - { name: count, direction: output, width: 32, internal: true }
+    writes:
+      - { path: rtl/tiny_timer_counter.sv }
+    budget: { tries: 3, tier: medium }
+  - name: tiny_timer_irq
+    summary: The pending flag; set when COUNT reaches COMPARE while enabled, cleared by IRQ_CLR.
+    reqs: [REQ-TIM-003, REQ-TIM-004]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: en, direction: input, width: 1, internal: true }
+        - { name: count, direction: input, width: 32, internal: true }
+        - { name: compare, direction: input, width: 32, internal: true }
+        - { name: clr, direction: input, width: 1, internal: true }
+        - { name: irq, direction: output, width: 1 }
+    writes:
+      - { path: rtl/tiny_timer_irq.sv }
+    budget: { tries: 3, tier: medium }
+  - name: tiny_timer
+    summary: The block top; register decode and read mux, instantiates the counter and the irq.
+    reqs: [REQ-TIM-005]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: addr, direction: input, width: 2 }
+        - { name: wr_en, direction: input, width: 1 }
+        - { name: wdata, direction: input, width: 32 }
+        - { name: rdata, direction: output, width: 32 }
+        - { name: irq, direction: output, width: 1 }
+    depends_on: [tiny_timer_counter, tiny_timer_irq]
+    writes:
+      - { path: rtl/tiny_timer.sv, replaces: true }
+    budget: { tries: 3, tier: medium }
+assumptions:
+  - COUNT wraps from 0xFFFFFFFF to 0 (the MAS does not say).
+open_questions: []
+unassigned_reqs: []
