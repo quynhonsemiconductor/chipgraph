@@ -148,6 +148,12 @@ into the command's prompt.
   tool that cannot run) uses no try, at most 2 times. When the budget is gone the
   engine journals the stop (`rule_fail` with the label) and writes HANDOFF.md at once;
   the task stays stopped until an input changes or `chipgraph rewind <task>`.
+  **A HANDOFF.md is a snapshot of the run that wrote it.** The one written when a task
+  stops belongs to the run that dispatched its last try, so it can still list a task that
+  was accepted afterwards as "waiting for an agent" (or "rejected"). The next `next_task`
+  (or `chipgraph build`) writes a fresh HANDOFF.md for its own run, and that one is
+  accurate; read the newest file under `.chipgraph/state/runs/` and the `handoff` path
+  that `next_task` returns.
   A review task (`"reply": "review"`, agent `chipgraph:critic`, M2-09) writes no file:
   the main session passes the critic's JSON review as `result.review`; the engine
   validates it against the diff the critic was shown and writes the report itself.

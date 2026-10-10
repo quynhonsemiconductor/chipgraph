@@ -215,7 +215,11 @@ def test_check_error_is_retried_without_a_try_and_bounded(tmp_path: Path) -> Non
     agent = fail.payload["agent"]
     assert (agent["reason"], agent["tries"], agent["infra_failures"]) == ("infra", 0, 3)
     assert p.executor.results[AGENT].status == "failed"
-    assert "chipgraph doctor" in _handoff(p, summary.run_id)
+    text = _handoff(p, summary.run_id)
+    assert "chipgraph doctor" in text
+    # The stop is remembered, so `resume` would not run the instance again: rewind it.
+    assert f"`chipgraph rewind {AGENT}`" in text
+    assert "chipgraph resume" not in text.split("## Next step")[1]
 
 
 def test_infra_then_pass_uses_one_try(tmp_path: Path) -> None:
