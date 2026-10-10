@@ -378,7 +378,8 @@ class ResolvedProfile:
         return leaves
 
     def check(self) -> list[ConfigIssue]:
-        """Consistency problems: user overreach, duplicate layout templates, local plugins."""
+        """Consistency problems: user overreach, duplicate layout templates, plan limits,
+        local plugins."""
         issues: list[ConfigIssue] = []
         for area, user_level in self.user.autonomy.items():
             project_level = self.profile.autonomy.get(area)
@@ -436,6 +437,43 @@ class ResolvedProfile:
                     )
                 else:
                     instance_owner[instance] = block_name
+
+        plan = self.profile.plan
+        if plan.max_total_tries < plan.max_modules:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key="plan.max_total_tries",
+                    message=(
+                        f"{plan.max_total_tries} is below plan.max_modules "
+                        f"({plan.max_modules}): every module needs at least one try, so a "
+                        f"plan of {plan.max_modules} modules can never pass"
+                    ),
+                )
+            )
+        if plan.max_depth > plan.max_modules:
+            issues.append(
+                ConfigIssue(
+                    severity="info",
+                    key="plan.max_depth",
+                    message=(
+                        f"{plan.max_depth} is above plan.max_modules ({plan.max_modules}): "
+                        "a dependency chain cannot be longer than the number of modules"
+                    ),
+                )
+            )
+        max_parallel = self.profile.fanout.max_parallel
+        cpus = os.cpu_count()
+        if max_parallel is not None and cpus is not None and max_parallel > cpus:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key="fanout.max_parallel",
+                    message=(
+                        f"{max_parallel} branches at once is more than this machine's {cpus} CPUs"
+                    ),
+                )
+            )
 
         for index, plugin in enumerate(self.profile.plugins):
             issues.append(

@@ -8,6 +8,7 @@ conventions (layout, naming, templates, checks).
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Literal, Self
 
@@ -197,6 +198,38 @@ class DecisionsCfg(BaseModel):
     store: Literal["repo", "state"] = Field(
         default="repo", description="Where gate/waiver decisions are stored."
     )
+
+
+FANOUT_DEFAULT_MAX_PARALLEL = 4
+"""The most fan-out branches run at once when the profile does not say (capped by CPUs)."""
+
+
+class FanoutCfg(BaseModel):
+    """How a fan-out runs its branches (DESIGN 5.3): how many at once, how long each may take.
+
+    `max_parallel` unset means `min(4, cpu count)`; a profile sets it lower for an API rate
+    limit or an EDA license count. `branch_timeout_s` unset means no limit.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_parallel: int | None = Field(
+        default=None,
+        ge=1,
+        description="Branches run at once; unset means min(4, cpu count).",
+    )
+    branch_timeout_s: float | None = Field(
+        default=None,
+        gt=0,
+        description="Seconds a branch may run before it is stopped; unset means no limit.",
+    )
+
+    def effective_max_parallel(self, cpu_count: int | None = None) -> int:
+        """`max_parallel`, or `min(4, cpu_count)` (the machine's CPUs when not given)."""
+        if self.max_parallel is not None:
+            return self.max_parallel
+        cpus = cpu_count if cpu_count is not None else (os.cpu_count() or 1)
+        return max(1, min(FANOUT_DEFAULT_MAX_PARALLEL, cpus))
 
 
 DecideTier = Literal["small", "large"]
@@ -475,6 +508,26 @@ class PolicyCfg(BaseModel):
     )
 
 
+class PlanCfg(BaseModel):
+    """Limits on a block's plan: how many dynamic nodes a Planner may propose (DESIGN 5.3).
+
+    The plan check rejects a plan over any limit, and the graph never expands one: the
+    limits bound how many rule instances an approved plan can add.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_modules: int = Field(default=12, ge=1, description="Most modules one plan may list.")
+    max_depth: int = Field(
+        default=4,
+        ge=1,
+        description="Longest chain of module dependencies, counted in modules (1: none).",
+    )
+    max_total_tries: int = Field(
+        default=36, ge=1, description="Most tries the modules' budgets may add up to."
+    )
+
+
 class Profile(BaseModel):
     """A project's full, merged configuration (DESIGN 8.3-8.4, 8.6, 12.6)."""
 
@@ -518,6 +571,14 @@ class Profile(BaseModel):
     decide: DecideCfg = Field(
         default_factory=DecideCfg,
         description="Thresholds of the fast decision layer decide(): rule, small, large model.",
+    )
+    plan: PlanCfg = Field(
+        default_factory=PlanCfg,
+        description="Limits on a block's plan: modules, dependency depth, total tries.",
+    )
+    fanout: FanoutCfg = Field(
+        default_factory=FanoutCfg,
+        description="Fan-out limits: branches at once, time per branch (DESIGN 5.3).",
     )
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Glob pattern to path-specific exception rule."

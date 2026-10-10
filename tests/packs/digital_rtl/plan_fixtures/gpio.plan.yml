@@ -1,0 +1,44 @@
+# A realistic plan for the tinysoc `gpio` block (examples/tinysoc), used by the M2-03
+# tests: the output registers are split off the existing top `tiny_gpio`.
+schema_version: 1
+block: gpio
+top: tiny_gpio
+modules:
+  - name: tiny_gpio_regs
+    summary: The DATA_OUT and DIR registers, written over the register bus.
+    reqs: [REQ-GPIO-001, REQ-GPIO-003]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: addr, direction: input, width: 2 }
+        - { name: wr_en, direction: input, width: 1 }
+        - { name: wdata, direction: input, width: 32 }
+        - { name: pin_out, direction: output, width: 8 }
+        - { name: pin_dir, direction: output, width: 8 }
+    writes:
+      - { path: rtl/tiny_gpio_regs.sv }
+    budget: { tries: 3, tier: medium }
+  - name: tiny_gpio
+    summary: The block top; read mux over DATA_OUT, DATA_IN and DIR, instantiates the registers.
+    reqs: [REQ-GPIO-002]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: addr, direction: input, width: 2 }
+        - { name: wr_en, direction: input, width: 1 }
+        - { name: wdata, direction: input, width: 32 }
+        - { name: rdata, direction: output, width: 32 }
+        - { name: pin_in, direction: input, width: 8 }
+        - { name: pin_out, direction: output, width: 8 }
+        - { name: pin_dir, direction: output, width: 8 }
+    depends_on: [tiny_gpio_regs]
+    writes:
+      - { path: rtl/tiny_gpio.sv, replaces: true }
+    budget: { tries: 2, tier: medium }
+assumptions:
+  - pin_in is already synchronous to clk (tinysoc has a single clock).
+open_questions:
+  - Should DATA_IN go through a two-flop synchroniser before it is read?
+unassigned_reqs: []

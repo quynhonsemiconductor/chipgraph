@@ -1,0 +1,28 @@
+# The Planner (DESIGN.md 5.1, 5.3; task M2-03).
+#
+# For each block, a `planner` task reads the block's slice of the Design Model
+# (requirements, interface ports, existing modules) and writes one file: the block's plan
+# (`Plan`, schemas/formats/plan.schema.json). Its context also gives the layout paths a
+# module may write, the files that already exist there, the limits (profile `plan:`),
+# the naming rule for module names and the plan schema.
+#
+# The plan is checked at once by `plan_check` (enable it in the profile:
+# `adapters: { plan_check: { use: plan_check } }`); its issues are the redo text of the
+# next try. A plan that passes is not used yet: `digital-rtl/plan_expand` waits on the
+# gate `plan:{block}` until a person reads `chipgraph plan show <block>` and approves.
+rule: plan
+kind: agent
+role: planner
+description: >-
+  Split the block into modules: what each does, which requirements it covers, its ports
+  from the Design Model, what it depends on, the files it writes and its budget; list the
+  assumptions, the open questions and every requirement left unassigned, with the reason.
+foreach: blocks
+inputs:
+  - model: "block/{block}"
+outputs:
+  - "plan/{block}.plan.yml"
+skills: [plan/modules]
+checks: [plan_check]
+budget:
+  tries: 3

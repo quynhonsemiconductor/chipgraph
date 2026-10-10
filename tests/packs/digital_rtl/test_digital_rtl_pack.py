@@ -27,7 +27,7 @@ def test_pack_is_discovered_among_builtins(pack: Pack) -> None:
 
 
 def test_review_rule(pack: Pack) -> None:
-    [rule] = load_pack_rules(pack)
+    [rule] = [r for r in load_pack_rules(pack) if r.id == "digital-rtl/review"]
     assert rule.id == "digital-rtl/review"
     assert (rule.kind, rule.role, rule.foreach) == ("agent", "critic", "blocks")
     assert rule.outputs == ("reports/review/{block}.json",)
