@@ -30,6 +30,12 @@ llm = [
 evals = [
     "inspect-ai==0.3.277",
 ]
+# Simulation (adapter `edalize`, parser `cocotb`): exact pins, since cocotb's GPI env
+# contract changed between 1.x and 2.x and Edalize's cocotb glue lags it (docs/spikes/S3.md).
+sim = [
+    "edalize==0.6.8",
+    "cocotb==2.1.0",
+]
 
 [project.scripts]
 chipgraph = "chipgraph.cli:app"
@@ -42,10 +48,12 @@ local = "chipgraph.adapters.runner.local:LocalRunner"
 
 [project.entry-points."chipgraph.adapters.tool"]
 cmd = "chipgraph.adapters.tool.cmd:CmdTool"
+edalize = "chipgraph.adapters.tool.edalize:EdalizeTool"
 
 [project.entry-points."chipgraph.adapters.parser"]
 verilator = "chipgraph.adapters.parser.verilator:VerilatorParser"
 verible = "chipgraph.adapters.parser.verible:VeribleParser"
+cocotb = "chipgraph.adapters.parser.cocotb:CocotbParser"
 
 [project.entry-points."chipgraph.adapters.check"]
 layout = "chipgraph.checks.layout:LayoutCheck"

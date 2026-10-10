@@ -18,18 +18,21 @@ Stages, in `docker/Dockerfile`:
   by tag **and** digest.
 - `eda-base` — `debian:bookworm-slim` + the OSS CAD Suite release tarball for
   `$TARGETARCH` (`amd64` → `linux-x64`, `arm64` → `linux-arm64`), downloaded and
-  checked against a per-arch sha256.
+  checked against a per-arch sha256, plus what the `edalize` sim adapter needs from
+  Debian: `g++`, `liblz4-dev`, `zlib1g-dev` and `iverilog`, the latter linked into
+  `/opt/sim/bin`, which is first on `PATH` so Debian's Icarus wins over the suite's
+  (the suite's `vvp` cannot load a pip-installed cocotb; `docs/spikes/S3.md`).
 - `chipgraph-base` — installs Python (via `uv python install`) and `chipgraph` itself
-  from the repo source (`uv sync --locked --no-dev --no-editable`) into
+  from the repo source (`uv sync --locked --no-dev --no-editable --extra sim`) into
   `/opt/chipgraph/.venv`.
 - `test` — `chipgraph-base` plus the `dev` dependency group (pytest, ...) and the
   repo's `tests/` and `examples/` trees. Used only in CI / `make image-e2e`, never
   pushed.
 - *(default, unnamed final stage)* — lean runtime: just the OSS CAD Suite, uv's
   managed Python (needed because the venv's interpreter is a symlink into it, not a
-  copy), the `.venv`, and `perl`/`make`/`git`/`ca-certificates` (`perl` is what
-  Verilator's own launcher script needs; bookworm-slim's `perl-base` alone is not
-  enough). No repo source, no dev deps, non-root user, `WORKDIR /work`,
+  copy), the `.venv`, the sim packages above, and `perl`/`make`/`git`/`ca-certificates`
+  (`perl` is what Verilator's own launcher script needs; bookworm-slim's `perl-base`
+  alone is not enough). No repo source, no dev deps, non-root user, `WORKDIR /work`,
   `ENTRYPOINT ["chipgraph"]`.
 
 ```bash

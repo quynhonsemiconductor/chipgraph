@@ -542,6 +542,10 @@ otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
+sim = [
+    { name = "cocotb" },
+    { name = "edalize" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -559,6 +563,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'llm'", specifier = ">=1.9,<2" },
+    { name = "cocotb", marker = "extra == 'sim'", specifier = "==2.1.0" },
+    { name = "edalize", marker = "extra == 'sim'", specifier = "==0.6.8" },
     { name = "inspect-ai", marker = "extra == 'evals'", specifier = "==0.3.277" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=2.2,<3" },
@@ -570,7 +576,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "typer", specifier = ">=0.27" },
 ]
-provides-extras = ["otel", "llm", "evals"]
+provides-extras = ["otel", "llm", "evals", "sim"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -592,6 +598,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/0e/7fa0ef50764b67090eca4114772a2abf8b6148198475e54c660b97caeee6/click-8.5.0.tar.gz", hash = "sha256:ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34", size = 382235, upload-time = "2026-08-26T13:33:14.56Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl", hash = "sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360", size = 125251, upload-time = "2026-08-26T13:33:12.928Z" },
+]
+
+[[package]]
+name = "cocotb"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "find-libpython" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fa/78/10b7acfaeb41741286d34df039c8ff53850601ee4daa6cf58983887e65e3/cocotb-2.1.0.tar.gz", hash = "sha256:db9761f947dedf0f264dc1e7ef632e0f0b1d0eab26a4e6bbd4ca97ee46cb6da4", size = 372215, upload-time = "2026-08-30T19:02:17.2Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/a9/8b5b2cc94a9505013171e985dbf4f958d92d245041da9dcd721e21707d92/cocotb-2.1.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:5e5e0335d0a4e2dee1ab961fd0a0d766514fa6cec7ccc47690fd231816fd0a24", size = 711766, upload-time = "2026-08-30T19:01:54.239Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/b6/d0419d185da37a4e5f4354fefd18df7637daeb54bf5b5cb4cd91736ae7e7/cocotb-2.1.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:5043a87f3483404c0e6971ae7690f8d631c5263c864ec7d104160ecda326dd95", size = 688464, upload-time = "2026-08-30T19:01:55.5Z" },
+    { url = "https://files.pythonhosted.org/packages/65/c8/ed93a1d9909ed0d3881c36e2d3cbbf1254e391133b1d6b1055d4477c4dd5/cocotb-2.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7307d91f773c2b17191e5fe09dbe24e2b7b6e2927f9e225c3bc1d7f952530eff", size = 4839899, upload-time = "2026-08-30T19:01:57.223Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/5e/70ce05b82ec5659434c914d6840e281a633a045eadb0193be7342ca97b49/cocotb-2.1.0-cp313-cp313-win_amd64.whl", hash = "sha256:c5447f4d3c23781b4b1d95e58a1c4f45f3f35166e2a630d8f6ebf6910c054588", size = 659072, upload-time = "2026-08-30T19:01:58.658Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/a2/eca11049db7fd869bcfbf06a137a2060d65fc1035f2742e552d935675173/cocotb-2.1.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:d6cf7c82c0ae9a342784753ad960735a8b7f45a8fc09ddfa6ea3c23b178f23c8", size = 714385, upload-time = "2026-08-30T19:02:00.009Z" },
+    { url = "https://files.pythonhosted.org/packages/03/58/a6d6ffa981c79c7756e5562ebf34cd962c853b2c5280539a75fca4ffadb6/cocotb-2.1.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:a91e1ca46c8e34f28e746d4709ef2b8da93f0d54a9fc12586b02ea6aed720d33", size = 688449, upload-time = "2026-08-30T19:02:01.345Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/2e/0ef2fd8c897806369415a8739b717c358eb97fe4581ec8aadea46d3c08ae/cocotb-2.1.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:499b4258c1d520d05721d56b7ed340694be7a89a6982cc21a6cf114ef409e664", size = 4839747, upload-time = "2026-08-30T19:02:02.641Z" },
+    { url = "https://files.pythonhosted.org/packages/27/64/a22a64ecd233fab467bf8f5456dd147ca8cf8bcbf8b93d3ef2b5c0f0be0c/cocotb-2.1.0-cp314-cp314-win_amd64.whl", hash = "sha256:6aae61a627987900220a9d174edd80d599314d0225ee4dd7a33b65798cdda5c1", size = 669971, upload-time = "2026-08-30T19:02:04.005Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/5d/8e30b8b65966fc562536239a2bcc2441c4b4124fc7d8f4e50a18ed5e1926/cocotb-2.1.0-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:69b81d4fa3201059f1431e61eff8571a6b6612b14500699cc27bfa1d4d3c83f8", size = 715017, upload-time = "2026-08-30T19:02:05.252Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/9c/cd68994a36705d5a087bde37c8607bedee7a825746ffcda967ab9f04d96e/cocotb-2.1.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:157fff028a3aa0999451ff54b23a14ffabb4a00d1a23adbf17c3057b6fc2a10f", size = 689071, upload-time = "2026-08-30T19:02:06.711Z" },
+    { url = "https://files.pythonhosted.org/packages/75/82/ff6cd4b24ed7401120c78a6e0fa60f91741e8fe94e2ca6f0507f355c7f90/cocotb-2.1.0-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b4614edd8292826943c605cf71966c718f5b90ea2a4a2a16d1087a2cd05db416", size = 4850591, upload-time = "2026-08-30T19:02:08.117Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/5c/a6c8f68e41b75722570ad1873ecec16f1379ac6c64f7538d21d72b339620/cocotb-2.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f670e959a72cb362013c9f2dc581f3737c99bbe5822d54185a0c10354fca16ee", size = 670883, upload-time = "2026-08-30T19:02:09.888Z" },
 ]
 
 [[package]]
@@ -706,6 +736,18 @@ wheels = [
 ]
 
 [[package]]
+name = "edalize"
+version = "0.6.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jinja2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/77/e7b0f6b96c6eafdb798a8b7a4c76c064522d94aecb7fc0ea442ff7d6291b/edalize-0.6.8.tar.gz", hash = "sha256:d1d2b9d441789c718e7480c9c4ce55fd39b463f2a7f0f328da1daed7179b1e72", size = 397573, upload-time = "2026-04-24T21:18:51.276Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/35/dc7aeba94c4514394ecd8528e271a6dcdf92c41106b4bc03c84b0f7f9dd9/edalize-0.6.8-py3-none-any.whl", hash = "sha256:e8d8287358dac914fa68d388c468dd62eb39f7d1402c95bdb89f85a73593c0ba", size = 179483, upload-time = "2026-04-24T21:18:48.557Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.142.2"
 source = { registry = "https://pypi.org/simple" }
@@ -729,6 +771,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4b/51/a182494d1d8dde1240bff84dda57d48165d982e59582ce8f167e8e3d7628/filelock-4.0.10.tar.gz", hash = "sha256:00d6a81f976a6332551c2c10f39e12b4abb7e01c64d4c497b81a615bc9186f1f", size = 252487, upload-time = "2026-10-03T23:40:48.884Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/2a/4b1ea3f2180be251a5cff1e70c8a5b7994ffa5c8eab8937901f8a9db58fe/filelock-4.0.10-py3-none-any.whl", hash = "sha256:698048d158dc3c9e18cc5e88b3efdd4bd0e77d76686b22adb4511cc4b2c2f0db", size = 111193, upload-time = "2026-10-03T23:40:47.334Z" },
+]
+
+[[package]]
+name = "find-libpython"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/60/951b7ca316ab3ec928ed788de5fcb30b4a0292704e50b872c8edf24c11fe/find_libpython-0.5.1.tar.gz", hash = "sha256:12a0fb39ff8dcc64ad0fd554b1bd142ea4a8c4c18e5da6043a547ce7b25559fe", size = 9402, upload-time = "2026-02-11T03:18:04.844Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/1f/1d6079f4f0540aaa368aa20d89d98eda42f081c397a822c547340e32d1e3/find_libpython-0.5.1-py3-none-any.whl", hash = "sha256:723a8cfe6fed255a1f58b53c62ed556fb340ec0d456e9863ebc01a5cc047607d", size = 9201, upload-time = "2026-02-11T03:18:03.263Z" },
 ]
 
 [[package]]

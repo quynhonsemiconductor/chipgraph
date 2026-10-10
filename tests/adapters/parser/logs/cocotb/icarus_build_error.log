@@ -1,0 +1,4 @@
+iverilog -stiny_gpio -c s3_icarus.scr -o s3_icarus -g2012
+/work/sim/bc-edalize-icarus-build/src/broken.sv:2: syntax error
+/work/sim/bc-edalize-icarus-build/src/broken.sv:2: error: Syntax error in continuous assignment
+make: *** [s3_icarus] Error 2

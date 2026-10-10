@@ -16,6 +16,10 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
   **not run by anything yet** (there is no simulator wired to tinysoc's `dv/`); each
   test function names, in a `# verifies: <REQ-ID>` comment, the requirement it stands
   in for, so the `trace` cross check has a test that references every declared REQ-ID.
+- `dv/tb_tiny_gpio.py` — a real cocotb 2.x testbench for `tiny_gpio` (reset, write a
+  register through the bus, read it back), run on Verilator or Icarus by the `edalize`
+  sim adapter (`uv sync --extra sim`; see `tests/e2e/test_sim_edalize.py`). It is not
+  wired into this project's `.chipgraph.yml`, so `chipgraph check` needs no simulator.
 - `filelists/<block>.f` — one Verilator filelist per block (`timer`, `gpio`, `top`),
   paths relative to this directory.
 - `Makefile` — `make lint BLOCK=<block>` runs `verilator --lint-only -Wall`;
