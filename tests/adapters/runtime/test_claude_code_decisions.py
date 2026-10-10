@@ -260,14 +260,14 @@ def test_an_nda_question_is_never_queued(project: Project) -> None:
 def test_the_profile_models_name_the_subagent_model(tmp_path: Path) -> None:
     root = _project(
         tmp_path / "proj",
-        "project: demo\nmodels:\n  tiers:\n    small: claude-haiku-4-5\n",
+        "project: demo\nmodels:\n  tiers:\n    small: claude-haiku-5-5\n",
     )
     resolved = load(root)
     assert resolved is not None
     project = Project(root, resolved.profile.models)
     deferred = project.decide(_question())
-    assert isinstance(deferred, Deferred) and deferred.model == "claude-haiku-4-5"
-    assert project.pending()[0]["model"] == "claude-haiku-4-5"
+    assert isinstance(deferred, Deferred) and deferred.model == "claude-haiku-5-5"
+    assert project.pending()[0]["model"] == "claude-haiku-5-5"
     assert project.backend.model_for("large") == "opus"
 
 

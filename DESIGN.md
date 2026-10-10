@@ -359,7 +359,7 @@ Có trần số nhánh chạy song song, theo rate limit API và license EDA.
 
 ### 5.4 Chọn model và chi phí
 
-- **3 hạng**, map sang model cụ thể trong profile: nhỏ (Haiku 4.5), vừa (Sonnet 5),
+- **3 hạng**, map sang model cụ thể trong profile: nhỏ (Haiku 5.5), vừa (Sonnet 5),
   mạnh (Opus 5.5). Ở runtime `claude-code`, hạng được chuyển thành model của subagent
   (trong giới hạn gói Claude của người dùng).
 - **Leo thang theo bậc** khi fail.
@@ -614,7 +614,7 @@ models:                             # dùng cho runtime API (CI, evals) và ch�
   providers:
     claude: { api: anthropic }
     glm:    { api: anthropic-compatible, base_url: "https://api.z.ai/api/anthropic" }
-  tiers: { small: claude-haiku-4-5, medium: claude-sonnet-5, large: claude-opus-5-5 }
+  tiers: { small: claude-haiku-5-5, medium: claude-sonnet-5, large: claude-opus-5-5 }
   alt:   { medium: glm }            # model thay thế, chọn theo evals (D24)
 data: { default: internal, nda_paths: ["vendor/pdk/**"], nda_model: block }
 reviewers: [nghia]

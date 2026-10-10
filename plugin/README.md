@@ -182,6 +182,14 @@ plugin's hooks, not in agent frontmatter, because frontmatter hooks do not run u
   read-type tool at all, whatever the path, and no chipgraph tool but `get_context`;
 - **fail closed**: any error (bad input, broken state) denies, with exit code 2.
 
+**Limit:** the guard sees tool calls, not prompts. It cannot stop the *main session* from
+reading RTL itself and pasting it into the prompt of a `tb-author` subagent: that text reaches
+the subagent without any tool call. The tb-author independence rule therefore holds for the
+subagent's own tools and for the context the engine builds (`get_context`), not for what the
+main session writes into the prompt. The role's instructions tell the main session to pass
+only the `task_id`; the acceptance report (`docs/roles-claude-code/report.py`) flags RTL text
+in a tb-author prompt after the fact.
+
 Outside a chipgraph run the guard makes no decision, except that `chipgraph:*` role
 subagents never write or use a shell. Its state and log are under
 `.chipgraph/state/runtime/` (gitignored). Tokens and cost come from the final `result`
