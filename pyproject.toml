@@ -68,6 +68,7 @@ trace = "chipgraph.checks.trace:TraceCheck"
 connect = "chipgraph.checks.connect:ConnectCheck"
 hardcode = "chipgraph.checks.hardcode:HardcodeCheck"
 cdc_struct = "chipgraph.checks.cdc_struct:CdcStructCheck"
+tb_static = "chipgraph.checks.tb_static:TbStaticCheck"
 
 [project.entry-points."chipgraph.adapters.llm"]
 fake = "chipgraph.adapters.llm.fake:FakeProvider"

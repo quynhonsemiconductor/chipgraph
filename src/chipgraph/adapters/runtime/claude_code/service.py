@@ -24,6 +24,13 @@ never hands out a stopped task, and reports it (and every rule that depends on i
 under `blocked`; with nothing left to run it answers `stopped: true` and the HANDOFF
 path.
 
+A role that must not see some artifact kinds (the testbench Author and `rtl`) gets a
+guarded context (`guarded`): its model inputs are the block's spec side and the module's
+interface (spec ports, else the model's RTL ports, else the RTL declaration only), never
+a general model slice; and what `submit` tells it of failed checks goes through
+`FeedbackFilter` (no issue in a denied file, no denied path, no source excerpt; the
+redo text says when something was withheld). The journal keeps the full results.
+
 A role that writes no files but has `engine_writes` (the Critic) reviews a change
 instead (`review`): its context holds the diff, the spec slice and the model slice; its
 reply is a JSON review the main session passes as `result.review`; `submit` validates it
@@ -56,6 +63,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from chipgraph.adapters.runtime.claude_code import loop
 from chipgraph.adapters.runtime.claude_code import review as review_mod
 from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
+from chipgraph.adapters.runtime.claude_code.guarded import GuardedContext
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
 from chipgraph.app.build import make_scheduler, pack_search_paths
 from chipgraph.app.checks import ProfileCheckRunner
@@ -64,7 +72,7 @@ from chipgraph.app.errors import AppError
 from chipgraph.core.contracts import AgentResult, CheckResult, Event, RuleInstance, RuleSpec
 from chipgraph.core.contracts.event import EventType
 from chipgraph.core.contracts.types import FailureLabel, ModelTier
-from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, attempt_checks
+from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, FeedbackFilter, attempt_checks
 from chipgraph.core.engine.graph import BuildGraph
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
@@ -606,6 +614,22 @@ def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec
     )
 
 
+def _guarded(
+    ctx: AppContext, role: RoleSpec | None, instance: RuleInstance
+) -> GuardedContext | None:
+    """The guarded context of a task whose role must not see some kinds, else None."""
+    if role is None or role.read_policy.mode != "deny" or not role.read_policy.deny_kinds:
+        return None
+    return GuardedContext(ctx, instance)
+
+
+def _feedback_filter(ctx: AppContext, record: AgentTaskRecord) -> FeedbackFilter | None:
+    """What `submit` may show the task's role of a failed check (None: everything)."""
+    return FeedbackFilter.for_role(
+        record.role, denied=record.denied_reads, root=str(ctx.root.resolve())
+    )
+
+
 def _previous_rejection(record: AgentTaskRecord) -> list[str]:
     """Why the last attempt was rejected: the redo instruction (it names the label and
     each failure as `file:line`), or the bare reasons on a record from before it."""
@@ -660,10 +684,29 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     except SkillError as exc:
         raise AppError(f"task {task_id!r}: {exc}") from exc
 
+    guarded = _guarded(ctx, role, instance)
+    extra_specs: list[str] = []
+    if guarded is not None:
+        listed = {ref.path for ref in instance.inputs}
+        extra_specs = [
+            p
+            for p in guarded.spec_documents()
+            if p not in listed and not path_denied(p, record.denied_reads)
+        ]
+        nda_specs = [p for p in extra_specs if _is_nda(ctx, p, "internal")]
+        if nda_specs:
+            question = (
+                f"task {task_id!r} would read the spec labelled 'nda' "
+                f"({', '.join(nda_specs)}); runtime claude-code sends context to a cloud "
+                "model, so it is refused. Run the task with a local runtime, or have a "
+                "person do it."
+            )
+            raise _refuse(ctx, queue, record, question, {"nda": nda_specs})
     inputs: list[dict[str, Any]] = []
     for ref in instance.inputs:
         if ref.path is None:
-            inputs.append(_model_input(ctx, str(ref.model_key)))
+            key = str(ref.model_key)
+            inputs.append(guarded.model_input(key) if guarded else _model_input(ctx, key))
             continue
         entry: dict[str, Any] = {"path": ref.path, "kind": ref.kind}
         fragment = graph.spec_fragments.get(f"{ref.repo}:{ref.path}")
@@ -677,6 +720,14 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
             entry["content"] = text
         else:
             entry["missing"] = True
+        inputs.append(entry)
+    for rel in extra_specs:  # a guarded task's spec documents, from the profile layout
+        text = (ctx.root / rel).read_text(encoding="utf-8", errors="replace")
+        entry = {"path": rel, "kind": "spec", "from": "layout"}
+        if len(text) > _MAX_INPUT_CHARS:
+            text = text[:_MAX_INPUT_CHARS]
+            entry["truncated"] = True
+        entry["content"] = text
         inputs.append(entry)
 
     review: dict[str, Any] | None = None
@@ -721,6 +772,12 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     }
     if review is not None:
         answer["review"] = review
+    if guarded is not None:
+        answer.update(guarded.sections())
+        answer["instructions"] += (
+            " The ports you may use are in `interface` (every port names its `source`), "
+            "the block's requirements in `requirements`."
+        )
     return answer
 
 
@@ -883,15 +940,24 @@ async def submit(
                 checks.append(await runner.run(check_id, instance))
         results.extend(checks)
 
+        shown = _feedback_filter(ctx, record)
         verdict = await loop.judge(
-            rule, record, results, attempt, ctx.store.current_hashes(instance.outputs)
+            rule,
+            record,
+            results,
+            attempt,
+            ctx.store.current_hashes(instance.outputs),
+            shown=shown,
         )
+        # The journal keeps every check's full result; the answer and the redo text
+        # show only what the role may see.
+        visible = list(shown.apply(checks)[0]) if shown is not None else checks
         reasons: list[str] = list(review_reasons)
         if outside:
             reasons.append(f"changed files outside the task's outputs: {', '.join(outside)}")
         if missing:
             reasons.append(f"missing outputs: {', '.join(missing)}")
-        reasons.extend(_check_reason(c) for c in checks if not c.ok)
+        reasons.extend(_check_reason(c) for c in visible if not c.ok)
         if not reasons and not verdict.accepted:
             reasons = list(verdict.state.failures)
         state = verdict.state
@@ -962,7 +1028,7 @@ async def submit(
         reasons=reasons,
         outside=outside,
         missing=missing,
-        checks=checks,
+        checks=visible,
     )
 
 

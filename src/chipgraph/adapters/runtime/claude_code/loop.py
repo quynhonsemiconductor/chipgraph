@@ -14,7 +14,12 @@ attempt and keeps the loop's count on the task record (`TaskBudgetState`):
   row with the same outputs and failures stop the task early (`stagnation`). Tokens and
   cost are not known per task in this runtime (the session reports them only for the
   whole run), so the token and cost caps of the in-process loop do not apply here;
-- redo: `render_feedback`, the bounded redo instruction for the next try.
+- redo: `render_feedback`, the bounded redo instruction for the next try. For a role
+  that must not see some artifacts (the testbench Author and the RTL), what the answer
+  and the redo text show of the failures goes through `FeedbackFilter` first: issues in
+  a denied file are dropped, denied paths in messages become `<rtl>`, source excerpt
+  lines are cut, and the redo text says that something was withheld. The label is
+  still taken from the full results.
 
 `max_dispatches` (tries plus infra retries) is the hard bound on how often one task is
 handed out in a budget cycle: every submit either uses a try or an infra retry, and
@@ -36,6 +41,7 @@ from chipgraph.core.engine.agent_rule import (
     AttemptBudget,
     BudgetState,
     FailureClassifier,
+    FeedbackFilter,
     failing,
     render_feedback,
 )
@@ -116,7 +122,8 @@ def failure_line(result: CheckResult) -> str:
 
 
 def failed_checks(results: Sequence[CheckResult]) -> list[dict[str, Any]]:
-    """The failing checks for `submit`'s answer: id, status, issues (capped), log tail."""
+    """The failing checks for `submit`'s answer: id, status, issues (capped), and the log
+    tail when no error issue explains the failure."""
     shown: list[dict[str, Any]] = []
     for result in failing(results)[:MAX_FAILED_CHECKS]:
         issues = _errors(result)
@@ -134,7 +141,7 @@ def failed_checks(results: Sequence[CheckResult]) -> list[dict[str, Any]]:
         }
         if len(issues) > MAX_ISSUES_PER_CHECK:
             entry["more_issues"] = len(issues) - MAX_ISSUES_PER_CHECK
-        if not issues and result.log_tail.strip():
+        if not any(i.severity == "error" for i in issues) and result.log_tail.strip():
             entry["log_tail"] = result.log_tail.strip()[-600:]
         shown.append(entry)
     return shown
@@ -171,11 +178,14 @@ async def judge(
     output_hashes: Mapping[str, str],
     *,
     max_infra_retries: int = MAX_INFRA_RETRIES,
+    shown: FeedbackFilter | None = None,
 ) -> Verdict:
     """Count one submitted attempt against the task's budget and say what comes next.
 
     `results` are every check of the attempt (the engine's and the rule's);
     `output_hashes` the task's outputs as the attempt left them (for stagnation).
+    `shown` filters what the verdict's failures, failure lines, questions and redo text
+    show of `results` (see the module docstring); the label and the budget use them all.
     """
     prior = record.state
     budget = _budget(rule, prior)
@@ -210,7 +220,12 @@ async def judge(
         )
 
     label = await _CLASSIFIER.classify(results, agent)
-    lines = tuple(failure_line(r) for r in bad[:MAX_FAILED_CHECKS])
+    visible: Sequence[CheckResult] = results
+    withheld = 0
+    if shown is not None:
+        visible, withheld = shown.apply(results)
+    bad_shown = failing(visible)
+    lines = tuple(failure_line(r) for r in bad_shown[:MAX_FAILED_CHECKS])
     ids = tuple(r.check_id for r in bad)
     stop: BudgetStop | None = None
     questions: tuple[str, ...] = ()
@@ -219,21 +234,25 @@ async def judge(
         counted = False
         if budget.state.infra_failures > max_infra_retries:
             stop = "infra"
-        redo = render_feedback(results, "infra", max_chars=1500)
+        redo = render_feedback(visible, "infra", max_chars=1500, withheld=withheld)
     else:
         budget.record_failure(results, output_hashes)
         counted = True
         if label == "planning":
             stop = "planning"
             questions = tuple(
-                issue_line(i) for r in bad for i in r.issues if i.severity == "error"
+                issue_line(i) for r in bad_shown for i in r.issues if i.severity == "error"
             )[:10] or ("the checks point at the spec or plan; a person must decide",)
         else:
             reason = budget.exhausted  # tries | stagnation (no token or cost caps here)
             if reason == "tries" or reason == "stagnation":
                 stop = reason
         redo = render_feedback(
-            results, label, attempt=budget.state.tries_used, max_chars=REDO_MAX_CHARS
+            visible,
+            label,
+            attempt=budget.state.tries_used,
+            max_chars=REDO_MAX_CHARS,
+            withheld=withheld,
         )
     status: TaskStatus
     if stop == "planning":
@@ -250,7 +269,7 @@ async def judge(
         tier=tier,
         state=state(label=label, failed_checks=ids, failures=lines, redo=redo, stop=stop),
         tries=budget.tries,
-        failed=bad,
+        failed=bad_shown,
         questions=questions,
     )
 
