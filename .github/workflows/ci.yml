@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -41,6 +41,92 @@ jobs:
       - run: uv run pytest
 
       - run: make schemas-check
+
+  # The `edalize` sim adapter (M2-05) on Linux: Verilator from the OSS CAD Suite release
+  # docker/Dockerfile pins, the C++ build deps of a Verilator model and Icarus from apt,
+  # and the `sim` extra. Runs the sample cocotb testbench (examples/tinysoc/dv) and the
+  # failure cases through EdalizeTool with a real LocalRunner, and fails on any skip.
+  sim:
+    name: sim (cocotb, verilator + icarus, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install OSS CAD Suite (the release docker/Dockerfile pins), for Verilator
+        run: |
+          set -euo pipefail
+          date="$(sed -n 's/^ARG OSS_CAD_SUITE_DATE=//p' docker/Dockerfile)"
+          sha256="$(sed -n 's/^ARG OSS_CAD_SUITE_SHA256_AMD64=//p' docker/Dockerfile)"
+          file="oss-cad-suite-linux-x64-${date//-/}.tgz"
+          url="https://github.com/YosysHQ/oss-cad-suite-build/releases/download/${date}/${file}"
+          curl -fsSL -o "$RUNNER_TEMP/oss-cad-suite.tgz" "$url"
+          echo "${sha256}  $RUNNER_TEMP/oss-cad-suite.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/oss-cad-suite.tgz" -C "$RUNNER_TEMP"
+          rm -f "$RUNNER_TEMP/oss-cad-suite.tgz"
+          echo "$RUNNER_TEMP/oss-cad-suite/bin" >> "$GITHUB_PATH"
+
+      # g++: Verilator compiles the model; liblz4-dev/zlib1g-dev: its FST writer. Icarus
+      # from apt, ahead of the suite's on PATH: the suite's `vvp` wrapper loads the
+      # suite's own cocotb libgpi and no test runs (docs/spikes/S3.md, pitfall 4).
+      - name: Install the C++ build deps of a Verilator model, and Icarus from apt
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ make liblz4-dev zlib1g-dev iverilog
+          mkdir -p "$RUNNER_TEMP/apt-icarus"
+          ln -sf /usr/bin/iverilog /usr/bin/vvp "$RUNNER_TEMP/apt-icarus/"
+          echo "$RUNNER_TEMP/apt-icarus" >> "$GITHUB_PATH"
+
+      - run: uv sync --locked --extra sim
+
+      - name: Tool versions
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          {
+            echo "### sim toolchain, py${PYTHON_VERSION}"
+            echo '```'
+            echo "verilator: $(verilator --version) ($(command -v verilator))"
+            echo "iverilog:  $(iverilog -V 2>&1 | head -n 1) ($(command -v vvp))"
+            echo "g++:       $(g++ --version | head -n 1)"
+            echo "python:    $(uv run --no-sync python --version)"
+            uv run --no-sync python -c 'import importlib.metadata as m; print("edalize:  ", m.version("edalize")); print("cocotb:   ", m.version("cocotb"))'
+            echo "cocotb-config: $(uv run --no-sync which cocotb-config)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the cocotb testbenches through EdalizeTool
+        run: >-
+          uv run --no-sync pytest -q
+          tests/e2e/test_sim_edalize.py tests/adapters/tool/test_edalize.py
+          tests/adapters/parser/test_cocotb.py
+          --junitxml="$RUNNER_TEMP/sim-junit.xml"
+
+      - name: Fail if a sim test was skipped
+        run: |
+          python3 - "$RUNNER_TEMP/sim-junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          print(f"tests={tests} skipped={skipped}")
+          if skipped or tests == 0:
+              raise SystemExit("sim tests were skipped: the toolchain or the `sim` extra is missing")
+          PY
 
   secrets:
     runs-on: ubuntu-latest

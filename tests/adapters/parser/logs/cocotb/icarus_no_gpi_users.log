@@ -1,0 +1,5 @@
+iverilog -stiny_gpio -c s3_icarus.scr -o s3_icarus -g2012
+vvp -n -M. -M `cocotb-config --lib-dir` -m `cocotb-config --lib-name vpi icarus` s3_icarus -fst 
+     -.--ns ERROR    gpi                                ../gpi/GpiCommon.cpp:188  in gpi_load_users                  No GPI_USERS specified, exiting...
+/work/chipgraph/examples/tinysoc/rtl/tiny_gpio.sv:34: vvp.tgt sorry: Case unique/unique0 qualities are ignored.
+/work/chipgraph/examples/tinysoc/rtl/tiny_gpio.sv:43: vvp.tgt sorry: Case unique/unique0 qualities are ignored.

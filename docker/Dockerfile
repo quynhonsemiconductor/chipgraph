@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 #
 # chipgraph-eda: chipgraph plus the open-source EDA toolchain (OSS CAD Suite)
-# needed to run examples/tinysoc end to end (verilator, make, git, python3).
+# needed to run examples/tinysoc end to end (verilator, make, git, python3), and what
+# the `edalize` sim adapter needs to build and run cocotb testbenches: the `sim` extra
+# (edalize, cocotb), g++ (Verilator compiles the model), liblz4-dev/zlib1g-dev (its FST
+# writer) and Icarus Verilog from Debian (docs/spikes/S3.md).
 #
 # Targets:
 #   (default) - lean runtime: OSS CAD Suite + chipgraph CLI, no repo source, no dev deps.
@@ -37,10 +40,20 @@ ARG TARGETARCH
 # (e.g. FindBin) not in bookworm-slim's perl-base; make/git: what the tinysoc rules
 # and chipgraph's `cmd` adapter shell out to; curl/xz-utils: only to fetch and unpack
 # the suite tarball below, but there is no separate stage worth splitting them into.
+# g++/liblz4-dev/zlib1g-dev/iverilog: simulation (see the header; g++ also builds
+# cocotb from its sdist on arm64, which has no cocotb wheel).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl xz-utils perl make git \
+        g++ liblz4-dev zlib1g-dev iverilog \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian's Icarus must come before the suite's on PATH: the suite's `vvp` is a wrapper
+# that runs vvp with the suite's own loader, libraries and PYTHONHOME, so cocotb's VPI
+# module loads the suite's bundled libgpi and no test runs (S3, pitfall 4). Verilator
+# stays the suite's. /opt/sim/bin goes first on PATH in every stage below.
+RUN mkdir -p /opt/sim/bin \
+    && ln -s /usr/bin/iverilog /usr/bin/vvp /opt/sim/bin/
 
 WORKDIR /opt
 RUN set -eux; \
@@ -62,9 +75,11 @@ FROM eda-base AS chipgraph-base
 ARG PYTHON_VERSION
 COPY --from=uv /uv /uvx /usr/local/bin/
 
+# The suite also ships a `cocotb-config`; the sim adapter puts the venv's bin first on
+# the PATH it gives the build and the run, so Edalize's Makefile calls the venv's.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_LINK_MODE=copy \
-    PATH=/opt/oss-cad-suite/bin:/opt/chipgraph/.venv/bin:/usr/local/bin:${PATH}
+    PATH=/opt/sim/bin:/opt/oss-cad-suite/bin:/opt/chipgraph/.venv/bin:/usr/local/bin:${PATH}
 
 RUN uv python install "${PYTHON_VERSION}"
 
@@ -72,13 +87,13 @@ WORKDIR /opt/chipgraph
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv sync --locked --no-dev --no-editable --python "${PYTHON_VERSION}"
+RUN uv sync --locked --no-dev --no-editable --extra sim --python "${PYTHON_VERSION}"
 
 # --- test: chipgraph-base plus the dev dependency group and the repo's test trees -------
 FROM chipgraph-base AS test
 ARG PYTHON_VERSION
 
-RUN uv sync --locked --no-editable --python "${PYTHON_VERSION}"
+RUN uv sync --locked --no-editable --extra sim --python "${PYTHON_VERSION}"
 
 COPY tests ./tests
 COPY examples ./examples
@@ -91,11 +106,14 @@ FROM debian:bookworm-slim AS final
 
 LABEL org.opencontainers.image.source="https://github.com/quynhonsemiconductor/chipgraph" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.description="chipgraph CLI with a pinned OSS CAD Suite for RTL checks (verilator, yosys, ...)"
+      org.opencontainers.image.description="chipgraph CLI with a pinned OSS CAD Suite for RTL checks (verilator, yosys, ...) and cocotb simulation"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates perl make git \
+        g++ liblz4-dev zlib1g-dev iverilog \
     && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/sim/bin \
+    && ln -s /usr/bin/iverilog /usr/bin/vvp /opt/sim/bin/ \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin chipgraph
 
 # The venv's interpreter is a symlink into uv's managed Python install (not copied by
@@ -105,7 +123,7 @@ COPY --from=eda-base /opt/oss-cad-suite /opt/oss-cad-suite
 COPY --from=chipgraph-base /opt/uv/python /opt/uv/python
 COPY --from=chipgraph-base /opt/chipgraph/.venv /opt/chipgraph/.venv
 
-ENV PATH=/opt/oss-cad-suite/bin:/opt/chipgraph/.venv/bin:${PATH}
+ENV PATH=/opt/sim/bin:/opt/oss-cad-suite/bin:/opt/chipgraph/.venv/bin:${PATH}
 
 WORKDIR /work
 USER chipgraph
