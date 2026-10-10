@@ -62,7 +62,7 @@ def base(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture
 def project(base: Path, tmp_path: Path) -> Path:
     dest = tmp_path / "tinysoc"
-    shutil.copytree(base, dest, symlinks=True)
+    shutil.copytree(base, dest, symlinks=True, ignore=shutil.ignore_patterns("*.lock"))
     return dest
 
 

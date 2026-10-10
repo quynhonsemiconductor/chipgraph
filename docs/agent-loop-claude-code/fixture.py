@@ -138,7 +138,14 @@ def check(code: str) -> dict[str, Any]:
 
 
 def _git(root: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    # No background maintenance: it can still hold `.git/objects/maintenance.lock` when a
+    # test copies the project right after the commit.
+    subprocess.run(
+        ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def make_loop_project(
