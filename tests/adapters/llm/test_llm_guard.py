@@ -238,14 +238,14 @@ def test_cost_of_an_unknown_model_is_unknown_but_tokens_count() -> None:
     fake = FakeProvider(lambda _: "one two")
     guard = _guard(fake)
     asyncio.run(guard.complete(make_request("a b c", model="glm-unknown")))
-    asyncio.run(guard.complete(make_request("a b c", model="claude-haiku-4-5")))
+    asyncio.run(guard.complete(make_request("a b c", model="claude-haiku-5-5")))
     usage = guard.usage
     assert usage.calls == 2
     assert usage.total_tokens == 10
     assert usage.unpriced_calls == 1
     assert usage.per_model["glm-unknown"].cost_usd is None
     assert usage.per_model["glm-unknown"].input_tokens == 3
-    assert usage.cost_usd == pytest.approx((3 * 1.0 + 2 * 5.0) / 1e6)
+    assert usage.cost_usd == pytest.approx((3 * 0.5 + 2 * 2.5) / 1e6)
 
 
 def test_price_lookup() -> None:
