@@ -163,14 +163,14 @@ def test_missing_output_and_failing_check_use_up_the_budget(project: Path) -> No
     assert second["result"]["status"] == "budget_exhausted"
 
     after = s.ok("next_task", {"target": TARGET})
-    assert after["tasks"] == [] and after["done"] is False
-    assert "used all 2 tries" in after["waiting"]
+    assert after["tasks"] == [] and after["done"] is False and after["stopped"] is True
+    assert "budget exhausted (tries) after 2 of 2 tries" in after["waiting"]
 
     result = CliRunner().invoke(app, ["-C", str(project), "build", TARGET])
     assert result.exit_code != 0
     assert "failed: pulse/tiny_pulse[]" in result.output
     handoff = Path(result.output.strip().splitlines()[-1]).read_text()
-    assert "used all 2 tries" in handoff
+    assert "reason `tries`, 2 of 2 tries" in handoff
 
 
 def test_nda_input_is_refused_before_it_reaches_context(tmp_path: Path) -> None:

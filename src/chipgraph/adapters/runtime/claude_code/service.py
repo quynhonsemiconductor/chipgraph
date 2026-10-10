@@ -8,9 +8,21 @@ Code session::
     get_context(id)     a role subagent asks for its task: inputs as text, outputs,
                         role, skills and their text (refused when an input is labelled
                         `nda`, or is of a kind the task's role must not see)
-    submit(id, result)  the engine checks the work: every file changed since dispatch
-                        is one of the task's outputs, the outputs exist, the rule's
-                        checks pass; accept, or reject and count an attempt
+    submit(id, result)  the engine checks the work at once: every file changed since
+                        dispatch is one of the task's outputs, the outputs exist and are
+                        not empty, the rule's checks pass; accept, or reject with the
+                        failure's label, the failed checks and the redo instruction
+
+`submit` runs the M2-02a agent rule loop one attempt at a time (`loop`): a failure is
+labelled, a try is counted (an infra failure is not, within `max_infra_retries`), the
+model tier escalates after the first failed try, and two tries in a row with the same
+outputs and failures stop early. When the budget is gone the task turns
+`budget_exhausted`, its `rule_fail` (with the label and the loop's `agent` summary) goes
+into the journal of the run that dispatched it, and that run's HANDOFF.md is written at
+once. `next_task` never hands a task out more than `tries + max_infra_retries` times,
+never hands out a stopped task, and reports it (and every rule that depends on it)
+under `blocked`; with nothing left to run it answers `stopped: true` and the HANDOFF
+path.
 
 A role that writes no files but has `engine_writes` (the Critic) reviews a change
 instead (`review`): its context holds the diff, the spec slice and the model slice; its
@@ -41,6 +53,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from chipgraph.adapters.runtime.claude_code import loop
 from chipgraph.adapters.runtime.claude_code import review as review_mod
 from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
@@ -50,6 +63,8 @@ from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
 from chipgraph.core.contracts import AgentResult, CheckResult, Event, RuleInstance, RuleSpec
 from chipgraph.core.contracts.event import EventType
+from chipgraph.core.contracts.types import FailureLabel, ModelTier
+from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, attempt_checks
 from chipgraph.core.engine.graph import BuildGraph
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
@@ -78,6 +93,7 @@ from chipgraph.core.runtime.roles import (
 )
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.artifacts import hash_file
+from chipgraph.core.state.handoff import build_handoff, write_handoff
 
 _MAX_INPUT_CHARS = 200_000
 """Longest input text `get_context` returns per file; longer files are cut."""
@@ -154,7 +170,10 @@ def _agent_for(role: str) -> str:
 
 def _model_for(ctx: AppContext, record: AgentTaskRecord) -> str:
     """The model of the task's next attempt: its current tier, mapped by the profile."""
-    tier = record.current_tier
+    return _tier_model(ctx, record.current_tier)
+
+
+def _tier_model(ctx: AppContext, tier: ModelTier) -> str:
     configured = ctx.require_profile().profile.models.tiers.get(tier)
     return configured or DEFAULT_TIER_MODELS[tier]
 
@@ -203,6 +222,8 @@ def _emit(
     task_id: str,
     type_: EventType,
     payload: Mapping[str, Any],
+    *,
+    failure_label: FailureLabel | None = None,
 ) -> None:
     """Append one event about `task_id` to the journal of the run that dispatched it."""
     if run_id is None:
@@ -216,8 +237,28 @@ def _emit(
             type=type_,
             rule_instance=task_id,
             payload=dict(payload),
+            failure_label=failure_label,
         )
     )
+
+
+def _handoff_path(ctx: AppContext, run_id: str) -> Path:
+    """Where a run's HANDOFF.md is (`write_handoff` writes it there)."""
+    return ctx.layout.run_dir(run_id) / "HANDOFF.md"
+
+
+def _write_run_handoff(ctx: AppContext, run_id: str) -> Path | None:
+    """Write run `run_id`'s HANDOFF.md again from its journal; `None` if that failed.
+
+    As in the scheduler, a HANDOFF.md that cannot be written (an `OSError`) never fails
+    the call itself.
+    """
+    try:
+        events = journal_mod.read(ctx.layout.journal(run_id)).events
+        target = journal_mod.read_manifest(ctx.layout, run_id).target
+        return write_handoff(ctx.layout, build_handoff(events, target=target))
+    except OSError:
+        return None
 
 
 async def snapshot(ctx: AppContext, extra: Iterable[str] = ()) -> dict[str, str]:
@@ -271,6 +312,7 @@ def _engine_outputs(graph: BuildGraph) -> set[str]:
 
 
 def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> dict[str, Any]:
+    state = record.state
     if review_mod.is_review_role(find_role(record.role)):
         prompt = (
             f"You are doing chipgraph review task {record.task_id!r}. First call get_context "
@@ -295,6 +337,11 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
         "outputs": list(record.allowed_writes),
         "attempt": record.dispatches,
         "tries": record.tries,
+        "try": min(state.tries_used + 1, record.tries),
+        "tries_left": max(record.tries - state.tries_used, 0),
+        "dispatches": state.dispatches,
+        "max_dispatches": loop.dispatch_limit(record),
+        "previous_label": state.label,
         "tool_calls": queue.tool_calls(record.task_id),
         "tool_call_cap": record.tool_call_cap,
         "prompt": prompt,
@@ -302,23 +349,64 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
     }
 
 
-def _blocked(ctx: AppContext, summary: RunSummary, skip: set[str]) -> list[dict[str, str]]:
-    """Why the build stopped, per instance: gates, people, failed rules (from the journal)."""
+def _blocked(
+    ctx: AppContext,
+    graph: BuildGraph,
+    queue: TaskQueue,
+    summary: RunSummary,
+    skip: set[str],
+) -> list[dict[str, Any]]:
+    """Why the build stopped, per instance (from the journal of `summary`'s run).
+
+    Gates; failed rules with their label (an agent task also with its queue status, and
+    the HANDOFF path when its loop stopped); and every rule that depends on one of
+    those, with the ones it waits for (`blocked_by`). `skip` holds instances reported
+    elsewhere (handed out, in progress, or blocked for a reason of their own): they and
+    rules that wait only for them are left out.
+    """
     events = journal_mod.read(ctx.layout.journal(summary.run_id)).events
     gates = {
         e.rule_instance: str(e.payload.get("gate", "")) for e in events if e.type == "gate_wait"
     }
-    fails = {
-        e.rule_instance: str(e.payload.get("message", "")) for e in events if e.type == "rule_fail"
-    }
-    blocked: list[dict[str, str]] = []
+    fails = {e.rule_instance: e for e in events if e.type == "rule_fail"}
+    handoff = str(_handoff_path(ctx, summary.run_id))
+    blocked: list[dict[str, Any]] = []
+    reported: list[str] = []
     for iid in summary.waiting_gate:
         blocked.append(
             {"instance": iid, "reason": f"waiting for gate {gates.get(iid, '?')!r} to be approved"}
         )
+        reported.append(iid)
     for iid in summary.failed:
-        if iid not in skip:
-            blocked.append({"instance": iid, "reason": fails.get(iid) or "failed"})
+        if iid in skip:
+            continue
+        event = fails.get(iid)
+        entry: dict[str, Any] = {
+            "instance": iid,
+            "reason": (str(event.payload.get("message", "")) if event else "") or "failed",
+            "label": event.failure_label if event else None,
+        }
+        record = queue.get(iid)
+        if record is not None:
+            entry["status"] = record.status
+            if record.status in ("budget_exhausted", "needs_human"):
+                entry["handoff"] = handoff
+        blocked.append(entry)
+        reported.append(iid)
+    waits: dict[str, set[str]] = {}
+    waiting = set(summary.blocked)
+    for iid in reported:
+        for dependent in graph.downstream(iid) & waiting:
+            waits.setdefault(dependent, set()).add(iid)
+    for dependent in sorted(waits):
+        on = sorted(waits[dependent])
+        blocked.append(
+            {
+                "instance": dependent,
+                "reason": f"depends on {', '.join(on)}, which did not finish",
+                "blocked_by": on,
+            }
+        )
     return blocked
 
 
@@ -329,8 +417,14 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
     """Run the build for `target` and hand out every agent task it reached.
 
     Returns `tasks` (newly dispatched: each goes to its own subagent, in parallel),
-    `in_progress` (dispatched earlier and not submitted yet), and either `done: true`
-    (the build finished) or `waiting` (it is blocked on a gate, a person, or a failure).
+    `in_progress` (dispatched earlier and not submitted yet), `blocked` (gates, people,
+    failures, stopped tasks with their label and HANDOFF path, and the rules that
+    depend on them), and either `done: true` (the build finished) or, with nothing to
+    run, `stopped: true`, `waiting` (why) and `handoff` (this run's HANDOFF.md).
+
+    A task is never handed out more than its `max_dispatches` (tries plus infra
+    retries) in one budget cycle, and never once it is `budget_exhausted` or
+    `needs_human`.
     """
     ctx.require_profile()
     _require_runtime(ctx)
@@ -348,7 +442,7 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
     now: dict[str, str] | None = None
     dispatched: list[AgentTaskRecord] = []
     in_progress: list[AgentTaskRecord] = []
-    stray: list[dict[str, str]] = []
+    held: list[dict[str, Any]] = []
     for iid in agent_ids:
         record = queue.get(iid)
         if record is None:
@@ -359,13 +453,27 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         # Only tasks this build actually reached (their executor ran and said "waiting").
         if record.status not in OPEN_STATUSES or iid not in summary.failed:
             continue
+        limit = loop.dispatch_limit(record)
+        if record.state.dispatches >= limit:  # the hard bound; a live loop stops before
+            held.append(
+                {
+                    "instance": iid,
+                    "reason": (
+                        f"handed out {record.state.dispatches} times, its limit (tries plus "
+                        "infra retries); a person must look at it"
+                    ),
+                    "label": record.state.label,
+                    "status": record.status,
+                }
+            )
+            continue
         if now is None:
             now = await snapshot(ctx)
         if record.outside:
             before = queue.baseline(iid)
             left = [p for p in record.outside if before.get(p) != now.get(p)]
             if left:
-                stray.append(
+                held.append(
                     {
                         "instance": iid,
                         "reason": (
@@ -384,6 +492,8 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         payload = {
             "phase": "dispatch",
             "attempt": record.dispatches,
+            "try": record.state.tries_used + 1,
+            "tier": record.current_tier,
             "outputs": list(record.allowed_writes),
             "agent": _agent_for(record.role),
             "model": _model_for(ctx, record),
@@ -392,21 +502,25 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         _emit(ctx, record.run_id, iid, "agent_turn", payload)
         dispatched.append(record)
 
+    skip = {r.task_id for r in (*dispatched, *in_progress)} | {h["instance"] for h in held}
+    blocked = held + _blocked(ctx, graph, queue, summary, skip)
     answer: dict[str, Any] = {
         "run_id": summary.run_id,
         "tasks": [_task_entry(ctx, queue, r) for r in dispatched],
         "in_progress": [_task_entry(ctx, queue, r) for r in in_progress],
         "done": False,
+        "stopped": False,
         "waiting": None,
-        "blocked": [],
+        "blocked": blocked,
+        "handoff": None,
     }
     if dispatched or in_progress:
         return answer
-    blocked = stray + _blocked(ctx, summary, skip={s["instance"] for s in stray})
     if summary.ok and not blocked:
         answer["done"] = True
         return answer
-    answer["blocked"] = blocked
+    answer["stopped"] = True
+    answer["handoff"] = str(_handoff_path(ctx, summary.run_id))
     answer["waiting"] = "; ".join(f"{b['instance']}: {b['reason']}" for b in blocked) or (
         f"{len(summary.blocked)} rule instance(s) blocked"
     )
@@ -490,6 +604,15 @@ def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec
         f"runs these checks: {', '.join(rule.checks) or 'none'}. "
         "Finish with a short report: files written, assumptions, open questions."
     )
+
+
+def _previous_rejection(record: AgentTaskRecord) -> list[str]:
+    """Why the last attempt was rejected: the redo instruction (it names the label and
+    each failure as `file:line`), or the bare reasons on a record from before it."""
+    state = record.budget_state
+    if state is not None and state.redo:
+        return [state.redo]
+    return list(record.reasons)
 
 
 async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
@@ -591,7 +714,8 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "checks": list(rule.checks),
         "attempt": record.dispatches,
         "tries": record.tries,
-        "previous_rejection": list(record.reasons),
+        "previous_rejection": _previous_rejection(record),
+        "previous_label": record.state.label,
         "inputs": inputs,
         "instructions": _instructions(role, rule, skills),
     }
@@ -642,12 +766,28 @@ async def _take_review(
 async def submit(
     ctx: AppContext, task_id: str, report: SubmitReport | None = None
 ) -> dict[str, Any]:
-    """Check a dispatched task's work and accept or reject it (DESIGN.md 5.2).
+    """Check a dispatched task's work at once and accept or reject it (DESIGN.md 5.2).
 
-    Rejected when a file outside the task's outputs changed since dispatch, an output
-    is missing, or one of the rule's checks fails. A rejection counts an attempt; the
-    last try turns the task `budget_exhausted`. A report with `status: needs_human`
-    hands the task to a person without using a try.
+    The checks of the attempt, each run once: no file outside the task's outputs
+    changed since dispatch, every output exists and is not empty, every input exists
+    (`attempt_checks`), and, when those hold, the rule's checks. A failure gets its
+    `label` (`loop.judge`, the M2-02a pieces) and counts against the budget:
+
+    - `rejected`: tries are left; the answer has the failed checks, the redo text,
+      `next_tier`/`next_model` (the tier escalates after the first failed try) and
+      `tries_left`; `next_task` hands the task out again with the redo text in its
+      context (`previous_rejection`);
+    - `infra` (a check errored, a tool could not run): no try is used, but after
+      `max_infra_retries` such submits the task stops;
+    - `budget_exhausted`: the tries ran out, two tries in a row left the same outputs
+      and failures (`stagnation`), or the infra retries ran out. The `rule_fail` event
+      and the run's HANDOFF.md are written at once, and the task is never handed out
+      again until an input changes or it is rewound;
+    - `needs_human`: the checks point at the spec or plan (`planning`).
+
+    A report with `status: needs_human` hands the task to a person without using a try.
+    Tokens and cost are not known per task in this runtime: the loop's token and cost
+    caps do not apply.
 
     A review task (its role writes no files and has `engine_writes`) is submitted with
     `report.review`: rejected when it is missing, not JSON, not a `ReviewReport`, or
@@ -688,10 +828,17 @@ async def submit(
             {
                 "phase": "submit",
                 "status": "needs_human",
+                "try": record.state.tries_used + 1,
+                "counted": False,
+                "tier": record.current_tier,
+                "label": "planning",
+                "failed_checks": [],
                 "open_questions": list(report.open_questions),
             },
         )
-        return _submit_answer(record, accepted=False, reasons=[], outside=[], missing=[], checks=[])
+        return _submit_answer(
+            ctx, record, verdict=None, reasons=[], outside=[], missing=[], checks=[]
+        )
 
     record = queue.mark_submitted(task_id)
     try:
@@ -703,14 +850,10 @@ async def submit(
         now = await snapshot(ctx, extra=record.allowed_writes)
         changed = _changed(queue.baseline(task_id), now)
         # Outputs of the other agent tasks: their own subagents write them (the guard
-        # allows nobody else), also when one of them was accepted since this dispatch,
-        # as happens when tasks that ran in parallel are submitted one by one.
+        # allows nobody else), whatever their status now: tasks that ran in parallel
+        # are submitted one by one, and one may be accepted or rejected before this one.
         others = {
-            w
-            for other in queue.all()
-            if other.task_id != task_id
-            and (other.status in ACTIVE_STATUSES or other.status == "accepted")
-            for w in other.allowed_writes
+            w for other in queue.all() if other.task_id != task_id for w in other.allowed_writes
         }
         engine = _engine_outputs(graph)
         outside = [p for p in changed if p not in allowed and p not in others and p not in engine]
@@ -719,35 +862,72 @@ async def submit(
             if review_reasons
             else [p for p in record.allowed_writes if not (ctx.root / p).is_file()]
         )
+        attempt = AgentResult(
+            status="done",
+            files_written=tuple(p for p in changed if p in allowed or p in outside),
+            assumptions=report.assumptions,
+            open_questions=report.open_questions,
+        )
+        results = list(
+            attempt_checks(instance, attempt, ctx.store, allowed_writes=record.allowed_writes)
+        )
+        if reviewing:
+            if review_reasons:  # nothing was written: the reply is what failed
+                results = [r for r in results if r.check_id != OUTPUTS_CHECK]
+            results.append(loop.review_result(review_reasons))
 
         checks: list[CheckResult] = []
         if not outside and not missing and not review_reasons:
             runner = ProfileCheckRunner(ctx)
             for check_id in rule.checks:
                 checks.append(await runner.run(check_id, instance))
+        results.extend(checks)
 
+        verdict = await loop.judge(
+            rule, record, results, attempt, ctx.store.current_hashes(instance.outputs)
+        )
         reasons: list[str] = list(review_reasons)
         if outside:
             reasons.append(f"changed files outside the task's outputs: {', '.join(outside)}")
         if missing:
             reasons.append(f"missing outputs: {', '.join(missing)}")
         reasons.extend(_check_reason(c) for c in checks if not c.ok)
-        accepted = not reasons
+        if not reasons and not verdict.accepted:
+            reasons = list(verdict.state.failures)
+        state = verdict.state
+        if verdict.stop is not None and record.run_id is not None:
+            state = state.model_copy(update={"handoff": str(_handoff_path(ctx, record.run_id))})
         result = AgentResult(
-            status="done" if accepted else "failed",
+            status="done" if verdict.accepted else "failed",
             files_written=tuple(p for p in changed if p in allowed),
             assumptions=report.assumptions,
             open_questions=report.open_questions,
         )
-        if accepted:
+        if verdict.accepted:
             record = queue.accept(
                 task_id,
                 result=result,
                 output_hashes=output_hashes(ctx.store, task_for(rule, instance)),
+                budget_state=state,
+            )
+        elif verdict.status == "needs_human":
+            questions = tuple(dict.fromkeys((*report.open_questions, *verdict.questions)))
+            record = queue.needs_human(
+                task_id,
+                result=result.model_copy(
+                    update={"status": "needs_human", "open_questions": questions}
+                ),
+                budget_state=state,
             )
         else:
             record = queue.reject(
-                task_id, result=result, reasons=tuple(reasons), outside=tuple(outside)
+                task_id,
+                result=result,
+                reasons=tuple(reasons),
+                outside=tuple(outside),
+                counted=verdict.counted,
+                exhausted=verdict.status == "budget_exhausted",
+                budget_state=state,
             )
     except BaseException:
         with contextlib.suppress(QueueError):
@@ -760,6 +940,11 @@ async def submit(
         "phase": "submit",
         "status": record.status,
         "attempt": record.dispatches,
+        "try": verdict.state.tries_used if verdict.counted else verdict.state.tries_used + 1,
+        "counted": verdict.counted,
+        "tier": verdict.tier,
+        "label": verdict.label,
+        "failed_checks": [r.check_id for r in verdict.failed],
         "reasons": reasons,
         "files_written": list(result.files_written),
         "assumptions": list(report.assumptions),
@@ -768,34 +953,90 @@ async def submit(
     if review is not None:
         payload["review"] = {"verdict": review.verdict, "comments": len(review.comments)}
     _emit(ctx, record.run_id, task_id, "agent_turn", payload)
+    if verdict.stop is not None:
+        _stop(ctx, record)
     return _submit_answer(
-        record, accepted=accepted, reasons=reasons, outside=outside, missing=missing, checks=checks
+        ctx,
+        record,
+        verdict=verdict,
+        reasons=reasons,
+        outside=outside,
+        missing=missing,
+        checks=checks,
     )
 
 
+def _stop(ctx: AppContext, record: AgentTaskRecord) -> None:
+    """Journal a stopped task's `rule_fail` in its run, and write that run's HANDOFF.md."""
+    if record.run_id is None:
+        return
+    info = loop.stop_info(record)
+    payload: dict[str, Any] = {"message": loop.stop_message(info), "agent": info}
+    if record.last_result is not None:
+        payload["result"] = record.last_result.model_dump(mode="json")
+        if record.last_result.open_questions:
+            payload["open_questions"] = list(record.last_result.open_questions)
+    _emit(
+        ctx,
+        record.run_id,
+        record.task_id,
+        "rule_fail",
+        payload,
+        failure_label=record.state.label,
+    )
+    _write_run_handoff(ctx, record.run_id)
+
+
 def _submit_answer(
+    ctx: AppContext,
     record: AgentTaskRecord,
     *,
-    accepted: bool,
+    verdict: loop.Verdict | None,
     reasons: list[str],
     outside: list[str],
     missing: list[str],
     checks: list[CheckResult],
 ) -> dict[str, Any]:
+    state = record.state
     if record.status == "rejected":
-        hint = "call next_task: it hands the task out again with the rejection reasons"
+        hint = (
+            "call next_task: it hands the task out again (model next_model); start its "
+            "subagent with the task's prompt only, the redo text is in its context"
+        )
     elif record.status == "budget_exhausted":
-        hint = "the task used all its tries; a person must look at it (see HANDOFF.md)"
+        hint = (
+            "stop working on this task: it used its budget; a person must look at it (see handoff)"
+        )
     elif record.status == "needs_human":
         hint = "a person must answer the open questions; then build again"
     else:
         hint = "call next_task for the next tasks"
+    rejected = record.status == "rejected"
+    # An agent's own needs_human report (no verdict): M2-02a labels it `planning`.
+    label: FailureLabel | None = verdict.label if verdict is not None else "planning"
     return {
         "task_id": record.task_id,
-        "accepted": accepted,
+        "accepted": record.status == "accepted",
         "status": record.status,
         "attempts": record.attempts,
         "tries": record.tries,
+        "label": label,
+        "counted": verdict.counted if verdict is not None else False,
+        "failed_checks": loop.failed_checks(verdict.failed) if verdict is not None else [],
+        "redo": state.redo if verdict is not None and not verdict.accepted else None,
+        "next_tier": record.current_tier if rejected else None,
+        "next_model": _model_for(ctx, record) if rejected else None,
+        "tries_left": max(record.tries - state.tries_used, 0),
+        "budget": {
+            "used": state.tries_used,
+            "allowed": record.tries,
+            "infra_retries": state.infra_failures,
+            "max_infra_retries": loop.MAX_INFRA_RETRIES,
+            "dispatches": state.dispatches,
+            "max_dispatches": loop.dispatch_limit(record),
+        },
+        "stop_reason": state.stop if verdict is not None else None,
+        "handoff": state.handoff if verdict is not None and verdict.stop is not None else None,
         "reasons": reasons,
         "outside_outputs": outside,
         "missing": missing,

@@ -12,7 +12,11 @@ keeps that hand-over as state, under the state backend (never in the repo tree):
 A task moves ``ready -> dispatched -> submitted -> accepted | rejected |
 budget_exhausted | needs_human``; a ``rejected`` task is dispatched again until its
 ``tries`` are used up. Each dispatch also records what the task's agent must not read
-(``denied_reads``, from its role's read policy), for the harness's guard. Every file has
+(``denied_reads``, from its role's read policy), for the harness's guard. The runtime
+that checks the submits keeps the agent rule loop's count on the record
+(``budget_state``: tries, infra retries, the last failures and redo instruction), and
+``dispatch`` never hands a task out more than ``max_dispatches`` times in one budget
+cycle (tries plus infra retries). Every file has
 a single writer, so the engine and the harness's write guard (a separate process) never
 overwrite each other's updates: the guard owns the agent bindings and their tool-call
 counts, the engine owns everything else.
@@ -33,6 +37,7 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 from chipgraph.core.contracts import AgentResult, ModelTier, RuleId
+from chipgraph.core.contracts.types import FailureLabel
 from chipgraph.core.plugin_api.types import AgentTask
 from chipgraph.core.runtime.roles import find_role, model_ladder
 from chipgraph.core.state.layout import StateLayout
@@ -74,6 +79,57 @@ def _now() -> datetime:
 def state_key(value: str) -> str:
     """The file name stem for a task id or an agent id: its sha256 hex digest."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+BudgetStop = Literal["tries", "stagnation", "infra", "planning"]
+"""Why a task's loop stopped on a submit: its tries ran out, two tries in a row left the
+same outputs and failures, its infra retries ran out, or the checks point at the spec."""
+
+
+class TaskBudgetState(BaseModel):
+    """The agent rule loop's count for one task, kept across submits (DESIGN.md 5.2).
+
+    An out-of-process runtime checks one attempt per submit, so the loop's budget state
+    (`chipgraph.core.engine.agent_rule.BudgetState`: tries used, infra retries, the last
+    failure signature) lives on the task record, with what the next attempt and a
+    HANDOFF need (the last label, failures and redo instruction). It counts one budget
+    cycle: a reopened task starts a new one. Tokens and cost are not kept: such a
+    runtime does not report them per task.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = Field(default=1, description="Schema version of this model.")
+    dispatches: int = Field(default=0, ge=0, description="Dispatches in this budget cycle.")
+    tries_used: int = Field(default=0, ge=0, description="Tries used (failed or passed).")
+    failed_tries: int = Field(default=0, ge=0, description="Tries that failed.")
+    infra_failures: int = Field(
+        default=0, ge=0, description="Submits that failed on infra (not tries)."
+    )
+    last_signature: str | None = Field(
+        default=None, description="Output hashes and failures of the last failed try."
+    )
+    stagnant: bool = Field(
+        default=False, description="The last two failed tries had the same signature."
+    )
+    output_hashes: dict[str, str] = Field(
+        default_factory=dict, description="Output path to content hash at the last submit."
+    )
+    label: FailureLabel | None = Field(default=None, description="Label of the last failure.")
+    tier: ModelTier | None = Field(default=None, description="Model tier of the last try.")
+    failed_checks: tuple[str, ...] = Field(
+        default=(), description="Check ids that did not pass on the last failed submit."
+    )
+    failures: tuple[str, ...] = Field(
+        default=(), description="One line per failing check of the last failed submit."
+    )
+    redo: str | None = Field(
+        default=None, description="The redo instruction for the next try (bounded text)."
+    )
+    stop: BudgetStop | None = Field(default=None, description="Why the loop stopped, if it did.")
+    handoff: str | None = Field(
+        default=None, description="The HANDOFF.md written when the loop stopped."
+    )
 
 
 class AgentTaskRecord(BaseModel):
@@ -118,6 +174,17 @@ class AgentTaskRecord(BaseModel):
         default=(), description="Files the last rejected attempt changed outside its outputs."
     )
     last_result: AgentResult | None = Field(default=None, description="The last agent result.")
+    max_dispatches: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Most dispatches in one budget cycle: tries plus infra retries. `dispatch` "
+            "refuses one more. Unset on records written before it existed."
+        ),
+    )
+    budget_state: TaskBudgetState | None = Field(
+        default=None, description="The loop's count across submits; unset until dispatched."
+    )
     updated_at: AwareDatetime = Field(default_factory=_now, description="Last change.")
 
     @property
@@ -126,6 +193,23 @@ class AgentTaskRecord(BaseModel):
         if self.attempts >= 1 and self.escalate is not None:
             return self.escalate
         return self.tier
+
+    @property
+    def state(self) -> TaskBudgetState:
+        """The budget state; for a record without one, what its counters imply.
+
+        A record from before `budget_state` existed counted every rejected submit as a
+        try and dispatched once per try, so `attempts` stands for both (plus the
+        dispatch in progress, if any).
+        """
+        if self.budget_state is not None:
+            return self.budget_state
+        active = 1 if self.status in ACTIVE_STATUSES else 0
+        return TaskBudgetState(
+            dispatches=self.attempts + active,
+            tries_used=self.attempts,
+            failed_tries=self.attempts,
+        )
 
 
 class AgentBinding(BaseModel):
@@ -240,6 +324,7 @@ class TaskQueue:
         inputs_hash: str,
         output_hashes: Mapping[str, str],
         tool_call_cap: int = DEFAULT_TOOL_CALL_CAP,
+        max_dispatches: int | None = None,
     ) -> AgentTaskRecord:
         """Add `task` as `ready`, or return its existing record (idempotent).
 
@@ -247,9 +332,12 @@ class TaskQueue:
         the work it did no longer holds: an `accepted` task whose inputs changed or whose
         outputs no longer hash as accepted, or a `budget_exhausted`/`needs_human` task
         whose inputs changed (a person fixed the spec, say). Otherwise it is unchanged.
+        A reopened task starts a new budget cycle (no `budget_state`); its `dispatches`
+        count goes on, so the guard's bindings of earlier dispatches stay stale.
 
         The model tiers come from the task's role (`RoleSpec.default_tier`,
         `escalate_to`) unless the rule's budget sets `tier` or `escalate` itself.
+        `max_dispatches` bounds the dispatches of a new record (see `dispatch`).
         """
         task_id = task.instance.instance_id
         existing = self.get(task_id)
@@ -277,6 +365,7 @@ class TaskQueue:
             tool_call_cap=tool_call_cap,
             inputs_hash=inputs_hash,
             dispatches=existing.dispatches if existing is not None else 0,
+            max_dispatches=max_dispatches,
         )
         return self._put(record)
 
@@ -303,9 +392,16 @@ class TaskQueue:
 
         `denied_reads` (the role's read policy resolved against the project as it is
         now) replaces the record's, in the same write as the status change, so the
-        guard never sees the task dispatched without it.
+        guard never sees the task dispatched without it. Counts the dispatch in the
+        budget cycle; refused (`QueueError`) once `max_dispatches` were handed out.
         """
         record = self._transition(task_id, OPEN_STATUSES, "dispatch")
+        state = record.state
+        if record.max_dispatches is not None and state.dispatches >= record.max_dispatches:
+            raise QueueError(
+                f"cannot dispatch task {task_id!r}: it was handed out "
+                f"{state.dispatches} times, its limit (tries plus infra retries)"
+            )
         _write_atomic(
             self.baselines_dir / f"{state_key(task_id)}.json",
             json.dumps(dict(sorted(baseline.items())), indent=1),
@@ -317,6 +413,7 @@ class TaskQueue:
                     "dispatches": record.dispatches + 1,
                     "run_id": run_id,
                     "denied_reads": tuple(sorted(set(denied_reads))),
+                    "budget_state": state.model_copy(update={"dispatches": state.dispatches + 1}),
                 }
             )
         )
@@ -332,21 +429,25 @@ class TaskQueue:
         return self._put(record.model_copy(update={"status": "dispatched"}))
 
     def accept(
-        self, task_id: str, *, result: AgentResult, output_hashes: Mapping[str, str]
+        self,
+        task_id: str,
+        *,
+        result: AgentResult,
+        output_hashes: Mapping[str, str],
+        budget_state: TaskBudgetState | None = None,
     ) -> AgentTaskRecord:
         """`submitted` -> `accepted`, remembering the output hashes that were accepted."""
         record = self._transition(task_id, frozenset({"submitted"}), "accept")
-        return self._put(
-            record.model_copy(
-                update={
-                    "status": "accepted",
-                    "accepted_hashes": dict(output_hashes),
-                    "reasons": (),
-                    "outside": (),
-                    "last_result": result,
-                }
-            )
-        )
+        update: dict[str, object] = {
+            "status": "accepted",
+            "accepted_hashes": dict(output_hashes),
+            "reasons": (),
+            "outside": (),
+            "last_result": result,
+        }
+        if budget_state is not None:
+            update["budget_state"] = budget_state
+        return self._put(record.model_copy(update=update))
 
     def reject(
         self,
@@ -355,39 +456,72 @@ class TaskQueue:
         result: AgentResult,
         reasons: tuple[str, ...],
         outside: tuple[str, ...] = (),
+        counted: bool = True,
+        exhausted: bool | None = None,
+        budget_state: TaskBudgetState | None = None,
     ) -> AgentTaskRecord:
         """`submitted` -> `rejected`, or `budget_exhausted` once every try is used.
 
-        The stored result's status says which: `failed` or `budget_exhausted`.
+        The stored result's status says which: `failed` or `budget_exhausted`. A submit
+        that is not `counted` (an infra failure) uses no try. `exhausted` overrides the
+        default "every try used" (the loop's budget may stop earlier, or on infra);
+        `budget_state` replaces the record's.
         """
         record = self._transition(task_id, frozenset({"submitted"}), "reject")
-        attempts = record.attempts + 1
-        exhausted = attempts >= record.tries
+        attempts = record.attempts + (1 if counted else 0)
+        if exhausted is None:
+            exhausted = attempts >= record.tries
         status: TaskStatus = "budget_exhausted" if exhausted else "rejected"
         final = result.model_copy(update={"status": "budget_exhausted" if exhausted else "failed"})
-        return self._put(
-            record.model_copy(
-                update={
-                    "status": status,
-                    "attempts": attempts,
-                    "reasons": reasons,
-                    "outside": outside,
-                    "last_result": final,
-                }
-            )
-        )
+        update: dict[str, object] = {
+            "status": status,
+            "attempts": attempts,
+            "reasons": reasons,
+            "outside": outside,
+            "last_result": final,
+        }
+        if budget_state is not None:
+            update["budget_state"] = budget_state
+        return self._put(record.model_copy(update=update))
 
-    def needs_human(self, task_id: str, *, result: AgentResult) -> AgentTaskRecord:
+    def needs_human(
+        self,
+        task_id: str,
+        *,
+        result: AgentResult,
+        budget_state: TaskBudgetState | None = None,
+    ) -> AgentTaskRecord:
         """`dispatched`/`submitted` -> `needs_human`: a person must answer `open_questions`."""
         if result.status != "needs_human":
             raise QueueError("needs_human needs an AgentResult with status 'needs_human'")
         record = self._transition(task_id, ACTIVE_STATUSES, "hand to a person")
+        update: dict[str, object] = {
+            "status": "needs_human",
+            "reasons": result.open_questions,
+            "last_result": result,
+        }
+        if budget_state is not None:
+            update["budget_state"] = budget_state
+        return self._put(record.model_copy(update=update))
+
+    def reopen(self, task_id: str) -> AgentTaskRecord | None:
+        """`budget_exhausted`/`needs_human` -> `ready`, with a fresh budget cycle.
+
+        A person's go-ahead to try a stopped task again (a rewind). Any other status, or
+        no record, is left alone (`None`). `dispatches` goes on, as in `enqueue`.
+        """
+        record = self.get(task_id)
+        if record is None or record.status not in ("budget_exhausted", "needs_human"):
+            return None
         return self._put(
             record.model_copy(
                 update={
-                    "status": "needs_human",
-                    "reasons": result.open_questions,
-                    "last_result": result,
+                    "status": "ready",
+                    "attempts": 0,
+                    "reasons": (),
+                    "outside": (),
+                    "last_result": None,
+                    "budget_state": None,
                 }
             )
         )
@@ -399,7 +533,9 @@ __all__ = [
     "OPEN_STATUSES",
     "AgentBinding",
     "AgentTaskRecord",
+    "BudgetStop",
     "QueueError",
+    "TaskBudgetState",
     "TaskQueue",
     "TaskStatus",
     "state_key",
