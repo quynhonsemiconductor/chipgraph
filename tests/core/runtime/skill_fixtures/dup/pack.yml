@@ -1,0 +1,5 @@
+name: dup
+version: 0.1.0
+description: a duplicate skill id
+provides:
+  skills: [rtl.md]

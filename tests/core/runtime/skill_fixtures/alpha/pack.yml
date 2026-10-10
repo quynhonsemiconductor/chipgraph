@@ -1,0 +1,5 @@
+name: alpha
+version: 0.1.0
+description: test skills (a directory)
+provides:
+  skills: [skills]

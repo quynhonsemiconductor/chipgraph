@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "ReadPolicy": {
+      "additionalProperties": false,
+      "description": "What a role may read with its own tools (the engine's context is checked apart).",
+      "properties": {
+        "deny_globs": {
+          "default": [],
+          "description": "Extra repo-relative path globs the role must not read.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Deny Globs",
+          "type": "array"
+        },
+        "deny_kinds": {
+          "default": [],
+          "description": "Artifact kinds the role must not see: every artifact of these kinds in the build graph, and the profile's layout paths for them.",
+          "items": {
+            "enum": [
+              "spec",
+              "rtl",
+              "tb",
+              "sva",
+              "report",
+              "plan",
+              "model",
+              "doc",
+              "diagram",
+              "script",
+              "config",
+              "other"
+            ],
+            "type": "string"
+          },
+          "title": "Deny Kinds",
+          "type": "array"
+        },
+        "mode": {
+          "default": "any",
+          "description": "'any': no read restriction; 'deny': never read the kinds and globs below.",
+          "enum": [
+            "any",
+            "deny"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "ReadPolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One agent role: its prompt and its tool table (DESIGN.md 5.1).",
+  "properties": {
+    "default_tier": {
+      "description": "Model tier of the first attempt.",
+      "enum": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "title": "Default Tier",
+      "type": "string"
+    },
+    "description": {
+      "description": "One line: what the role does and how it is started. No line breaks.",
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "dispatch": {
+      "default": true,
+      "description": "Whether agent rules may use this role (handed out as tasks); false for a role served by another path, such as the fast decision layer.",
+      "title": "Dispatch",
+      "type": "boolean"
+    },
+    "escalate_to": {
+      "anyOf": [
+        {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Model tier of later attempts, after a rejected one.",
+      "title": "Escalate To"
+    },
+    "id": {
+      "description": "The role id rules name in `role:`, e.g. 'author'.",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "prompt": {
+      "description": "The role's system prompt; names tools only as {tool:<capability>}.",
+      "minLength": 1,
+      "title": "Prompt",
+      "type": "string"
+    },
+    "read_policy": {
+      "$ref": "#/$defs/ReadPolicy",
+      "description": "What the role may read with its own tools."
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "shell": {
+      "const": false,
+      "default": false,
+      "description": "Roles never get a shell (the guard refuses one).",
+      "title": "Shell",
+      "type": "boolean"
+    },
+    "tools": {
+      "description": "Abstract capabilities granted; the runtime maps them to its tools.",
+      "items": {
+        "enum": [
+          "read_files",
+          "search_files",
+          "write_outputs",
+          "engine_context",
+          "engine_decisions"
+        ],
+        "type": "string"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "write_scope": {
+      "description": "What the role may write.",
+      "enum": [
+        "outputs",
+        "plan",
+        "proposal",
+        "none"
+      ],
+      "title": "Write Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "description",
+    "prompt",
+    "default_tier",
+    "tools",
+    "write_scope"
+  ],
+  "title": "RoleSpec",
+  "type": "object"
+}
