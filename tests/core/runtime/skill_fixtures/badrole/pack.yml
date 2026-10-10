@@ -1,0 +1,5 @@
+name: badrole
+version: 0.1.0
+description: a skill for an unknown role
+provides:
+  skills: [writer.md]

@@ -1,0 +1,5 @@
+name: beta
+version: 0.1.0
+description: test skills (one file)
+provides:
+  skills: [more/naming.md]

@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "description": "One skill: its frontmatter plus the instructions (the file's body).",
+  "properties": {
+    "description": {
+      "description": "One line: what the skill is for.",
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "id": {
+      "description": "The skill id, '<namespace>/<name>'.",
+      "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "roles": {
+      "description": "The roles that may use it.",
+      "items": {
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Roles",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "description": "Schema version of this model.",
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "text": {
+      "description": "The instructions: the file's body.",
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "version": {
+      "description": "The skill's version, MAJOR.MINOR.PATCH.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "description",
+    "roles",
+    "version",
+    "text"
+  ],
+  "title": "SkillSpec",
+  "type": "object"
+}

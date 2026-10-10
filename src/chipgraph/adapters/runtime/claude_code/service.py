@@ -6,14 +6,19 @@ Code session::
     next_task(target)   run the build; every agent task it reaches is queued; hand out
                         the ready ones (several at once: they run in parallel)
     get_context(id)     a role subagent asks for its task: inputs as text, outputs,
-                        role, skills (refused when an input is labelled `nda`)
+                        role, skills and their text (refused when an input is labelled
+                        `nda`, or is of a kind the task's role must not see)
     submit(id, result)  the engine checks the work: every file changed since dispatch
                         is one of the task's outputs, the outputs exist, the rule's
                         checks pass; accept, or reject and count an attempt
 
 The engine decides everything (P3): which task, which role, which files, which checks.
-Claude Code only runs the model. The write guard hook (`plugin/hooks/guard.py`) blocks
-writes outside a task's outputs while the agent works; `submit` checks the diff again.
+Claude Code only runs the model. Each role's tool table (`chipgraph.core.runtime.roles`)
+picks the subagent (`chipgraph:<role>`), its model per attempt (the role's tier, then its
+escalation tier after a rejection, unless the rule sets its own), and what it must not
+read (`denied_reads`, set on dispatch). The guard hook (`plugin/hooks/guard.py`) blocks
+writes outside a task's outputs and reads of its denied paths while the agent works;
+`submit` checks the diff again.
 
 Every function takes a freshly loaded `AppContext` and raises `AppError` for anything
 the caller should see as a tool error.
@@ -31,8 +36,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from chipgraph.adapters.runtime.claude_code.runtime import PLUGIN_NAME, output_hashes
-from chipgraph.app.build import make_scheduler
+from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
+from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
+from chipgraph.app.build import make_scheduler, pack_search_paths
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
@@ -41,6 +47,8 @@ from chipgraph.core.contracts.event import EventType
 from chipgraph.core.engine.graph import BuildGraph
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
+from chipgraph.core.plugin_api.pack import discover_packs
+from chipgraph.core.plugin_api.registry import PluginError
 from chipgraph.core.runtime import (
     ACTIVE_STATUSES,
     OPEN_STATUSES,
@@ -49,11 +57,18 @@ from chipgraph.core.runtime import (
     TaskQueue,
     task_for,
 )
+from chipgraph.core.runtime.roles import (
+    RoleSpec,
+    SkillError,
+    SkillSet,
+    SkillSpec,
+    denied_reads,
+    find_role,
+    load_skills,
+    path_denied,
+)
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.artifacts import hash_file
-
-_DEFAULT_TIER_MODELS = {"small": "haiku", "medium": "sonnet", "large": "opus"}
-"""Claude Code model aliases per tier, when the profile's `models.tiers` names none."""
 
 _MAX_INPUT_CHARS = 200_000
 """Longest input text `get_context` returns per file; longer files are cut."""
@@ -118,13 +133,52 @@ def _instance(graph: BuildGraph, task_id: str) -> tuple[RuleSpec, RuleInstance]:
 
 def _agent_for(role: str) -> str:
     """The plugin subagent for a role: `chipgraph:<role>` (namespace dropped)."""
-    return f"{PLUGIN_NAME}:{role.rsplit('/', 1)[-1]}"
+    return agent_type(role)
 
 
 def _model_for(ctx: AppContext, record: AgentTaskRecord) -> str:
+    """The model of the task's next attempt: its current tier, mapped by the profile."""
     tier = record.current_tier
     configured = ctx.require_profile().profile.models.tiers.get(tier)
-    return configured or _DEFAULT_TIER_MODELS[tier]
+    return configured or DEFAULT_TIER_MODELS[tier]
+
+
+def _skill_set(ctx: AppContext) -> SkillSet:
+    """Every skill the profile's packs provide."""
+    profile = ctx.require_profile().profile
+    try:
+        available = discover_packs(pack_search_paths(ctx))
+        return load_skills(available[name] for name in profile.packs if name in available)
+    except (PluginError, SkillError) as exc:
+        raise AppError(str(exc)) from exc
+
+
+def _check_skills(ctx: AppContext, graph: BuildGraph) -> SkillSet:
+    """Resolve every agent rule's skills for its role; an unknown or misused one is an error."""
+    skills = _skill_set(ctx)
+    for rule in sorted(graph.rules.values(), key=lambda r: r.id):
+        if rule.kind == "agent" and rule.role is not None:
+            try:
+                skills.resolve(rule.skills, rule.role)
+            except SkillError as exc:
+                raise AppError(f"rule {rule.id!r}: {exc}") from exc
+    return skills
+
+
+def _denied_reads(ctx: AppContext, graph: BuildGraph, record: AgentTaskRecord) -> tuple[str, ...]:
+    """What the task's agent must not read: its role's read policy over this project."""
+    role = find_role(record.role)
+    if role is None:
+        return ()
+    profile = ctx.require_profile().profile
+    refs = [ref for inst in graph.instances.values() for ref in (*inst.inputs, *inst.outputs)]
+    return denied_reads(
+        role,
+        artifacts=refs,
+        layout=profile.layout,
+        block_layouts={name: block.layout for name, block in profile.blocks.items()},
+        keep=record.allowed_writes,
+    )
 
 
 def _emit(
@@ -207,6 +261,7 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
         "role": record.role,
         "agent": _agent_for(record.role),
         "model": _model_for(ctx, record),
+        "tier": record.current_tier,
         "skills": list(record.skills),
         "outputs": list(record.allowed_writes),
         "attempt": record.dispatches,
@@ -253,6 +308,7 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
     ctx.require_profile()
     _require_runtime(ctx)
     scheduler = make_scheduler(ctx, target)
+    _check_skills(ctx, scheduler.graph)
     summary = await scheduler.run(target)
     graph = scheduler.graph
     queue = _queue(ctx)
@@ -292,11 +348,19 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
                     }
                 )
                 continue
-        record = queue.dispatch(iid, run_id=summary.run_id, baseline=now)
+        record = queue.dispatch(
+            iid,
+            run_id=summary.run_id,
+            baseline=now,
+            denied_reads=_denied_reads(ctx, graph, record),
+        )
         payload = {
             "phase": "dispatch",
             "attempt": record.dispatches,
             "outputs": list(record.allowed_writes),
+            "agent": _agent_for(record.role),
+            "model": _model_for(ctx, record),
+            "denied_reads": list(record.denied_reads),
         }
         _emit(ctx, record.run_id, iid, "agent_turn", payload)
         dispatched.append(record)
@@ -346,11 +410,57 @@ def _model_input(ctx: AppContext, key: str) -> dict[str, Any]:
     return entry
 
 
+def _refuse(
+    ctx: AppContext,
+    queue: TaskQueue,
+    record: AgentTaskRecord,
+    question: str,
+    payload: Mapping[str, Any],
+) -> AppError:
+    """Hand the task to a person with `question`; the error for the tool call."""
+    queue.needs_human(
+        record.task_id, result=AgentResult(status="needs_human", open_questions=(question,))
+    )
+    _emit(ctx, record.run_id, record.task_id, "agent_turn", {"phase": "context_refused", **payload})
+    return AppError(question)
+
+
+def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleInstance) -> list[str]:
+    """Inputs the task's role must not see: of a denied kind, or on a denied path."""
+    if role is None or role.read_policy.mode != "deny":
+        return []
+    kinds = set(role.read_policy.deny_kinds)
+    denied = record.denied_reads
+    return sorted(
+        ref.path or str(ref.model_key)
+        for ref in instance.inputs
+        if ref.kind in kinds or (ref.path is not None and path_denied(ref.path, denied))
+    )
+
+
+def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec, ...]) -> str:
+    reading = (
+        "You may read other project files for style."
+        if role is None or role.can_read_files
+        else "You have no file-reading tools, on purpose: use only this context."
+    )
+    follow = " Follow the instructions in `skill_texts`." if skills else ""
+    return (
+        "Write only the files in `outputs` (absolute paths in `outputs_abs`); the "
+        f"chipgraph guard refuses any other write, and you have no shell. {reading}{follow} "
+        "On submit the engine checks that only the outputs changed, that they exist, and "
+        f"runs these checks: {', '.join(rule.checks) or 'none'}. "
+        "Finish with a short report: files written, assumptions, open questions."
+    )
+
+
 async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     """The context of one dispatched task: inputs as text, outputs, role, skills.
 
     Refused, with no content, when any input or output is labelled `nda`: every model
-    this runtime uses is a cloud model. The task then waits for a person (`needs_human`).
+    this runtime uses is a cloud model. Refused too when an input is of a kind the task's
+    role must not see (its `read_policy`), or on one of its `denied_reads`. Either way the
+    task then waits for a person (`needs_human`).
     """
     ctx.require_profile()
     _require_runtime(ctx)
@@ -372,11 +482,22 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
             "runtime claude-code sends context to a cloud model, so it is refused. Run the "
             "task with a local runtime, or have a person do it."
         )
-        queue.needs_human(
-            task_id, result=AgentResult(status="needs_human", open_questions=(question,))
+        raise _refuse(ctx, queue, record, question, {"nda": nda})
+
+    role = find_role(record.role)
+    unseeable = _unseeable(role, record, instance)
+    if role is not None and unseeable:
+        kinds = ", ".join(role.read_policy.deny_kinds) or "denied"
+        question = (
+            f"task {task_id!r} gives role {role.id!r} inputs it must not see "
+            f"({kinds} artifacts or paths): {', '.join(unseeable)}; it is refused. Remove "
+            "those inputs from the rule, or give the task to another role or a person."
         )
-        _emit(ctx, record.run_id, task_id, "agent_turn", {"phase": "context_refused", "nda": nda})
-        raise AppError(question)
+        raise _refuse(ctx, queue, record, question, {"denied_inputs": unseeable})
+    try:
+        skills = _skill_set(ctx).resolve(record.skills, record.role)
+    except SkillError as exc:
+        raise AppError(f"task {task_id!r}: {exc}") from exc
 
     inputs: list[dict[str, Any]] = []
     for ref in instance.inputs:
@@ -411,6 +532,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "description": rule.description,
         "role": record.role,
         "skills": list(record.skills),
+        "skill_texts": {skill.id: skill.text for skill in skills},
         "params": dict(instance.params),
         "project_root": str(root),
         "outputs": list(record.allowed_writes),
@@ -420,14 +542,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "tries": record.tries,
         "previous_rejection": list(record.reasons),
         "inputs": inputs,
-        "instructions": (
-            "Write only the files in `outputs` (absolute paths in `outputs_abs`); the "
-            "chipgraph guard refuses any other write, and you have no shell. You may read "
-            "other project files for style. On submit the engine checks that only the "
-            "outputs changed, that they exist, and runs these checks: "
-            f"{', '.join(rule.checks) or 'none'}. "
-            "Finish with a short report: files written, assumptions, open questions."
-        ),
+        "instructions": _instructions(role, rule, skills),
     }
 
 
@@ -486,10 +601,14 @@ async def submit(
         allowed = set(record.allowed_writes)
         now = await snapshot(ctx, extra=record.allowed_writes)
         changed = _changed(queue.baseline(task_id), now)
+        # Outputs of the other agent tasks: their own subagents write them (the guard
+        # allows nobody else), also when one of them was accepted since this dispatch,
+        # as happens when tasks that ran in parallel are submitted one by one.
         others = {
             w
             for other in queue.all()
-            if other.task_id != task_id and other.status in ACTIVE_STATUSES
+            if other.task_id != task_id
+            and (other.status in ACTIVE_STATUSES or other.status == "accepted")
             for w in other.allowed_writes
         }
         engine = _engine_outputs(graph)

@@ -123,18 +123,35 @@ The build loop. `next_task` → one role subagent per task, all in parallel → 
   hands out the ready ones (each with `task_id`, `agent`, `model`, `outputs`), or says
   `done`, or `waiting` (a gate to approve, a question for a person, a failure).
 - `get_context(task_id)`: the task's inputs as text, its outputs (the only files it may
-  write), role, skills and checks. Refused when an input is labelled `nda`: every model
-  here is a cloud model.
+  write), role, skills (with their text, `skill_texts`) and checks. Refused when an input
+  is labelled `nda` (every model here is a cloud model), or is of a kind the task's role
+  must not see (`rtl` for `tb-author`).
 - `submit(task_id, result)`: the engine checks that only the task's outputs changed
   since it was handed out, that they exist, and runs the rule's checks; then accepts,
   or rejects with reasons and counts a try (`budget.tries`).
 
-Role subagents (`agents/`): `chipgraph:author` (DESIGN 5.1) with `Read, Write, Edit, Glob,
-Grep` and `get_context`, no shell. `next_task` picks the model from the rule's tier
-(`small` → haiku, `medium` → sonnet, `large` → opus, or the profile's `models.tiers`).
+Role subagents (`agents/`), one per role (DESIGN 5.1), generated from the role data in
+`src/chipgraph/core/runtime/roles/data/` (`python -m
+chipgraph.adapters.runtime.claude_code.agents --write`; a test keeps them equal). None
+gets a shell or web tools:
+
+| Agent | Tools | Writes | Model (tier, then after a rejection) |
+|---|---|---|---|
+| `chipgraph:author` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | the task's outputs | medium, then large |
+| `chipgraph:tb-author` | `Write, Edit, MultiEdit`, `get_context` (no read tools) | the task's outputs | medium, then large |
+| `chipgraph:critic` | `Read, Glob, Grep`, `get_context` | nothing | large |
+| `chipgraph:planner` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its plan file | large |
+| `chipgraph:researcher` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its proposal file | medium, then large |
+
+`chipgraph:asker` and `chipgraph:decider` (which serves the `triage` role through
+`decide()`) are hand-written. `next_task` picks the model per attempt from the role's tier
+(or the rule's own `budget.tier`/`escalate`): `small` → haiku, `medium` → sonnet, `large` →
+opus, or the profile's `models.tiers`. `tb-author` never sees RTL: `get_context` gives it
+the spec and interface only, and the guard refuses it any read (below).
 `/chipgraph:run` removes only `Bash, NotebookEdit, Skill, WebFetch, WebSearch`: its
-subagents need the file tools, and the write guard bounds them. Acceptance run on
-tinysoc: `MAIN_MODEL=opus docs/runtime-claude-code/run.sh /tmp/cg-cc-opus`.
+subagents need the file tools, and the write guard bounds them. Acceptance runs on
+tinysoc: `MAIN_MODEL=opus docs/runtime-claude-code/run.sh /tmp/cg-cc-opus`, and for the
+roles `docs/roles-claude-code/run.sh /tmp/cg-roles-haiku`.
 
 ## MCP server
 
@@ -158,6 +175,11 @@ plugin's hooks, not in agent frontmatter, because frontmatter hooks do not run u
 - the main session may not write at all; subagents get no shell;
 - each task has a tool-call budget (80 per dispatch): `--max-turns` counts only the main
   session, so the engine counts subagent calls itself;
+- a task's `denied_reads` (its role's read policy over the project; for `tb-author`, every
+  `rtl` artifact and its directory) is refused to its subagent: `Read` of a denied path,
+  `Glob`/`Grep` rooted at it or at any directory above it (the project root included), and
+  any other non-chipgraph tool whose input names one. `chipgraph:tb-author` gets no
+  read-type tool at all, whatever the path, and no chipgraph tool but `get_context`;
 - **fail closed**: any error (bad input, broken state) denies, with exit code 2.
 
 Outside a chipgraph run the guard makes no decision, except that `chipgraph:*` role
