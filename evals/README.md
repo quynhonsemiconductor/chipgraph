@@ -15,9 +15,9 @@ chipgraph eval SUITE [--runtime fake|claude-code] [--main-model haiku]
 
 Suites: `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`),
 `triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`), `triage-holdout2`
-(`triage/holdout2.yml` and `triage/logs-holdout2/`) and `review` (`review/defects.yml`,
-below). The holdouts have the schema of `faults.yml`; a suite whose file does not exist
-reports `NO DATA` and exits 0.
+(`triage/holdout2.yml` and `triage/logs-holdout2/`), `review` (`review/defects.yml`,
+below) and `review-holdout2` (`review/defects2.yml`). The holdouts have the schema of
+their first set; a suite whose file does not exist reports `NO DATA` and exits 0.
 
 It is built on [Inspect AI](https://inspect.aisi.org.uk/) (`inspect-ai`, pinned in the
 `evals` extra and the dev group): `harness/` makes one Inspect `Task` per suite, its
@@ -250,3 +250,32 @@ cost more per sample than triage, so raise `--budget-usd` for the 20 samples:
 uv run chipgraph eval review
 uv run chipgraph eval review --runtime claude-code --budget-usd 10 --out /tmp/cg-eval-review
 ```
+
+### The second review set (review-holdout2)
+
+`defects.yml` was written by the author of the Critic's prompt and skill, so a score on
+it is partly the author grading his own work. `review/defects2.yml` (`r2-01` ... `r2-17`
+defects, `r2-c1` ... `r2-c8` clean) is a second set in the same schema, written by an
+author who never read the Critic's prompt or role data, the review skill, the review
+context builder, the review tests, the `ReviewReport` schema or any real-run report; only
+the data format (`defects.yml`, `grade.py`), the harness and `examples/tinysoc` itself.
+Every label comes from the planted fault and the spec line it contradicts. No defect
+repeats one of the first set: new constructs (a synchronous or inverted-polarity reset, an
+inverted enable, a 16-bit wrap, an increment that overrides a register write, a pulse
+instead of a pending interrupt, an ungated write strobe, a read mux missing a register, an
+off-by-one decode window, swapped address bits, a 16-bit read path at the top, an empty
+read default, tied-off ports, an unconnected interrupt, swapped write strobes), and no
+spec line of the first set. The 8 clean diffs are a comment, whitespace, a consistent
+rename, a refactor, an explicit read-only decode, an added assertion and two that look
+suspicious but are correct per the spec (a select derived from the base `0x4`, and a
+COUNT write that is not also incremented): a Critic that flags them is wrong.
+
+Thresholds, the first set's unchanged: recall >= 70 % (at least 12 of 17) and at most 1
+false alarm on the 8 clean diffs. The set is frozen: sha256
+`012d18797b46e1fe24337aa36d40b58683241c1cad55c6df58c575298e939fda`
+(`tests/evals/test_eval_review_holdout2.py` pins it). Never tune the Critic on it; once
+anything is changed because of a result on it, it is spent.
+
+- `review/grade.py ANSWERS.jsonl --set defects2` grades answers against it.
+- `chipgraph eval review-holdout2 [--runtime claude-code]` runs it as `review` runs
+  (not in `evals/run-claude-code.sh`'s default list: an opus Critic on 25 samples costs).

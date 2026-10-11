@@ -1,6 +1,11 @@
 """Deterministic grader for the Critic review evals (task M2-09).
 
-    python evals/review/grade.py ANSWERS.jsonl [--defects FILE] [--json]
+    python evals/review/grade.py ANSWERS.jsonl [--set defects|defects2 | --defects FILE] [--json]
+
+`--set defects2` grades against `defects2.yml` (the second set, `review-holdout2`: ids
+`r2-NN` and `r2-cN`, written without reading the Critic, grading only); `--defects` takes
+any file of the same schema. The default is `defects.yml`. The thresholds are the same
+for every set.
 
 ANSWERS.jsonl has one JSON object per line, one per sample of `defects.yml`:
 
@@ -35,6 +40,8 @@ from typing import Any
 import yaml
 
 DEFAULT_DEFECTS = Path(__file__).resolve().parent / "defects.yml"
+DEFECTS2 = Path(__file__).resolve().parent / "defects2.yml"
+SETS = {"defects": DEFAULT_DEFECTS, "defects2": DEFECTS2}
 LINE_SLACK = 3
 MIN_RECALL = 0.7
 MAX_FALSE_ALARMS = 1
@@ -334,11 +341,14 @@ def _pct(value: float | None) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("answers", type=Path)
-    parser.add_argument("--defects", type=Path, default=DEFAULT_DEFECTS)
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument("--set", choices=sorted(SETS), default=None, help="sample set to grade")
+    which.add_argument("--defects", type=Path, default=None, help="a defects file to grade")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
+    defects = args.defects or SETS[args.set or "defects"]
     try:
-        report = grade(load_samples(args.defects), load_answers(args.answers))
+        report = grade(load_samples(defects), load_answers(args.answers))
     except GradeError as exc:
         print(f"grade.py: {exc}", file=sys.stderr)
         return 2

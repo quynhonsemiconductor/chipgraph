@@ -127,8 +127,24 @@ SUITES: dict[str, Suite] = {
             "(>= 12 of 16), <= 1 false alarm on 4 clean diffs"
         ),
     ),
+    "review-holdout2": Suite(
+        "review-holdout2",
+        "review",
+        EVALS / "review" / "defects2.yml",
+        description=(
+            "Critic review of the second, blind set of tinysoc diffs: recall >= 70 % "
+            "(>= 12 of 17), <= 1 false alarm on 8 clean diffs"
+        ),
+    ),
 }
-"""The suites `chipgraph eval` knows, by name."""
+"""The suites `chipgraph eval` knows, by name.
+
+`review-holdout2` (`review/defects2.yml`) is the review suite's second set, written by an
+author who never read the Critic's prompt, role, skill, context builder or review tests;
+it is graded only, with the thresholds of `review`, unchanged: recall >= 70 % (at least
+12 of its 17 defects) and at most 1 false alarm on its 8 clean diffs. Both runtimes run
+it exactly as they run `review`.
+"""
 
 
 __all__ = ["EVALS", "PLUGIN", "REPO", "SUITES", "TINYSOC", "Suite", "SuiteKind", "load_grader"]
