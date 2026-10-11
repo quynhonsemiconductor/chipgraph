@@ -3,7 +3,7 @@
 #
 #   docs/triage-claude-code/run.sh [OUT_DIR]      # OUT_DIR must be /tmp/cg-triage-<name>
 #
-# Env: MAIN_MODEL (default haiku: the main session only dispatches), SMALL_MODEL (default
+# Env: MAIN_MODEL (default sonnet: the main session only dispatches), SMALL_MODEL (default
 # haiku) and LARGE_MODEL (default opus; sonnet if your plan does not allow opus): the
 # decider tiers, written into the copy's profile (`models.tiers`); MAX_TURNS (default 30
 # per sample); ONLY (space-separated sample ids, default every sample of the set); SET
@@ -31,7 +31,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-/tmp/cg-triage-run}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 SMALL_MODEL="${SMALL_MODEL:-haiku}"
 LARGE_MODEL="${LARGE_MODEL:-opus}"
 MAX_TURNS="${MAX_TURNS:-30}"

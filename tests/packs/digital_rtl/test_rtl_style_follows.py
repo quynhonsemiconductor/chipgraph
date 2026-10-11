@@ -65,7 +65,9 @@ def test_the_style_follows_the_exemplars(tmp_path: Path, own: str) -> None:
     flagged = _style_check(tmp_path, module, other)
     assert flagged.status == "fail"
     keys = {i.rule for i in flagged.issues if i.severity == "error"}
-    assert {"style.indent", "style.begin", "style.reset", "style.suffix", "style.header"} <= keys
+    # a different kind of reset is reported as `style.reset_kind` (always an error)
+    assert {"style.indent", "style.begin", "style.suffix", "style.header"} <= keys
+    assert keys & {"style.reset", "style.reset_kind"}
 
     assert style_distance(profile_of(own), module) < style_distance(profile_of(other), module)
     assert style_distance(profile_of(own), module) == 0.0

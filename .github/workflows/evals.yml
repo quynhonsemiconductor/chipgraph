@@ -21,9 +21,9 @@ on:
         options: [all, ask, triage, triage-holdout, triage-holdout2]
         default: all
       main_model:
-        description: Main session model
+        description: Main session model (workers stay on haiku)
         type: string
-        default: haiku
+        default: sonnet
       budget_usd:
         description: Cost cap per suite, in USD
         type: string
@@ -90,7 +90,7 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CHIPGRAPH_EVALS_CLAUDE_TOKEN }}
           SUITE: ${{ inputs.suite || 'all' }}
-          MAIN_MODEL: ${{ inputs.main_model || 'haiku' }}
+          MAIN_MODEL: ${{ inputs.main_model || 'sonnet' }}
           BUDGET_USD: ${{ inputs.budget_usd || '3' }}
           EVAL_OUT: ${{ runner.temp }}/eval-report
         run: |

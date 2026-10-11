@@ -7,7 +7,7 @@
 #
 #   docs/rtl-claude-code/run.sh [OUT_DIR]      # OUT_DIR must be /tmp/cg-rtl-<name>
 #
-# Env: MAIN_MODEL (default haiku: the session that runs /chipgraph:run); MEDIUM_MODEL
+# Env: MAIN_MODEL (default sonnet: the session that runs /chipgraph:run); MEDIUM_MODEL
 # (default sonnet) and LARGE_MODEL (default sonnet): the copies' `models.tiers`, so the
 # rtl-author subagent (tier medium, escalating to large) runs on sonnet; MAX_TURNS
 # (default 40).
@@ -39,7 +39,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-/tmp/cg-rtl-run}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 MEDIUM_MODEL="${MEDIUM_MODEL:-sonnet}"
 LARGE_MODEL="${LARGE_MODEL:-sonnet}"
 MAX_TURNS="${MAX_TURNS:-40}"

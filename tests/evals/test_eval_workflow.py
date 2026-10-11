@@ -32,7 +32,7 @@ def test_runs_by_hand_or_weekly_never_on_push_or_pr() -> None:
     assert set(triggers) == {"workflow_dispatch", "schedule"}
     inputs = triggers["workflow_dispatch"]["inputs"]
     assert set(inputs) == {"suite", "main_model", "budget_usd"}
-    assert inputs["main_model"]["default"] == "haiku"
+    assert inputs["main_model"]["default"] == "sonnet"
     assert inputs["suite"]["options"] == [
         "all",
         "ask",

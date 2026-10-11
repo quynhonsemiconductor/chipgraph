@@ -137,7 +137,7 @@ def test_the_profile_of_the_real_tinysoc_rtl() -> None:
 def test_the_profile_is_deterministic_and_describes_itself() -> None:
     assert style_profile(_set("a")) == style_profile(dict(reversed(list(_set("a").items()))))
     text = A.describe()
-    assert set(text) == set(STYLE_KEYS)
+    assert set(text) | {"reset_kind"} == set(STYLE_KEYS)  # reset_kind is part of `reset`
     assert "2 spaces" in text["indent"] and "rst_n" in text["reset"] and "_q" in text["suffix"]
 
 
@@ -174,7 +174,7 @@ def test_ports() -> None:
 
 def test_reset_and_sequential() -> None:
     sync = GOOD_A.replace("always_ff @(posedge clk or negedge rst_n)", "always_ff @(posedge clk)")
-    assert "reset" in _keys(sync) and "sequential" not in _keys(sync)
+    assert "reset_kind" in _keys(sync) and "sequential" not in _keys(sync)
     high = GOOD_A.replace("negedge rst_n", "posedge rst_n")
     assert "reset" in _keys(high)
     plain = GOOD_A.replace("always_ff @(", "always @(")
@@ -292,3 +292,66 @@ def test_each_exemplar_is_close_to_its_own_set(name: str) -> None:
     other = B if name == "a" else A
     for text in _set(name).values():
         assert style_distance(own, text) < style_distance(other, text)
+
+
+# --- reset_kind: a different kind of reset is always an error (r2-01) ----------------------
+
+
+def _reset_kind_issues(exemplars: dict[str, str], text: str, enforce: tuple[str, ...] = ()) -> list:
+    profile = style_profile(exemplars)
+    return [i for i in style_issues(profile, observe(text, "rtl/m.sv"), enforce=enforce)]
+
+
+def test_a_synchronous_reset_against_asynchronous_exemplars_is_an_error_without_enforce() -> None:
+    sync = GOOD_A.replace("always_ff @(posedge clk or negedge rst_n)", "always_ff @(posedge clk)")
+    issues = _reset_kind_issues(_set("a"), sync)
+    [kind] = [i for i in issues if i.rule == "style.reset_kind"]
+    assert kind.severity == "error" and kind.file == "rtl/m.sv" and kind.line
+    assert "synchronous" in kind.msg and "asynchronous" in kind.msg
+    # the other reset deviations stay warnings unless enforced
+    assert all(i.severity == "warning" for i in issues if i.rule != "style.reset_kind")
+
+
+def test_an_asynchronous_reset_against_synchronous_exemplars_is_an_error() -> None:
+    sync_profile = style_profile(_set("b"))
+    asynchronous = GOOD_A  # set A's own style: async reset
+    issues = style_issues(sync_profile, observe(asynchronous, "rtl/m.sv"))
+    assert [i.severity for i in issues if i.rule == "style.reset_kind"] == ["error"]
+
+
+def test_the_same_kind_of_reset_is_not_reset_kind_even_if_the_polarity_differs() -> None:
+    high = GOOD_A.replace("negedge rst_n", "posedge rst_n")
+    issues = _reset_kind_issues(_set("a"), high)
+    assert not [i for i in issues if i.rule == "style.reset_kind"]
+    assert [i.severity for i in issues if i.rule == "style.reset"] == ["warning"]
+
+
+def test_the_distance_still_counts_a_reset_kind_deviation() -> None:
+    sync = GOOD_A.replace("always_ff @(posedge clk or negedge rst_n)", "always_ff @(posedge clk)")
+    assert style_distance(A, observe(sync)) > style_distance(A, observe(GOOD_A)) == 0.0
+
+
+def test_reset_kind_is_a_valid_enforce_key() -> None:
+    assert "reset_kind" in STYLE_KEYS
+
+
+def test_the_r2_01_defect_is_caught_by_the_style_check_not_by_a_reviewer() -> None:
+    """The Critic missed `r2-01` (a timer whose async reset became synchronous). With the
+    project's own RTL as the exemplars, the deterministic check flags it with a line."""
+    exemplars = {p.name: p.read_text() for p in sorted((TINYSOC / "rtl").glob("tiny_*.sv"))}
+    timer = (TINYSOC / "rtl" / "tiny_timer.sv").read_text()
+    old = "  always_ff @(posedge clk or negedge rst_n) begin\n"
+    assert old in timer
+    broken = timer.replace(old, "  always_ff @(posedge clk) begin\n", 1)
+    others = {k: v for k, v in exemplars.items() if k != "tiny_timer.sv"}
+    assert not [
+        i
+        for i in style_issues(style_profile(others), observe(timer, "rtl/tiny_timer.sv"))
+        if i.rule == "style.reset_kind"
+    ]
+    [issue] = [
+        i
+        for i in style_issues(style_profile(others), observe(broken, "rtl/tiny_timer.sv"))
+        if i.rule == "style.reset_kind"
+    ]
+    assert issue.severity == "error" and issue.line == 26

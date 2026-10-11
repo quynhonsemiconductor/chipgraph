@@ -4,7 +4,7 @@
 #
 #   docs/plugin-claude-code/run.sh [OUT_DIR]      # OUT_DIR must be /tmp/cg-plugin-<name>
 #
-# Env: MAIN_MODEL (default haiku); SMALL_MODEL (default haiku) and LARGE_MODEL (default
+# Env: MAIN_MODEL (default sonnet); SMALL_MODEL (default haiku) and LARGE_MODEL (default
 # opus; sonnet if your plan does not allow opus): the decider tiers for /chipgraph:triage,
 # written into the copy's profile; MAX_TURNS (default 30 per command); ONLY (space-separated
 # case ids, default all: status trace trace_unknown ask triage init); ALLOW_MCP (default 1:
@@ -32,7 +32,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-/tmp/cg-plugin-run}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 SMALL_MODEL="${SMALL_MODEL:-haiku}"
 LARGE_MODEL="${LARGE_MODEL:-opus}"
 MAX_TURNS="${MAX_TURNS:-30}"
