@@ -1,0 +1,47 @@
+# The RTL of one planned module, written without seeing its testbench (DESIGN.md 5.1,
+# 5.3, 8.6 V3; task M2-04).
+#
+# For each module of a block's approved plan (`foreach: plan.modules`, params `block` and
+# `module`), an `rtl-author` task writes the module's RTL. Its context holds only what an
+# RTL module is written from: the module's entry of the approved plan (the resolver adds
+# `plan/{block}.approved.json` as an input), the model slice (`block/{block}`: the block's
+# registers, clock and reset, with the requirements cut to the module's;
+# `interface/{module}`: its ports from the Design Model, or the approved plan for an
+# internal port; the declarations of the modules it depends on), the block's spec
+# documents (the profile layout's `spec`), the naming rules as text and the profile's
+# `style.exemplars`. Never a testbench: the role denies `tb` artifacts, the profile's
+# `layout.tb` paths and files named like tests (`test_*.py`, `tb_*.sv`, `*_tb.sv`, ...);
+# the rule validator refuses such an input, `get_context` refuses to serve one, the guard
+# refuses reads of them, and what `submit` tells the author of a failed check is
+# filtered the same way (behavioural text such as `expected 0x2, got 0x0` is kept).
+#
+# The output is the module's file under the default RTL path; the plan must list it in
+# the module's writes (`plan_check` says so), and the graph refuses an output outside
+# them. A project with another RTL layout writes its own copy of this rule in its pack.
+#
+# Checks, in this order, each an adapter id of the profile:
+#   format     the project's formatter on the outputs, run by the engine before the
+#              other checks (`chipgraph.checks.format`: `{ use: format }`, formatter from
+#              `style.formatter`, default verible-verilog-format when on PATH)
+#   lint       the project's lint (tinysoc: `make lint BLOCK={block}`)
+#   naming     the project's naming rule (`{ use: naming, rules: ..., scope: [...] }`)
+#   style      the outputs against `style.exemplars` (`chipgraph.checks.style`:
+#              `{ use: style }`; errors only for the keys in `style.enforce`)
+#   hardcode   no contract number typed by hand (`{ use: hardcode, scope: [...] }`)
+rule: rtl_module
+kind: agent
+role: rtl-author
+description: >-
+  Write the module's synthesizable RTL from its approved plan entry, its requirements,
+  its interface and the declarations it connects to, following the naming rules and the
+  style of the exemplars; cite each requirement id next to the logic that implements it.
+foreach: plan.modules
+inputs:
+  - model: "block/{block}"
+  - model: "interface/{module}"
+outputs:
+  - "rtl/{module}.sv"
+skills: [lang-sv/rtl, org/naming]
+checks: [format, lint, naming, style, hardcode]
+budget:
+  tries: 3

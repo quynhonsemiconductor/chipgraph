@@ -14,6 +14,15 @@ spec:
 layout:
   filelist: "filelists/{block}.f"
   spec: "doc/specs/TINY_{BLOCK}_MAS.md"
+  # The testbenches and tests. A role that must not see them (the RTL author, M2-04) is
+  # refused these paths, on top of every file named like a test (`test_*.py`, `tb_*`).
+  tb: "dv/**"
+
+# The style an RTL author imitates and the `style` check measures (M2-04), and the
+# formatter the `format` check runs on generated RTL before the other checks: none is
+# set, so `verible-verilog-format --inplace` when it is on PATH, else `format` is skipped.
+style:
+  exemplars: [rtl/tiny_timer.sv, rtl/tiny_gpio.sv]
 
 adapters:
   lint:
@@ -42,6 +51,15 @@ adapters:
   cdc_struct:
     use: cdc_struct
     sync_cells: [tiny_sync2]
+  # The checks of `digital-rtl/rtl_module` (M2-04), in its order: format, lint (above),
+  # naming, style, hardcode (above). `format` and `style` work on an agent task's
+  # outputs only, so `chipgraph check` reports them skipped.
+  format: { use: format }
+  naming:
+    use: naming
+    rules: .chipgraph/naming.yml
+    scope: ["rtl/**/*.sv"]
+  style: { use: style }
 
 blocks:
   timer: {}

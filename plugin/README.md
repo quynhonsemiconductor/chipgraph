@@ -135,7 +135,7 @@ into the command's prompt.
   `previous_rejection` holds the redo instruction (the failure's label, each failing
   check and its issues as `file:line`) and `previous_label` the label. Refused when an
   input is labelled `nda` (every model here is a cloud model), or is of a kind the
-  task's role must not see (`rtl` for `tb-author`).
+  task's role must not see (`rtl` for `tb-author`, `tb` for `rtl-author`).
 - `submit(task_id, result)`: the engine checks the attempt at once: only the task's
   outputs changed since it was handed out, they exist and are not empty, and the rule's
   checks pass. The answer's `status` is `accepted`, `rejected`, `budget_exhausted` or
@@ -167,6 +167,7 @@ gets a shell or web tools:
 |---|---|---|---|
 | `chipgraph:author` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | the task's outputs | medium, then large |
 | `chipgraph:tb-author` | `Write, Edit, MultiEdit`, `get_context` (no read tools) | the task's outputs | medium, then large |
+| `chipgraph:rtl-author` | `Write, Edit, MultiEdit`, `get_context` (no read tools) | the task's outputs | medium, then large |
 | `chipgraph:critic` | `Read, Glob, Grep`, `get_context` | nothing (the engine writes its JSON review) | large |
 | `chipgraph:planner` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its plan file | large |
 | `chipgraph:researcher` | `Read, Glob, Grep, Write, Edit, MultiEdit`, `get_context` | its proposal file | medium, then large |
@@ -175,13 +176,16 @@ gets a shell or web tools:
 `decide()`) are hand-written. `next_task` picks the model per attempt from the role's tier
 (or the rule's own `budget.tier`/`escalate`): `small` → haiku, `medium` → sonnet, `large` →
 opus, or the profile's `models.tiers`. `tb-author` never sees RTL: `get_context` gives it
-the spec and interface only, and the guard refuses it any read (below).
+the spec and interface only, and the guard refuses it any read (below). `rtl-author` is
+its mirror and never sees a testbench: `get_context` gives it the module's approved plan
+entry, requirements, interface, naming rules and style exemplars only (M2-04).
 `/chipgraph:run` removes only `Bash, NotebookEdit, Skill, WebFetch, WebSearch`: its
 subagents need the file tools, and the write guard bounds them. Acceptance runs on
 tinysoc: `MAIN_MODEL=opus docs/runtime-claude-code/run.sh /tmp/cg-cc-opus`, and for the
 roles `docs/roles-claude-code/run.sh /tmp/cg-roles-haiku`, and for the agent loop (one
 task fixed on its second try, one that ends in HANDOFF) `docs/agent-loop-claude-code/run.sh
-/tmp/cg-loop-haiku`.
+/tmp/cg-loop-haiku`, and for the RTL author (one module written twice, with two exemplar
+sets) `docs/rtl-claude-code/run.sh /tmp/cg-rtl-haiku`.
 
 ## MCP server
 
@@ -206,10 +210,12 @@ plugin's hooks, not in agent frontmatter, because frontmatter hooks do not run u
 - each task has a tool-call budget (80 per dispatch): `--max-turns` counts only the main
   session, so the engine counts subagent calls itself;
 - a task's `denied_reads` (its role's read policy over the project; for `tb-author`, every
-  `rtl` artifact and its directory) is refused to its subagent: `Read` of a denied path,
+  `rtl` artifact and its directory; for `rtl-author`, the profile's `layout.tb` paths and
+  every file named like a test or testbench) is refused to its subagent: `Read` of a denied path,
   `Glob`/`Grep` rooted at it or at any directory above it (the project root included), and
-  any other non-chipgraph tool whose input names one. `chipgraph:tb-author` gets no
-  read-type tool at all, whatever the path, and no chipgraph tool but `get_context`;
+  any other non-chipgraph tool whose input names one. `chipgraph:tb-author` and
+  `chipgraph:rtl-author` get no read-type tool at all, whatever the path, and no chipgraph
+  tool but `get_context`;
 - **fail closed**: any error (bad input, broken state) denies, with exit code 2.
 
 **Limit:** the guard sees tool calls, not prompts. It cannot stop the *main session* from

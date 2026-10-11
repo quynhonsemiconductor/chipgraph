@@ -213,12 +213,13 @@ def test_full_profile_has_every_section(tmp_path: Path) -> None:
 
 
 def test_sections_without_data_are_left_out(tmp_path: Path) -> None:
-    """tinysoc has no naming rules, paths, NDA paths or generated files: no such section."""
+    """tinysoc has no paths, NDA paths or generated files: no such section."""
     resolved, root = _tinysoc(tmp_path)
     headings = [h for h in _sections(render_agents_md(resolved, root)) if h]
     assert headings == [
         "### Project and blocks",
         "### Where files go",
+        "### Naming",
         "### Before you open a PR",
         "### Requirement IDs",
     ]

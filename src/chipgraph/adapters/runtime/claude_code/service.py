@@ -24,12 +24,19 @@ never hands out a stopped task, and reports it (and every rule that depends on i
 under `blocked`; with nothing left to run it answers `stopped: true` and the HANDOFF
 path.
 
-A role that must not see some artifact kinds (the testbench Author and `rtl`) gets a
-guarded context (`guarded`): its model inputs are the block's spec side and the module's
+A role that must not see some artifact kinds gets a guarded context (`guarded`). The
+testbench Author (no `rtl`): its model inputs are the block's spec side and the module's
 interface (spec ports, else the model's RTL ports, else the RTL declaration only), never
-a general model slice; and what `submit` tells it of failed checks goes through
-`FeedbackFilter` (no issue in a denied file, no denied path, no source excerpt; the
-redo text says when something was withheld). The journal keeps the full results.
+a general model slice. The RTL Author (no `tb`, M2-04): an `rtl` section with the
+module's approved plan entry, requirements, interface, dependencies, naming rules and
+style exemplars, and nothing from a testbench. For both, what `submit` tells it of
+failed checks goes through `FeedbackFilter` (no issue in a denied file, no denied path,
+no source excerpt; the redo text says when something was withheld, in words for the kind
+withheld). The journal keeps the full results.
+
+For a rule whose first check is `format`, that check (the engine, not the agent) formats
+the outputs in place before the other checks; the hashes `submit` records are taken
+after the checks, so they are the formatted files'.
 
 A role that writes no files but has `engine_writes` (the Critic) reviews a change
 instead (`review`): its context holds the diff, the spec slice and the model slice; its
@@ -53,7 +60,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -63,7 +70,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from chipgraph.adapters.runtime.claude_code import loop
 from chipgraph.adapters.runtime.claude_code import review as review_mod
 from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
-from chipgraph.adapters.runtime.claude_code.guarded import GuardedContext
+from chipgraph.adapters.runtime.claude_code.guarded import (
+    GuardedContext,
+    RtlAuthorContext,
+    guarded_context,
+)
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
 from chipgraph.app.build import make_scheduler, pack_search_paths
 from chipgraph.app.checks import ProfileCheckRunner
@@ -73,7 +84,7 @@ from chipgraph.core.contracts import AgentResult, CheckResult, Event, RuleInstan
 from chipgraph.core.contracts.event import EventType
 from chipgraph.core.contracts.types import FailureLabel, ModelTier
 from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, FeedbackFilter, attempt_checks
-from chipgraph.core.engine.graph import BuildGraph
+from chipgraph.core.engine.graph import BuildGraph, kind_for
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
 from chipgraph.core.plugin_api.pack import discover_packs
@@ -92,6 +103,7 @@ from chipgraph.core.runtime.roles import (
     SkillError,
     SkillSet,
     SkillSpec,
+    denied_kind,
     denied_reads,
     find_role,
     load_skills,
@@ -575,16 +587,29 @@ def _refuse(
 
 
 def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleInstance) -> list[str]:
-    """Inputs the task's role must not see: of a denied kind, or on a denied path."""
+    """Inputs the task's role must not see: of a denied kind (by kind or by name), or on a
+    denied path."""
     if role is None or role.read_policy.mode != "deny":
         return []
-    kinds = set(role.read_policy.deny_kinds)
     denied = record.denied_reads
     return sorted(
         ref.path or str(ref.model_key)
         for ref in instance.inputs
-        if ref.kind in kinds or (ref.path is not None and path_denied(ref.path, denied))
+        if denied_kind(role, ref.kind, ref.path) is not None
+        or (ref.path is not None and path_denied(ref.path, denied))
     )
+
+
+def _denies(role: RoleSpec | None, record: AgentTaskRecord) -> Callable[[str], bool]:
+    """Whether the task's role must not read a repo-relative path: one of its
+    `denied_reads`, or a file its read policy denies by kind or by name."""
+
+    def denied(path: str) -> bool:
+        if path_denied(path, record.denied_reads):
+            return True
+        return role is not None and denied_kind(role, kind_for(path), path) is not None
+
+    return denied
 
 
 def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec, ...]) -> str:
@@ -615,12 +640,15 @@ def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec
 
 
 def _guarded(
-    ctx: AppContext, role: RoleSpec | None, instance: RuleInstance
-) -> GuardedContext | None:
-    """The guarded context of a task whose role must not see some kinds, else None."""
-    if role is None or role.read_policy.mode != "deny" or not role.read_policy.deny_kinds:
-        return None
-    return GuardedContext(ctx, instance)
+    ctx: AppContext,
+    role: RoleSpec | None,
+    graph: BuildGraph,
+    instance: RuleInstance,
+    record: AgentTaskRecord,
+) -> GuardedContext | RtlAuthorContext | None:
+    """The guarded context of a task whose role must not see some kinds, else None: the
+    testbench Author's (no RTL), or the RTL Author's (no testbench, M2-04)."""
+    return guarded_context(ctx, role, instance, list(graph.rules.values()), _denies(role, record))
 
 
 def _feedback_filter(ctx: AppContext, record: AgentTaskRecord) -> FeedbackFilter | None:
@@ -684,7 +712,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     except SkillError as exc:
         raise AppError(f"task {task_id!r}: {exc}") from exc
 
-    guarded = _guarded(ctx, role, instance)
+    guarded = _guarded(ctx, role, graph, instance, record)
     extra_specs: list[str] = []
     if guarded is not None:
         listed = {ref.path for ref in instance.inputs}
@@ -774,10 +802,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         answer["review"] = review
     if guarded is not None:
         answer.update(guarded.sections())
-        answer["instructions"] += (
-            " The ports you may use are in `interface` (every port names its `source`), "
-            "the block's requirements in `requirements`."
-        )
+        answer["instructions"] += guarded.instructions
     if record.role == "planner":
         answer["plan"] = _planner_context(ctx, graph, instance)
     return answer

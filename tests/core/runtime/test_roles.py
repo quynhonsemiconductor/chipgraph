@@ -42,6 +42,15 @@ EXPECTED = {
         ("rtl",),
         True,
     ),
+    "rtl-author": (
+        "medium",
+        "large",
+        ("write_outputs", "engine_context"),
+        "outputs",
+        "deny",
+        ("tb",),
+        True,
+    ),
     "critic": (
         "large",
         None,
@@ -85,7 +94,7 @@ def _table(role: RoleSpec) -> tuple[object, ...]:
     )
 
 
-def test_the_five_roles_and_tb_author_are_data() -> None:
+def test_the_five_roles_and_the_two_restricted_authors_are_data() -> None:
     roles = {role.id: role for role in list_roles()}
     assert set(roles) == set(EXPECTED)
     for role_id, expected in EXPECTED.items():

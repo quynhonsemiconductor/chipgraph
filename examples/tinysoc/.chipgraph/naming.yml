@@ -1,0 +1,48 @@
+# tinysoc naming rule, as data for chipgraph's `naming` check (schemas/formats/naming-rules.schema.json).
+#
+# What tinysoc's RTL already does, written down: `tiny_` modules, lower-case snake ports
+# and signals, `u_` instances, upper-case or CamelCase parameters, `k`-prefixed
+# localparams (as `kSelTimer` in tiny_top). The profile's `naming` adapter checks
+# `rtl/**/*.sv` against it, and an `rtl-author` task gets it as text.
+schema_version: 1
+document: tinysoc naming
+version: "0.1"
+ignore_comment: "naming-check: ignore"
+
+identifiers:
+  module:
+    rule: "module"
+    pattern: '^tiny_[a-z0-9_]+$'
+    message: "must be tiny_<function>, lower case with _"
+  port:
+    rule: "port"
+    pattern: '^[a-z][a-z0-9_]*$'
+    message: "must be lower case with _"
+  parameter:
+    rule: "parameter"
+    pattern: '^[A-Z][A-Za-z0-9_]*$'
+    message: "must start with an upper-case letter (UPPER_CASE or CamelCase)"
+  localparam:
+    rule: "localparam"
+    pattern: '^(?:k[A-Z][A-Za-z0-9]*|[A-Z][A-Za-z0-9_]*)$'
+    message: "must be kCamelCase or start with an upper-case letter"
+  enum_value:
+    rule: "enum value"
+    pattern: '^[A-Z][A-Z0-9_]*$'
+    message: "must be UPPER_CASE"
+  instance:
+    rule: "instance"
+    pattern: '^u_[a-z0-9_]+$'
+    message: "must be u_<function>"
+  signal:
+    rule: "signal"
+    pattern: '^[a-z][a-z0-9_]*$'
+    message: "must be lower case with _"
+  memory:
+    rule: "signal"
+    pattern: '^[a-z][a-z0-9_]*$'
+    message: "must be lower case with _"
+  genvar:
+    rule: "genvar"
+    pattern: '^[a-z][a-z0-9_]*$'
+    message: "must be lower case with _"

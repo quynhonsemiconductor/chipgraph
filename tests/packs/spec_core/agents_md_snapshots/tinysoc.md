@@ -30,12 +30,33 @@ directories. In a template, `{block}` is the block name and `{BLOCK}` is the blo
 |---|---|
 | filelist | `filelists/{block}.f` |
 | spec | `doc/specs/TINY_{BLOCK}_MAS.md` |
+| tb | `dv/**` |
 
 Per-block overrides:
 
 | Block | Kind | Path template |
 |---|---|---|
 | `top` | spec | (none) |
+
+### Naming
+
+From `.chipgraph/naming.yml` (tinysoc naming v0.1). The whole
+name must match the pattern for its kind:
+
+| Kind | Pattern | Rule | Message |
+|---|---|---|---|
+| module | `^tiny_[a-z0-9_]+$` | module | must be tiny_\<function>, lower case with _ |
+| port | `^[a-z][a-z0-9_]*$` | port | must be lower case with _ |
+| parameter | `^[A-Z][A-Za-z0-9_]*$` | parameter | must start with an upper-case letter (UPPER_CASE or CamelCase) |
+| localparam | `^(?:k[A-Z][A-Za-z0-9]*\|[A-Z][A-Za-z0-9_]*)$` | localparam | must be kCamelCase or start with an upper-case letter |
+| enum_value | `^[A-Z][A-Z0-9_]*$` | enum value | must be UPPER_CASE |
+| instance | `^u_[a-z0-9_]+$` | instance | must be u_\<function> |
+| signal | `^[a-z][a-z0-9_]*$` | signal | must be lower case with _ |
+| memory | `^[a-z][a-z0-9_]*$` | signal | must be lower case with _ |
+| genvar | `^[a-z][a-z0-9_]*$` | genvar | must be lower case with _ |
+
+A declaration line that ends with the comment `naming-check: ignore` is exempt;
+use it only with a reason the reviewer accepts.
 
 ### Before you open a PR
 
@@ -60,10 +81,13 @@ block name):
 | `connect` | connect | - | - |
 | `cross_chip` | cross_chip | - | - |
 | `duplicate` | duplicate | - | - |
+| `format` | format | - | - |
 | `hardcode` | hardcode | - | - |
 | `lint` | cmd | - | `make lint BLOCK={block}` |
+| `naming` | naming | - | - |
 | `ports_diff` | ports_diff | - | - |
 | `spec_schema` | spec_schema | - | - |
+| `style` | style | - | - |
 | `trace` | trace | - | - |
 
 ### Requirement IDs

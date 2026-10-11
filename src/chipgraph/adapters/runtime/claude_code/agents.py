@@ -41,7 +41,7 @@ DEFAULT_TIER_MODELS: dict[ModelTier, str] = {"small": "haiku", "medium": "sonnet
 """Claude Code model aliases per tier, when the profile's `models.tiers` names none. The
 agent file's `model` is its role's first tier; `next_task` passes the model per attempt."""
 
-RENDERED_ROLES = ("author", "tb-author", "critic", "planner", "researcher")
+RENDERED_ROLES = ("author", "tb-author", "rtl-author", "critic", "planner", "researcher")
 """The roles with a generated subagent file."""
 
 HAND_WRITTEN_AGENTS = {"triage": "decider"}

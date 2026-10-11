@@ -379,7 +379,7 @@ class ResolvedProfile:
 
     def check(self) -> list[ConfigIssue]:
         """Consistency problems: user overreach, duplicate layout templates, plan limits,
-        local plugins."""
+        the style section, local plugins."""
         issues: list[ConfigIssue] = []
         for area, user_level in self.user.autonomy.items():
             project_level = self.profile.autonomy.get(area)
@@ -472,6 +472,34 @@ class ResolvedProfile:
                     message=(
                         f"{max_parallel} branches at once is more than this machine's {cpus} CPUs"
                     ),
+                )
+            )
+
+        style = self.profile.style
+        if style.enforce and not style.exemplars:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key="style.enforce",
+                    message=(
+                        "style.enforce is set but style.exemplars is empty: the style check "
+                        "has nothing to measure a file against, so nothing is enforced"
+                    ),
+                )
+            )
+        repeated = sorted({p for p in style.exemplars if style.exemplars.count(p) > 1})
+        if repeated:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key="style.exemplars",
+                    message=f"listed more than once: {', '.join(repeated)}",
+                )
+            )
+        if len(set(style.enforce)) != len(style.enforce):
+            issues.append(
+                ConfigIssue(
+                    severity="info", key="style.enforce", message="a style key is listed twice"
                 )
             )
 

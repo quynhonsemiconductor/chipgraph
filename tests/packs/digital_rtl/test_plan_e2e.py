@@ -1,9 +1,10 @@
-"""M2-03 end to end on tinysoc, with a scripted runtime and the test-only stub rule.
+"""M2-03 end to end on tinysoc, with a scripted runtime and the downstream RTL rule.
 
 plan (agent: a first, overlapping plan is rejected by `plan_check`, the redo text names
 the overlap, the second try passes) -> the gate `plan:timer` waits -> a person approves
--> `plan_expand` writes the approved plan -> one `stub/module_rtl` instance per module
-runs, in dependency order. Editing the plan afterwards removes the instances again.
+-> `plan_expand` writes the approved plan -> one `digital-rtl/rtl_module` instance per
+module runs (a placeholder module, checks that always pass), in dependency order.
+Editing the plan afterwards removes the instances again.
 """
 
 from __future__ import annotations
