@@ -34,6 +34,16 @@ failed checks goes through `FeedbackFilter` (no issue in a denied file, no denie
 no source excerpt; the redo text says when something was withheld, in words for the kind
 withheld). The journal keeps the full results.
 
+A role with no file-reading tool (`tb-author`, `rtl-author`) cannot overwrite a file
+in Claude Code, which refuses a `Write` over a file the agent has not read. So at each
+dispatch of such a role `next_task` moves every output that exists into the state
+backend (`previous`): the agent's earlier attempt, or a file that was there before the
+task. `get_context` shows them (`previous_outputs`: the last attempt's text, and a
+pre-existing file's under `existing_output`, capped), the agent writes each file anew,
+and a pre-existing file is put back, byte for byte with its mode, when the task ends
+without being accepted (`budget_exhausted`, `needs_human`, a rewind) or the dispatch
+fails in the engine. Roles with a read tool edit in place, as before.
+
 For a rule whose first check is `format`, that check (the engine, not the agent) formats
 the outputs in place before the other checks; the hashes `submit` records are taken
 after the checks, so they are the formatted files'.
@@ -74,6 +84,11 @@ from chipgraph.adapters.runtime.claude_code.guarded import (
     GuardedContext,
     RtlAuthorContext,
     guarded_context,
+)
+from chipgraph.adapters.runtime.claude_code.previous import (
+    MoveToken,
+    PreviousOutputs,
+    moves_outputs,
 )
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
 from chipgraph.app.build import make_scheduler, pack_search_paths
@@ -503,12 +518,27 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
                     }
                 )
                 continue
-        record = queue.dispatch(
-            iid,
-            run_id=summary.run_id,
-            baseline=now,
-            denied_reads=_denied_reads(ctx, graph, record),
-        )
+        # A role without a read tool cannot overwrite a file: move its outputs aside
+        # first, so each `Write` creates one (`previous`); put them back if the
+        # dispatch fails here.
+        mover = PreviousOutputs(queue, iid, ctx.root)
+        token: MoveToken | None = None
+        if moves_outputs(find_role(record.role)):
+            token = mover.move_aside(record.allowed_writes, dispatch=record.dispatches + 1)
+        moved = [m.path for m in token.moved] if token is not None else []
+        for path in moved:
+            now.pop(path, None)
+        try:
+            record = queue.dispatch(
+                iid,
+                run_id=summary.run_id,
+                baseline=now,
+                denied_reads=_denied_reads(ctx, graph, record),
+            )
+        except BaseException:
+            if token is not None:
+                mover.undo(token)
+            raise
         payload = {
             "phase": "dispatch",
             "attempt": record.dispatches,
@@ -519,6 +549,8 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
             "model": _model_for(ctx, record),
             "denied_reads": list(record.denied_reads),
         }
+        if moved:
+            payload["moved_aside"] = moved
         _emit(ctx, record.run_id, iid, "agent_turn", payload)
         dispatched.append(record)
 
@@ -579,11 +611,33 @@ def _refuse(
     payload: Mapping[str, Any],
 ) -> AppError:
     """Hand the task to a person with `question`; the error for the tool call."""
-    queue.needs_human(
+    stopped = queue.needs_human(
         record.task_id, result=AgentResult(status="needs_human", open_questions=(question,))
     )
-    _emit(ctx, record.run_id, record.task_id, "agent_turn", {"phase": "context_refused", **payload})
+    restored = _settle(ctx, queue, stopped)
+    extra = {"restored": restored} if restored else {}
+    _emit(
+        ctx,
+        record.run_id,
+        record.task_id,
+        "agent_turn",
+        {"phase": "context_refused", **payload, **extra},
+    )
     return AppError(question)
+
+
+def _settle(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> list[str]:
+    """Close the task's moved-outputs cycle once it ended (`previous`).
+
+    Accepted: the new files stay. `budget_exhausted` or `needs_human`: every file that
+    existed before the task is put back. Returns the paths put back.
+    """
+    mover = PreviousOutputs(queue, record.task_id, ctx.root)
+    if record.status == "accepted":
+        mover.accept()
+    elif record.status in ("budget_exhausted", "needs_human"):
+        return mover.restore(dispatch=record.dispatches)
+    return []
 
 
 def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleInstance) -> list[str]:
@@ -803,9 +857,39 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     if guarded is not None:
         answer.update(guarded.sections())
         answer["instructions"] += guarded.instructions
+    if moves_outputs(role):
+        shown, withheld = PreviousOutputs(queue, task_id, ctx.root).context(
+            record.allowed_writes, _denies(role, record)
+        )
+        answer["previous_outputs"] = shown
+        answer["instructions"] += _previous_instructions(shown, withheld)
     if record.role == "planner":
         answer["plan"] = _planner_context(ctx, graph, instance)
     return answer
+
+
+def _previous_instructions(shown: list[dict[str, Any]], withheld: list[str]) -> str:
+    """What `get_context` tells an author without a read tool about its outputs."""
+    text = (
+        " Every output that existed was moved aside when this task was handed out, so "
+        "each output is a new file: write it whole with Write (Edit has no file to change)."
+    )
+    if any("content" in entry for entry in shown):
+        text += (
+            " Your previous attempt is in `previous_outputs`; write the whole corrected "
+            "file with Write."
+        )
+    if any("existing_output" in entry for entry in shown):
+        text += (
+            " A file that existed before this task is in `previous_outputs` under "
+            "`existing_output`; it is put back if the task is not accepted."
+        )
+    if withheld:
+        text += (
+            f" {len(withheld)} moved file(s) are of a kind your role must not see; "
+            "`previous_outputs` lists them without their text."
+        )
+    return text
 
 
 def _planner_context(ctx: AppContext, graph: BuildGraph, instance: RuleInstance) -> dict[str, Any]:
@@ -921,6 +1005,7 @@ async def submit(
             open_questions=report.open_questions,
         )
         record = queue.needs_human(task_id, result=result)
+        restored = _settle(ctx, queue, record)
         _emit(
             ctx,
             record.run_id,
@@ -935,6 +1020,7 @@ async def submit(
                 "label": "planning",
                 "failed_checks": [],
                 "open_questions": list(report.open_questions),
+                "restored": restored,
             },
         )
         return _submit_answer(
@@ -1043,6 +1129,7 @@ async def submit(
         with contextlib.suppress(QueueError):
             queue.unsubmit(task_id)
         raise
+    restored = _settle(ctx, queue, record)
 
     for check in checks:
         _emit(ctx, record.run_id, task_id, "check_result", check.model_dump(mode="json"))
@@ -1059,6 +1146,7 @@ async def submit(
         "files_written": list(result.files_written),
         "assumptions": list(report.assumptions),
         "open_questions": list(report.open_questions),
+        "restored": restored,
     }
     if review is not None:
         payload["review"] = {"verdict": review.verdict, "comments": len(review.comments)}

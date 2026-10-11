@@ -18,7 +18,8 @@ whose loop stopped on a submit (its budget ran out, or the checks point at the s
 `chipgraph.adapters.runtime.claude_code.loop`) fails with the label of its last failure
 and the loop's `agent` payload, so HANDOFF.md says how many tries were used, why it
 stopped and what failed last. It stays stopped until an input changes or
-`chipgraph rewind` reopens it.
+`chipgraph rewind` reopens it; a rewind also puts back the output files that existed
+before the task, for a role whose outputs were moved aside (`previous`).
 """
 
 from __future__ import annotations
@@ -29,10 +30,12 @@ from chipgraph.adapters.runtime.claude_code.loop import (
     stop_info,
     stop_message,
 )
+from chipgraph.adapters.runtime.claude_code.previous import PreviousOutputs
 from chipgraph.core.contracts import AgentResult, RuleInstance, RuleSpec
 from chipgraph.core.engine.scheduler import ExecOutcome
 from chipgraph.core.plugin_api.types import AgentTask
 from chipgraph.core.runtime import (
+    ACTIVE_STATUSES,
     DEFAULT_TOOL_CALL_CAP,
     AgentRuntimeExecutor,
     AgentTaskRecord,
@@ -165,8 +168,17 @@ class ClaudeCodeExecutor(AgentRuntimeExecutor):
         return outcome_for(result_for(record), task_id=instance.instance_id)
 
     def forget(self, instance_id: str) -> None:
-        """Reopen a stopped task (`chipgraph rewind`): a person said to try again."""
-        self.cc_runtime.queue.reopen(instance_id)
+        """Reopen a stopped task (`chipgraph rewind`): a person said to try again.
+
+        A task no agent is working on gets back every output file that existed before
+        its budget cycle (`previous`); one that is dispatched or being checked is left
+        to finish its attempt.
+        """
+        queue = self.cc_runtime.queue
+        record = queue.get(instance_id)
+        if record is not None and record.status not in ACTIVE_STATUSES:
+            PreviousOutputs(queue, instance_id).restore(dispatch=record.dispatches)
+        queue.reopen(instance_id)
 
 
 __all__ = [

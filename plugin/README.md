@@ -136,6 +136,17 @@ into the command's prompt.
   check and its issues as `file:line`) and `previous_label` the label. Refused when an
   input is labelled `nda` (every model here is a cloud model), or is of a kind the
   task's role must not see (`rtl` for `tb-author`, `tb` for `rtl-author`).
+  `tb-author` and `rtl-author` have no Read, and Claude Code refuses a `Write` over a
+  file the agent has not read, so at each of their dispatches `next_task` moves the
+  task's existing outputs out of the tree into `.chipgraph/state/runtime/previous/`
+  (each `Write` then creates a file). Their context has `previous_outputs`: the last
+  attempt's text, and a file that existed before the task under `existing_output`
+  (20,000 characters per file, 60,000 in all, `truncated` when cut; a file of a kind
+  the role must not see is listed without text). A file that existed before the task
+  is put back, byte for byte with its mode, when the task ends without being accepted
+  (`budget_exhausted`, `needs_human`, `chipgraph rewind` while it is not dispatched) or
+  the dispatch fails in the engine; an accepted output replaces it. Every moved version
+  stays under `previous/` for a person to read.
 - `submit(task_id, result)`: the engine checks the attempt at once: only the task's
   outputs changed since it was handed out, they exist and are not empty, and the rule's
   checks pass. The answer's `status` is `accepted`, `rejected`, `budget_exhausted` or

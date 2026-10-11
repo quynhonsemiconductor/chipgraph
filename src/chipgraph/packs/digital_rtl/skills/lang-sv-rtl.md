@@ -36,11 +36,22 @@ Synthesizable RTL:
   active level, the reset's name); every register is reset.
 - No latches: in `always_comb`, give every signal a value on every path (a default
   assignment first, or a `default` branch in every `case`).
-- Every output is driven; every input is used (or say why in an assumption).
+- Every output is driven; every input bit is used (see lint, below).
 - Width-explicit literals (`8'd0`, `1'b1`, `32'h0000_0010`); parameters (`localparam`) for
   every constant with a meaning, not magic numbers; never retype an address or size the
   spec names as a number: the `hardcode` check rejects it.
 - Nonblocking `<=` in `always_ff`, blocking `=` in `always_comb`, never mixed.
+
+Lint is Verilator with `-Wall`, and any warning fails the check:
+
+- Every input bit is used, or consumed on purpose: for bits the module ignores, write
+  `logic unused_ok; assign unused_ok = &{1'b0, wdata[31:8]};` (Verilator ignores a signal
+  whose name contains `unused`). Do the same for a part of an internal signal you never
+  read.
+- No signal declared and never read, no width mismatch in an assignment or comparison
+  (size both sides, or slice and extend explicitly), no output left unconnected on an
+  instance (connect it to a named `unused_*` signal).
+- No `lint_off` pragmas, unless the style exemplars use them.
 
 The engine runs the project's formatter on your file, then lint, naming, style and
 hardcode. If the requirements or the interface are ambiguous or contradict each other, do
