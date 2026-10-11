@@ -1436,7 +1436,10 @@ def _evals_harness() -> object:
 def eval_cmd(
     ctx: typer.Context,
     suite: Annotated[
-        str, typer.Argument(help="ask, triage, triage-holdout, triage-holdout2 or review.")
+        str,
+        typer.Argument(
+            help="ask, triage, triage-holdout, triage-holdout2, review or review-holdout2."
+        ),
     ],
     runtime: Annotated[
         Literal["fake", "claude-code"],
