@@ -1,7 +1,7 @@
 """M2-03: the gate `plan:<block>` and the bounded `foreach: plan.modules` expansion.
 
-The downstream rule is the test-only stub `stub/module_rtl` (M2-04/M2-06 are not merged
-yet): `foreach: plan.modules`, one output `rtl/{module}.sv`.
+The downstream rule is M2-04's `digital-rtl/rtl_module`: `foreach: plan.modules`, one
+output `rtl/{module}.sv`.
 """
 
 from __future__ import annotations
@@ -10,13 +10,13 @@ import random
 from pathlib import Path
 
 import pytest
-import yaml
 from plan_helpers import (
     STUB_RULE,
     approve_plan,
     fixture_plan,
     overlapping,
     tinysoc_project,
+    write_extra_rule,
     write_plan,
 )
 
@@ -183,7 +183,8 @@ def test_within_limits_is_checked_apart_from_plan_check(project: Path) -> None:
 
 
 def test_plan_modules_needs_the_plan_expand_rule(tmp_path: Path) -> None:
-    root = tinysoc_project(tmp_path / "t", packs=(), stub=True, ingest=False)
+    root = tinysoc_project(tmp_path / "t", packs=(), ingest=False)
+    write_extra_rule(root, "rtl/{module}.sv")  # a plan.modules rule, without digital-rtl
     with pytest.raises(AppError, match="needs rule 'digital-rtl/plan_expand'"):
         make_scheduler(_ctx(root), "*")
 
@@ -192,10 +193,7 @@ def test_a_rule_writing_outside_a_module_write_set_gets_no_instances(project: Pa
     # plan_check sees what the plan.modules rules will write for each module, so the
     # plan fails before approval matters; the graph's own write-set guard is the last
     # line (tests/core/engine/test_graph_entries.py).
-    rule_file = project / ".chipgraph" / "packs" / "stub" / "rules" / "module_rtl.yml"
-    rule = yaml.safe_load(rule_file.read_text())
-    rule["outputs"] = ["rtl/{module}_x.sv"]
-    rule_file.write_text(yaml.safe_dump(rule))
+    write_extra_rule(project, "rtl/{module}_x.sv")
     write_plan(project, "timer")
     approve_plan(project, "timer")
     report = check_plan_file(project, "timer")

@@ -5,7 +5,8 @@
 - `check_agent_rules`: the rule validator for roles: an unknown role, a role agent rules
   may not use, a rule that breaks its role's write scope (a role that writes no files
   may only have the one output the engine writes from its reply, of a kind its
-  `engine_writes` names), or a rule that gives a role an input of a kind it must not see.
+  `engine_writes` names), or a rule that gives a role an input of a kind it must not see
+  (by its kind, or by a name the role's `deny_globs` match: `denied_kind`).
 - `denied_reads`: the repo-relative paths and globs a task's agent must not read, from
   its role's read policy resolved against the project (the build graph's artifacts and
   the profile's layout).
@@ -91,15 +92,19 @@ def check_agent_rules(rules: Mapping[str, RuleSpec], instances: Iterable[RuleIns
                         f"writes only a {kinds} output from its reply, but output "
                         f"{ref.path!r} is a {ref.kind!r} artifact"
                     )
-        if not role.read_policy.deny_kinds:
+        policy = role.read_policy
+        if policy.mode != "deny":
             continue
         for ref in instance.inputs:
             locator = ref.path or ref.model_key
             key = f"{owner.id}:{locator}"
-            if ref.kind in role.read_policy.deny_kinds and key not in seen:
+            if key in seen:
+                continue
+            kind = denied_kind(role, ref.kind, ref.path)
+            if kind is not None:
                 seen.add(key)
                 problems.append(
-                    f"rule {owner.id!r}: role {role.id!r} must not see {ref.kind!r} "
+                    f"rule {owner.id!r}: role {role.id!r} must not see {kind!r} "
                     f"artifacts, but input {locator!r} is one"
                 )
     if problems:
@@ -124,6 +129,27 @@ def _templates(value: LayoutValue | None) -> tuple[str, ...]:
     if value is None:
         return ()
     return (value,) if isinstance(value, str) else tuple(value)
+
+
+def denied_kind(role: RoleSpec, kind: str, path: str | None) -> str | None:
+    """The kind `role` must not see that an artifact of `kind` at `path` is, or `None`.
+
+    Its own kind when the role denies that kind. Otherwise, when `path` matches one of
+    the role's `deny_globs`, the role's first denied kind (or `'denied'`): an artifact's
+    kind comes from its suffix, so a testbench `tb_x.sv` is an `rtl` file by kind, and
+    only its name says it is a testbench. One rule for every role, whichever kinds it
+    denies.
+    """
+    policy = role.read_policy
+    if policy.mode != "deny":
+        return None
+    if kind in policy.deny_kinds:
+        return kind
+    if path is not None and policy.deny_globs:
+        clean = _clean(path)
+        if clean is not None and path_denied(clean, policy.deny_globs):
+            return policy.deny_kinds[0] if policy.deny_kinds else "denied"
+    return None
 
 
 def _clean(path: str) -> str | None:
@@ -237,6 +263,7 @@ __all__ = [
     "LayoutValue",
     "check_agent_rules",
     "covers_denied",
+    "denied_kind",
     "denied_reads",
     "model_ladder",
     "path_denied",

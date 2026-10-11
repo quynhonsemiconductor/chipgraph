@@ -504,6 +504,35 @@ class TemplatesCfg(BaseModel):
     )
 
 
+StyleKey = Literal[
+    "indent",
+    "begin",
+    "ports",
+    "reset",
+    "sequential",
+    "suffix",
+    "header",
+    "blank_lines",
+    "line_length",
+    "case",
+]
+"""A feature of the code style the `style` check derives from the exemplars."""
+
+STYLE_KEYS: tuple[StyleKey, ...] = (
+    "indent",
+    "begin",
+    "ports",
+    "reset",
+    "sequential",
+    "suffix",
+    "header",
+    "blank_lines",
+    "line_length",
+    "case",
+)
+"""Every `StyleKey`, in the order the `style` check reports them."""
+
+
 class StyleCfg(BaseModel):
     """Code style exemplars and the formatter run after generation (DESIGN 8.6 V3)."""
 
@@ -514,6 +543,14 @@ class StyleCfg(BaseModel):
     )
     formatter: AdapterCfg | None = Field(
         default=None, description="Adapter that formats generated code after it is written."
+    )
+    enforce: tuple[StyleKey, ...] = Field(
+        default=(),
+        description=(
+            "Style features whose deviations from the exemplars are errors (the others are "
+            "warnings): indent, begin, ports, reset, sequential, suffix, header, "
+            "blank_lines, line_length, case."
+        ),
     )
 
 

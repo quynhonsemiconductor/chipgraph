@@ -1,5 +1,5 @@
 """Shared by the M2-03 planner tests: a tinysoc copy set up for the Planner, the fixture
-plans, a stub downstream rule over `plan.modules`, and a scripted agent runtime.
+plans, the downstream rule over `plan.modules`, and a scripted agent runtime.
 
 Not a test module itself; imported by the `test_plan_*.py` modules.
 """
@@ -27,13 +27,13 @@ REPO = Path(__file__).resolve().parents[3]
 TINYSOC = REPO / "examples" / "tinysoc"
 FIXTURES = Path(__file__).resolve().parent / "plan_fixtures"
 
-STUB_RULE = "stub/module_rtl"
-"""A test-only rule over `plan.modules` (the real ones, M2-04/M2-06, are not merged yet)."""
+STUB_RULE = "digital-rtl/rtl_module"
+"""The rule over `plan.modules` the M2-03 tests expand: M2-04's RTL rule. With `stub=True`
+its checks pass trivially and `PlanRuntime` writes a placeholder module for it."""
 
-_STUB_WRITE = (
-    "import pathlib, sys; p = pathlib.Path(sys.argv[1]); p.parent.mkdir(exist_ok=True); "
-    "p.write_text('module ' + sys.argv[2] + ';\\nendmodule\\n')"
-)
+RTL_CHECKS = ("format", "lint", "naming", "style", "hardcode")
+"""The checks of `digital-rtl/rtl_module`."""
+_PASS = {"use": "cmd", "cmd": ["python3", "-c", "pass"]}
 
 
 def _git(root: Path, *args: str) -> None:
@@ -66,24 +66,27 @@ def overlapping(plan: dict[str, Any]) -> dict[str, Any]:
     return bad
 
 
-def _write_stub_pack(root: Path) -> None:
-    pack = root / ".chipgraph" / "packs" / "stub"
+def write_extra_rule(root: Path, output: str) -> None:
+    """Add a test-only pack `extra` with one `gen` rule over `plan.modules` writing `output`,
+    and turn it on in the profile."""
+    pack = root / ".chipgraph" / "packs" / "extra"
     (pack / "rules").mkdir(parents=True, exist_ok=True)
     (pack / "pack.yml").write_text(
-        yaml.safe_dump({"name": "stub", "version": "0.1.0", "provides": {"rules": ["rules"]}})
+        yaml.safe_dump({"name": "extra", "version": "0.1.0", "provides": {"rules": ["rules"]}})
     )
     rule = {
-        "rule": "module_rtl",
+        "rule": "module_extra",
         "kind": "gen",
-        "description": "Test only: write a placeholder module per planned module.",
+        "description": "Test only: one more file per planned module.",
         "foreach": "plan.modules",
-        "outputs": ["rtl/{module}.sv"],
-        "run": {
-            "use": "cmd",
-            "args": {"cmd": ["python3", "-c", _STUB_WRITE, "rtl/{module}.sv", "{module}"]},
-        },
+        "outputs": [output],
+        "run": {"use": "cmd", "args": {"cmd": ["python3", "-c", "pass"]}},
     }
-    (pack / "rules" / "module_rtl.yml").write_text(yaml.safe_dump(rule, sort_keys=False))
+    (pack / "rules" / "module_extra.yml").write_text(yaml.safe_dump(rule, sort_keys=False))
+    path = root / ".chipgraph.yml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["packs"] = [*data["packs"], "extra"]
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
 def tinysoc_project(
@@ -99,21 +102,22 @@ def tinysoc_project(
 
     The profile turns on `packs` (not tinysoc's own pack, whose `human` rule owns each
     block's top RTL file), adds an `rtl` layout path (`rtl/tiny_{block}*.sv`) and the
-    `plan_check` adapter, and merges `profile` over that. With `stub`, the test-only pack
-    `stub` (rule `stub/module_rtl`, `foreach: plan.modules`) is added too.
+    `plan_check` adapter, and merges `profile` over that. With `stub`, the checks of
+    `digital-rtl/rtl_module` (`foreach: plan.modules`) are commands that always pass.
     """
     shutil.copytree(TINYSOC, dest)
     data = yaml.safe_load((dest / ".chipgraph.yml").read_text(encoding="utf-8"))
-    data["packs"] = [*packs, *(["stub"] if stub else [])]
+    data["packs"] = list(packs)
     data["layout"]["rtl"] = "rtl/tiny_{block}*.sv"
     data["adapters"]["plan_check"] = {"use": "plan_check"}
+    if stub:
+        for check in RTL_CHECKS:
+            data["adapters"][check] = dict(_PASS)
     if runtime is not None:
         data["runtime"] = runtime
     for key, value in (profile or {}).items():
         data[key] = value
     (dest / ".chipgraph.yml").write_text(yaml.safe_dump(data, sort_keys=False))
-    if stub:
-        _write_stub_pack(dest)
     _git(dest, "init", "-q", "-b", "main")
     _git(dest, "config", "user.email", "t@example.invalid")
     _git(dest, "config", "user.name", "t")
@@ -142,16 +146,23 @@ def approve_plan(root: Path, block: str, *, decision: str = "approve") -> None:
 
 @dataclass
 class PlanRuntime:
-    """A scripted `AgentRuntime`: call n writes `texts[n]` (the last repeats) to the output."""
+    """A scripted `AgentRuntime`: planner call n writes `texts[n]` (the last repeats) to the
+    output; a task of a planned module (param `module`) writes a placeholder module."""
 
     root: Path
     texts: Sequence[str]
     name: str = "fake"
     tasks: list[AgentTask] = field(default_factory=list)
+    modules: list[AgentTask] = field(default_factory=list)
 
     async def run_task(self, task: AgentTask) -> AgentResult:
-        text = self.texts[min(len(self.tasks), len(self.texts) - 1)]
-        self.tasks.append(task)
+        module = task.instance.params.get("module")
+        if module is not None:
+            self.modules.append(task)
+            text = f"module {module};\nendmodule\n"
+        else:
+            text = self.texts[min(len(self.tasks), len(self.texts) - 1)]
+            self.tasks.append(task)
         for rel in task.allowed_writes:
             out = self.root / rel
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +173,7 @@ class PlanRuntime:
 __all__ = [
     "FIXTURES",
     "REPO",
+    "RTL_CHECKS",
     "STUB_RULE",
     "TINYSOC",
     "PlanRuntime",
@@ -169,5 +181,6 @@ __all__ = [
     "fixture_plan",
     "overlapping",
     "tinysoc_project",
+    "write_extra_rule",
     "write_plan",
 ]

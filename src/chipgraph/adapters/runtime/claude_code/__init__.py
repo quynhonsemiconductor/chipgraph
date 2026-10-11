@@ -4,6 +4,8 @@
   `runtime.ClaudeCodeExecutor` is the build's executor over it.
 - `loop`: the M2-02a agent rule loop applied to one submitted attempt (label, budget,
   redo instruction, the dispatch bound).
+- `previous`: the outputs of a role without a read tool, moved aside at each dispatch
+  (so its `Write` creates a file), shown in its context, and put back if it fails.
 - `service`: what the MCP tools `next_task`, `get_context` and `submit` do.
 - The Claude Code plugin (`plugin/` in the repo) holds the loop command, one subagent
   per role, and the write guard hook.

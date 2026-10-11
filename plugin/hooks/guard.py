@@ -18,7 +18,8 @@ state directory and decides:
   (spike S7), so this is the engine's per-task budget.
 - Read guard (M2-01). A task's `denied_reads` (repo-relative paths and globs, from its
   role's read policy: for `tb-author`, every `rtl` artifact and the directories holding
-  them) bounds what its subagent may read: `Read`/`NotebookRead` of a denied path, and
+  them; for `rtl-author`, the `tb` layout paths and every file named like a test or a
+  testbench) bounds what its subagent may read: `Read`/`NotebookRead` of a denied path, and
   `Glob`/`Grep` rooted at a denied path *or an ancestor directory of one* (a Grep over
   the project root, a Glob `**/*.sv`) are refused, and so is any other tool outside
   chipgraph whose input names a denied path or one of its ancestors. A role subagent
@@ -60,11 +61,13 @@ SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 READ_TOOLS = frozenset({"Read", "Glob", "Grep", "NotebookRead", "LS"})
 NO_READ_AGENTS = {
     "chipgraph:tb-author": frozenset({"get_context"}),
+    "chipgraph:rtl-author": frozenset({"get_context"}),
     "chipgraph:decider": frozenset({"pending_decisions"}),
 }
 """Subagent types without file-reading tools, with the chipgraph tools each may call
-(from the role data: `tb-author` has no `read_files`/`search_files`; `decider` serves
-`triage`). `tests/plugin/test_guard_reads.py` keeps this in step with the roles."""
+(from the role data: `tb-author` and `rtl-author` have no `read_files`/`search_files`;
+`decider` serves `triage`). `tests/plugin/test_guard_reads.py` keeps this in step with
+the roles."""
 GLOB_CHARS = frozenset("*?[{")
 _TOKEN_SPLIT = re.compile(r"[\s\"'`,;:()<>|=]+")
 ROLE_AGENT_PREFIX = "chipgraph:"

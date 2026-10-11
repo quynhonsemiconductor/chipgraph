@@ -15,11 +15,12 @@ attempt and keeps the loop's count on the task record (`TaskBudgetState`):
   cost are not known per task in this runtime (the session reports them only for the
   whole run), so the token and cost caps of the in-process loop do not apply here;
 - redo: `render_feedback`, the bounded redo instruction for the next try. For a role
-  that must not see some artifacts (the testbench Author and the RTL), what the answer
-  and the redo text show of the failures goes through `FeedbackFilter` first: issues in
-  a denied file are dropped, denied paths in messages become `<rtl>`, source excerpt
-  lines are cut, and the redo text says that something was withheld. The label is
-  still taken from the full results.
+  that must not see some artifacts (the testbench Author and the RTL, the RTL Author
+  and the testbench), what the answer and the redo text show of the failures goes
+  through `FeedbackFilter` first: issues in a denied file are dropped, denied paths in
+  messages become `<rtl>` (`<tb>`), source excerpt lines are cut, and the redo text says
+  that something was withheld (`FeedbackFilter.note`). The label is still taken from
+  the full results.
 
 `max_dispatches` (tries plus infra retries) is the hard bound on how often one task is
 handed out in a budget cycle: every submit either uses a try or an infra retry, and
@@ -222,8 +223,10 @@ async def judge(
     label = await _CLASSIFIER.classify(results, agent)
     visible: Sequence[CheckResult] = results
     withheld = 0
+    note = ""
     if shown is not None:
         visible, withheld = shown.apply(results)
+        note = shown.note
     bad_shown = failing(visible)
     lines = tuple(failure_line(r) for r in bad_shown[:MAX_FAILED_CHECKS])
     ids = tuple(r.check_id for r in bad)
@@ -234,7 +237,9 @@ async def judge(
         counted = False
         if budget.state.infra_failures > max_infra_retries:
             stop = "infra"
-        redo = render_feedback(visible, "infra", max_chars=1500, withheld=withheld)
+        redo = render_feedback(
+            visible, "infra", max_chars=1500, withheld=withheld, withheld_note=note
+        )
     else:
         budget.record_failure(results, output_hashes)
         counted = True
@@ -253,6 +258,7 @@ async def judge(
             attempt=budget.state.tries_used,
             max_chars=REDO_MAX_CHARS,
             withheld=withheld,
+            withheld_note=note,
         )
     status: TaskStatus
     if stop == "planning":

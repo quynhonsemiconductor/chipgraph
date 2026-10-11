@@ -1,0 +1,28 @@
+# The approved plan of the M2-04 acceptance fixture: one new module, the `pwm` block's top
+# (docs/rtl-claude-code/TINY_PWM_MAS.md). Ports and requirements are the Design Model's.
+schema_version: 1
+block: pwm
+top: tiny_pwm
+modules:
+  - name: tiny_pwm
+    summary: >-
+      The PWM block: PERIOD, DUTY and CTRL registers behind the word address bus, an 8-bit
+      counter that wraps at PERIOD while enabled, and pwm_out high while the counter is
+      below DUTY.
+    reqs: [REQ-PWM-001, REQ-PWM-002, REQ-PWM-003, REQ-PWM-004]
+    interface:
+      ports:
+        - { name: clk, direction: input, width: 1 }
+        - { name: rst_n, direction: input, width: 1 }
+        - { name: addr, direction: input, width: 2 }
+        - { name: wr_en, direction: input, width: 1 }
+        - { name: wdata, direction: input, width: 32 }
+        - { name: rdata, direction: output, width: 32 }
+        - { name: pwm_out, direction: output, width: 1 }
+    writes:
+      - { path: rtl/tiny_pwm.sv }
+    budget: { tries: 3, tier: medium }
+assumptions:
+  - Only wdata[7:0] (wdata[0] for CTRL) is used; the other bits are ignored.
+open_questions: []
+unassigned_reqs: []

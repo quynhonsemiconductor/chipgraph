@@ -6,7 +6,9 @@ description: >-
   change (the rule `digital-rtl/review`, the skill `review/diff`) and the Planner: the
   rule `digital-rtl/plan` (skill `plan/modules`, check `plan_check`) and the gate
   `plan:{block}` on `digital-rtl/plan_expand`, after which rules may say
-  `foreach: plan.modules`.
+  `foreach: plan.modules`; and the RTL of each planned module: the rule
+  `digital-rtl/rtl_module` (role `rtl-author`, which never sees a testbench; skills
+  `lang-sv/rtl` and `org/naming`; checks format, lint, naming, style, hardcode).
 provides:
   rules:
     - rules

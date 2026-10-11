@@ -20,8 +20,9 @@ one attempt at a time) can reuse them without this loop:
   exhausted (`tries` | `tokens` | `cost` | `stagnation`);
 - `render_feedback`: the bounded redo instruction for the next try;
 - `FeedbackFilter`: what a role whose read policy denies some artifacts (the testbench
-  Author, `rtl`) is shown of a failed check: no issue in a denied file, no denied path,
-  no source excerpt, and a note when something was withheld. The loop below applies it
+  Author, `rtl`; the RTL Author, `tb`) is shown of a failed check: no issue in a denied
+  file, no denied path, no source excerpt, and a note when something was withheld (one
+  per denied kind, `withheld_note`). The loop below applies it
   to the redo text of such a role (denying by the role's kinds and globs; a runtime that
   knows the task's denied paths passes them too);
 - `attempt_checks`: the checks the engine adds itself (missing inputs, missing or empty
@@ -491,6 +492,7 @@ def render_feedback(
     max_log_chars: int = 600,
     max_chars: int = 6000,
     withheld: int = 0,
+    withheld_note: str = "",
 ) -> str:
     """The redo instruction for the next try: what failed, where, and what to fix.
 
@@ -498,7 +500,8 @@ def render_feedback(
     most `max_issues` in all), the tail of its log when it has no error issue, the label and
     a hint for it. Bounded: long logs and messages are cut, and the whole text is at
     most `max_chars` characters. `withheld` (from `FeedbackFilter.apply`, over the
-    same `results`) adds `WITHHELD_NOTE`, so the agent knows some output was hidden.
+    same `results`) adds `withheld_note` (`FeedbackFilter.note`; default
+    `WITHHELD_NOTE`), so the agent knows some output was hidden.
     """
     bad = failing(results)
     head = f"Attempt {attempt} failed" if attempt is not None else "The last attempt failed"
@@ -523,7 +526,7 @@ def render_feedback(
             lines.append("  log tail:")
             lines.extend(f"    {line}" for line in tail.splitlines())
     lines.extend(["", f"What to fix: {_FIX_HINT[label]}"])
-    note = f"\n\n{WITHHELD_NOTE}" if withheld else ""
+    note = f"\n\n{withheld_note or WITHHELD_NOTE}" if withheld else ""
     text = "\n".join(lines)
     if len(text) + len(note) > max_chars:
         text = text[: max(max_chars - len(note) - 2, 0)] + "\n…"
@@ -537,7 +540,31 @@ WITHHELD_NOTE = (
     "design). A failure in the design was hidden; fix the test only if the spec says so, "
     "otherwise report needs_human with the question."
 )
-"""Added to the redo instruction when `FeedbackFilter.apply` withheld anything."""
+"""Added to the redo instruction when `FeedbackFilter.apply` withheld anything, for a role
+that must not see the design (`rtl`)."""
+
+TB_WITHHELD_NOTE = (
+    "Some check output was withheld: it points into files your role must not see (the "
+    "testbench). A failure in the testbench was hidden; the behaviour it expected is kept "
+    "above: fix the design so it meets that and the spec, or report needs_human with the "
+    "question if the spec does not say what is expected."
+)
+"""The same note for a role that must not see the testbench (`tb`): the behavioural text
+(`expected 0x2, got 0x0`) stays, the test's own lines do not."""
+
+
+def withheld_note(kinds: Sequence[str]) -> str:
+    """The note for a role that must not see `kinds` (its first denied kind decides)."""
+    if kinds and kinds[0] == "tb":
+        return TB_WITHHELD_NOTE
+    if not kinds or kinds[0] == "rtl":
+        return WITHHELD_NOTE
+    return (
+        f"Some check output was withheld: it points into files your role must not see "
+        f"({kinds[0]} artifacts). Fix your outputs only where the visible failures and the "
+        "spec say so, otherwise report needs_human with the question."
+    )
+
 
 _EXCERPT_RE = re.compile(r"^\s*(?:\d+\s*)?\|")
 """A source excerpt line of a compiler message: a line-number gutter, `   12 |   ...`, or
@@ -554,7 +581,7 @@ def _looks_like_path(token: str) -> bool:
 
 class FeedbackFilter(BaseModel):
     """What a role must not be shown of a failed check (DESIGN.md 5.1: the testbench
-    Author never sees the design).
+    Author never sees the design, the RTL Author never sees the testbench).
 
     A path is denied when it matches one of `denied` (repo-relative paths and globs, as
     `path_denied` reads them; an absolute path under `root` is made relative first), or
@@ -601,6 +628,11 @@ class FeedbackFilter(BaseModel):
             kinds=tuple(policy.deny_kinds),
             root=root,
         )
+
+    @property
+    def note(self) -> str:
+        """The note the redo text gets when something was withheld (`withheld_note`)."""
+        return withheld_note(self.kinds)
 
     @property
     def placeholder(self) -> str:
@@ -936,7 +968,9 @@ class _InstanceRun:
         if self.shown is None:
             return render_feedback(results, label, **kw)
         visible, withheld = self.shown.apply(results)
-        return render_feedback(visible, label, withheld=withheld, **kw)
+        return render_feedback(
+            visible, label, withheld=withheld, withheld_note=self.shown.note, **kw
+        )
 
     # --- one call ----------------------------------------------------------------
 
@@ -1296,6 +1330,7 @@ __all__ = [
     "OUTPUTS_CHECK",
     "RUNTIME_CHECK",
     "STICKY_STOPS",
+    "TB_WITHHELD_NOTE",
     "WITHHELD_NOTE",
     "WRITES_CHECK",
     "AgentRuleExecutor",
@@ -1315,4 +1350,5 @@ __all__ = [
     "failure_signature",
     "render_feedback",
     "runtime_error_result",
+    "withheld_note",
 ]

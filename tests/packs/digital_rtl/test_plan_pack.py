@@ -87,7 +87,12 @@ def test_fixtures_name_their_source() -> None:
 
 def test_the_plan_rules_load_from_the_pack(pack: Pack) -> None:
     rules = {rule.id: rule for rule in load_pack_rules(pack)}
-    assert set(rules) == {"digital-rtl/plan", "digital-rtl/plan_expand", "digital-rtl/review"}
+    assert set(rules) == {
+        "digital-rtl/plan",
+        "digital-rtl/plan_expand",
+        "digital-rtl/review",
+        "digital-rtl/rtl_module",
+    }
     plan = rules["digital-rtl/plan"]
     assert (plan.kind, plan.role, plan.foreach) == ("agent", "planner", "blocks")
     assert [(i.source, i.selector) for i in plan.inputs] == [("model", "block/{block}")]
@@ -106,7 +111,8 @@ def test_the_plan_rules_load_from_the_pack(pack: Pack) -> None:
 
 def test_check_agent_rules_accepts_the_plan_rule(pack: Pack) -> None:
     rules = {rule.id: rule for rule in load_pack_rules(pack)}
-    graph = build_graph(rules.values(), StaticForeach({"blocks": [{"block": "timer"}]}))
+    resolver = StaticForeach({"blocks": [{"block": "timer"}], "plan.modules": []})
+    graph = build_graph(rules.values(), resolver)
     check_agent_rules(graph.rules, graph.instances.values())  # does not raise
     # The planner writes exactly one plan file: a second output is refused.
     two = rules["digital-rtl/plan"].model_copy(

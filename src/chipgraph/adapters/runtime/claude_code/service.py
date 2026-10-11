@@ -24,12 +24,29 @@ never hands out a stopped task, and reports it (and every rule that depends on i
 under `blocked`; with nothing left to run it answers `stopped: true` and the HANDOFF
 path.
 
-A role that must not see some artifact kinds (the testbench Author and `rtl`) gets a
-guarded context (`guarded`): its model inputs are the block's spec side and the module's
+A role that must not see some artifact kinds gets a guarded context (`guarded`). The
+testbench Author (no `rtl`): its model inputs are the block's spec side and the module's
 interface (spec ports, else the model's RTL ports, else the RTL declaration only), never
-a general model slice; and what `submit` tells it of failed checks goes through
-`FeedbackFilter` (no issue in a denied file, no denied path, no source excerpt; the
-redo text says when something was withheld). The journal keeps the full results.
+a general model slice. The RTL Author (no `tb`, M2-04): an `rtl` section with the
+module's approved plan entry, requirements, interface, dependencies, naming rules and
+style exemplars, and nothing from a testbench. For both, what `submit` tells it of
+failed checks goes through `FeedbackFilter` (no issue in a denied file, no denied path,
+no source excerpt; the redo text says when something was withheld, in words for the kind
+withheld). The journal keeps the full results.
+
+A role with no file-reading tool (`tb-author`, `rtl-author`) cannot overwrite a file
+in Claude Code, which refuses a `Write` over a file the agent has not read. So at each
+dispatch of such a role `next_task` moves every output that exists into the state
+backend (`previous`): the agent's earlier attempt, or a file that was there before the
+task. `get_context` shows them (`previous_outputs`: the last attempt's text, and a
+pre-existing file's under `existing_output`, capped), the agent writes each file anew,
+and a pre-existing file is put back, byte for byte with its mode, when the task ends
+without being accepted (`budget_exhausted`, `needs_human`, a rewind) or the dispatch
+fails in the engine. Roles with a read tool edit in place, as before.
+
+For a rule whose first check is `format`, that check (the engine, not the agent) formats
+the outputs in place before the other checks; the hashes `submit` records are taken
+after the checks, so they are the formatted files'.
 
 A role that writes no files but has `engine_writes` (the Critic) reviews a change
 instead (`review`): its context holds the diff, the spec slice and the model slice; its
@@ -53,7 +70,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -63,7 +80,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from chipgraph.adapters.runtime.claude_code import loop
 from chipgraph.adapters.runtime.claude_code import review as review_mod
 from chipgraph.adapters.runtime.claude_code.agents import DEFAULT_TIER_MODELS, agent_type
-from chipgraph.adapters.runtime.claude_code.guarded import GuardedContext
+from chipgraph.adapters.runtime.claude_code.guarded import (
+    GuardedContext,
+    RtlAuthorContext,
+    guarded_context,
+)
+from chipgraph.adapters.runtime.claude_code.previous import (
+    MoveToken,
+    PreviousOutputs,
+    moves_outputs,
+)
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
 from chipgraph.app.build import make_scheduler, pack_search_paths
 from chipgraph.app.checks import ProfileCheckRunner
@@ -73,7 +99,7 @@ from chipgraph.core.contracts import AgentResult, CheckResult, Event, RuleInstan
 from chipgraph.core.contracts.event import EventType
 from chipgraph.core.contracts.types import FailureLabel, ModelTier
 from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, FeedbackFilter, attempt_checks
-from chipgraph.core.engine.graph import BuildGraph
+from chipgraph.core.engine.graph import BuildGraph, kind_for
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
 from chipgraph.core.plugin_api.pack import discover_packs
@@ -92,6 +118,7 @@ from chipgraph.core.runtime.roles import (
     SkillError,
     SkillSet,
     SkillSpec,
+    denied_kind,
     denied_reads,
     find_role,
     load_skills,
@@ -491,12 +518,27 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
                     }
                 )
                 continue
-        record = queue.dispatch(
-            iid,
-            run_id=summary.run_id,
-            baseline=now,
-            denied_reads=_denied_reads(ctx, graph, record),
-        )
+        # A role without a read tool cannot overwrite a file: move its outputs aside
+        # first, so each `Write` creates one (`previous`); put them back if the
+        # dispatch fails here.
+        mover = PreviousOutputs(queue, iid, ctx.root)
+        token: MoveToken | None = None
+        if moves_outputs(find_role(record.role)):
+            token = mover.move_aside(record.allowed_writes, dispatch=record.dispatches + 1)
+        moved = [m.path for m in token.moved] if token is not None else []
+        for path in moved:
+            now.pop(path, None)
+        try:
+            record = queue.dispatch(
+                iid,
+                run_id=summary.run_id,
+                baseline=now,
+                denied_reads=_denied_reads(ctx, graph, record),
+            )
+        except BaseException:
+            if token is not None:
+                mover.undo(token)
+            raise
         payload = {
             "phase": "dispatch",
             "attempt": record.dispatches,
@@ -507,6 +549,8 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
             "model": _model_for(ctx, record),
             "denied_reads": list(record.denied_reads),
         }
+        if moved:
+            payload["moved_aside"] = moved
         _emit(ctx, record.run_id, iid, "agent_turn", payload)
         dispatched.append(record)
 
@@ -567,24 +611,59 @@ def _refuse(
     payload: Mapping[str, Any],
 ) -> AppError:
     """Hand the task to a person with `question`; the error for the tool call."""
-    queue.needs_human(
+    stopped = queue.needs_human(
         record.task_id, result=AgentResult(status="needs_human", open_questions=(question,))
     )
-    _emit(ctx, record.run_id, record.task_id, "agent_turn", {"phase": "context_refused", **payload})
+    restored = _settle(ctx, queue, stopped)
+    extra = {"restored": restored} if restored else {}
+    _emit(
+        ctx,
+        record.run_id,
+        record.task_id,
+        "agent_turn",
+        {"phase": "context_refused", **payload, **extra},
+    )
     return AppError(question)
 
 
+def _settle(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> list[str]:
+    """Close the task's moved-outputs cycle once it ended (`previous`).
+
+    Accepted: the new files stay. `budget_exhausted` or `needs_human`: every file that
+    existed before the task is put back. Returns the paths put back.
+    """
+    mover = PreviousOutputs(queue, record.task_id, ctx.root)
+    if record.status == "accepted":
+        mover.accept()
+    elif record.status in ("budget_exhausted", "needs_human"):
+        return mover.restore(dispatch=record.dispatches)
+    return []
+
+
 def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleInstance) -> list[str]:
-    """Inputs the task's role must not see: of a denied kind, or on a denied path."""
+    """Inputs the task's role must not see: of a denied kind (by kind or by name), or on a
+    denied path."""
     if role is None or role.read_policy.mode != "deny":
         return []
-    kinds = set(role.read_policy.deny_kinds)
     denied = record.denied_reads
     return sorted(
         ref.path or str(ref.model_key)
         for ref in instance.inputs
-        if ref.kind in kinds or (ref.path is not None and path_denied(ref.path, denied))
+        if denied_kind(role, ref.kind, ref.path) is not None
+        or (ref.path is not None and path_denied(ref.path, denied))
     )
+
+
+def _denies(role: RoleSpec | None, record: AgentTaskRecord) -> Callable[[str], bool]:
+    """Whether the task's role must not read a repo-relative path: one of its
+    `denied_reads`, or a file its read policy denies by kind or by name."""
+
+    def denied(path: str) -> bool:
+        if path_denied(path, record.denied_reads):
+            return True
+        return role is not None and denied_kind(role, kind_for(path), path) is not None
+
+    return denied
 
 
 def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec, ...]) -> str:
@@ -615,12 +694,15 @@ def _instructions(role: RoleSpec | None, rule: RuleSpec, skills: tuple[SkillSpec
 
 
 def _guarded(
-    ctx: AppContext, role: RoleSpec | None, instance: RuleInstance
-) -> GuardedContext | None:
-    """The guarded context of a task whose role must not see some kinds, else None."""
-    if role is None or role.read_policy.mode != "deny" or not role.read_policy.deny_kinds:
-        return None
-    return GuardedContext(ctx, instance)
+    ctx: AppContext,
+    role: RoleSpec | None,
+    graph: BuildGraph,
+    instance: RuleInstance,
+    record: AgentTaskRecord,
+) -> GuardedContext | RtlAuthorContext | None:
+    """The guarded context of a task whose role must not see some kinds, else None: the
+    testbench Author's (no RTL), or the RTL Author's (no testbench, M2-04)."""
+    return guarded_context(ctx, role, instance, list(graph.rules.values()), _denies(role, record))
 
 
 def _feedback_filter(ctx: AppContext, record: AgentTaskRecord) -> FeedbackFilter | None:
@@ -684,7 +766,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
     except SkillError as exc:
         raise AppError(f"task {task_id!r}: {exc}") from exc
 
-    guarded = _guarded(ctx, role, instance)
+    guarded = _guarded(ctx, role, graph, instance, record)
     extra_specs: list[str] = []
     if guarded is not None:
         listed = {ref.path for ref in instance.inputs}
@@ -774,13 +856,40 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         answer["review"] = review
     if guarded is not None:
         answer.update(guarded.sections())
-        answer["instructions"] += (
-            " The ports you may use are in `interface` (every port names its `source`), "
-            "the block's requirements in `requirements`."
+        answer["instructions"] += guarded.instructions
+    if moves_outputs(role):
+        shown, withheld = PreviousOutputs(queue, task_id, ctx.root).context(
+            record.allowed_writes, _denies(role, record)
         )
+        answer["previous_outputs"] = shown
+        answer["instructions"] += _previous_instructions(shown, withheld)
     if record.role == "planner":
         answer["plan"] = _planner_context(ctx, graph, instance)
     return answer
+
+
+def _previous_instructions(shown: list[dict[str, Any]], withheld: list[str]) -> str:
+    """What `get_context` tells an author without a read tool about its outputs."""
+    text = (
+        " Every output that existed was moved aside when this task was handed out, so "
+        "each output is a new file: write it whole with Write (Edit has no file to change)."
+    )
+    if any("content" in entry for entry in shown):
+        text += (
+            " Your previous attempt is in `previous_outputs`; write the whole corrected "
+            "file with Write."
+        )
+    if any("existing_output" in entry for entry in shown):
+        text += (
+            " A file that existed before this task is in `previous_outputs` under "
+            "`existing_output`; it is put back if the task is not accepted."
+        )
+    if withheld:
+        text += (
+            f" {len(withheld)} moved file(s) are of a kind your role must not see; "
+            "`previous_outputs` lists them without their text."
+        )
+    return text
 
 
 def _planner_context(ctx: AppContext, graph: BuildGraph, instance: RuleInstance) -> dict[str, Any]:
@@ -896,6 +1005,7 @@ async def submit(
             open_questions=report.open_questions,
         )
         record = queue.needs_human(task_id, result=result)
+        restored = _settle(ctx, queue, record)
         _emit(
             ctx,
             record.run_id,
@@ -910,6 +1020,7 @@ async def submit(
                 "label": "planning",
                 "failed_checks": [],
                 "open_questions": list(report.open_questions),
+                "restored": restored,
             },
         )
         return _submit_answer(
@@ -1018,6 +1129,7 @@ async def submit(
         with contextlib.suppress(QueueError):
             queue.unsubmit(task_id)
         raise
+    restored = _settle(ctx, queue, record)
 
     for check in checks:
         _emit(ctx, record.run_id, task_id, "check_result", check.model_dump(mode="json"))
@@ -1034,6 +1146,7 @@ async def submit(
         "files_written": list(result.files_written),
         "assumptions": list(report.assumptions),
         "open_questions": list(report.open_questions),
+        "restored": restored,
     }
     if review is not None:
         payload["review"] = {"verdict": review.verdict, "comments": len(review.comments)}
