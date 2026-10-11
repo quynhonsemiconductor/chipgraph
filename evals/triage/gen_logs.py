@@ -266,7 +266,7 @@ def _tool_path(sample: Sample, work: Path) -> str:
 def _env(path: str, work: Path) -> dict[str, str]:
     home = work / "home"
     home.mkdir(exist_ok=True)
-    return {
+    env = {
         "PATH": path,
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / ".config"),
@@ -277,6 +277,12 @@ def _env(path: str, work: Path) -> dict[str, str]:
         "COLUMNS": "100",
         "PYTHONHASHSEED": "0",
     }
+    # macOS: the C++ link step of a Verilator model needs a usable SDK. When the default
+    # one is broken (a Command Line Tools update can leave `cc` unable to link), the caller
+    # picks another with SDKROOT. It never reaches a log: the sample logs do not show it.
+    if os.environ.get("SDKROOT"):
+        env["SDKROOT"] = os.environ["SDKROOT"]
+    return env
 
 
 def verilator_root() -> str | None:
