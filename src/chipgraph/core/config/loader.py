@@ -502,6 +502,7 @@ class ResolvedProfile:
                     severity="info", key="style.enforce", message="a style key is listed twice"
                 )
             )
+        issues.extend(_select_issues(self.profile))
 
         for index, plugin in enumerate(self.profile.plugins):
             issues.append(
@@ -561,6 +562,56 @@ class ResolvedProfile:
             if rule.reason is not None:
                 reason = rule.reason
         return PathRule(checks=checks, write=write, reason=reason)
+
+
+def _select_issues(profile: Profile) -> list[ConfigIssue]:
+    """`config check` notes on the `select:` section (best-of-N, F6)."""
+    select = profile.select
+    issues: list[ConfigIssue] = []
+    if select.n > select.max_n:
+        issues.append(
+            ConfigIssue(
+                severity="warning",
+                key="select.n",
+                message=f"{select.n} candidates is above select.max_n ({select.max_n}): "
+                f"capped at {select.max_n}",
+            )
+        )
+    for rule_id in sorted(select.rules):
+        n = select.rules[rule_id]
+        if n > select.max_n:
+            issues.append(
+                ConfigIssue(
+                    severity="warning",
+                    key=f"select.rules.{rule_id}",
+                    message=f"{n} candidates is above select.max_n ({select.max_n}): "
+                    f"capped at {select.max_n}",
+                )
+            )
+    widest = max([select.effective_n(), *(select.effective_n(n) for n in select.rules.values())])
+    if widest >= 2 and select.budget_factor >= widest:
+        issues.append(
+            ConfigIssue(
+                severity="warning",
+                key="select.budget_factor",
+                message=(
+                    f"{select.budget_factor} x one run's budget gives each of {widest} "
+                    "candidates a full run: best-of-N then costs N runs; the default is 1.5"
+                ),
+            )
+        )
+    if select.budget_factor < 1:
+        issues.append(
+            ConfigIssue(
+                severity="info",
+                key="select.budget_factor",
+                message=(
+                    f"{select.budget_factor} is below 1: the candidates together get less "
+                    "than one plain run's budget"
+                ),
+            )
+        )
+    return issues
 
 
 # --------------------------------------------------------------------------------------

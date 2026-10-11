@@ -232,6 +232,43 @@ class FanoutCfg(BaseModel):
         return max(1, min(FANOUT_DEFAULT_MAX_PARALLEL, cpus))
 
 
+class SelectCfg(BaseModel):
+    """Optional best-of-N (DESIGN 5.3, F6): N candidates of one rule, chosen by its checks.
+
+    A rule opts in by its id in `rules` (or an instance parameter `best_of`); every other
+    rule runs once, as before. `n` is the default N for an opted-in rule, `max_n` the hard
+    cap on any N. The N candidates share ONE budget: `budget_factor` times the rule's
+    single-run budget (tries, tokens and cost), not N times it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    n: int = Field(default=2, ge=1, description="Candidates for an opted-in rule (default N).")
+    max_n: int = Field(default=3, ge=1, description="Hard cap on N, whatever asks for more.")
+    budget_factor: float = Field(
+        default=1.5,
+        gt=0,
+        description="The candidates' shared budget, as a multiple of one run's budget.",
+    )
+    rules: dict[str, int] = Field(
+        default_factory=dict,
+        description="Rule id -> N for the rules that opt in to best-of-N.",
+    )
+
+    @field_validator("rules")
+    @classmethod
+    def _check_rules(cls, value: dict[str, int]) -> dict[str, int]:
+        for rule_id, n in value.items():
+            if n < 1:
+                raise ValueError(f"rules[{rule_id!r}] = {n}: N must be >= 1")
+        return value
+
+    def effective_n(self, requested: int | None = None) -> int:
+        """`requested` (or `n`), capped at `max_n`; at least 1."""
+        wanted = requested if requested is not None else self.n
+        return max(1, min(wanted, self.max_n))
+
+
 DecideTier = Literal["small", "large"]
 """A model tier `decide()` may ask: the small model first, the large one when unsure."""
 
@@ -616,6 +653,10 @@ class Profile(BaseModel):
     fanout: FanoutCfg = Field(
         default_factory=FanoutCfg,
         description="Fan-out limits: branches at once, time per branch (DESIGN 5.3).",
+    )
+    select: SelectCfg = Field(
+        default_factory=SelectCfg,
+        description="Optional best-of-N: N, its cap, the shared budget, opted-in rules (F6).",
     )
     paths: dict[str, PathRule] = Field(
         default_factory=dict, description="Glob pattern to path-specific exception rule."
