@@ -17,6 +17,11 @@ run_fanout(branches)
   always: remove every workspace and the run directory
 ```
 
+`run_candidates` is the same run for N candidates of one piece of work (best-of-N,
+`select.py`): the same write set and inputs, so F2 and F4 do not apply between them;
+every workspace is kept until all have finished, a chooser picks one, and only its patch
+goes through F3 and F5 onto the result branch.
+
 The user's working tree is never written: the base is a commit (HEAD), declared inputs
 are *copied* out of the user's tree, and the only thing a fan-out adds to the repo is the
 result branch (plus the VCS's own workspace bookkeeping, pruned at the end).
@@ -218,6 +223,9 @@ class BranchOutcome(BaseModel):
 BranchFn = Callable[[BranchContext], Awaitable[BranchOutcome]]
 JoinCheck = Callable[[Path], Awaitable[CheckResult]]
 """A join check (F5): runs on the integration workspace root, returns a `CheckResult`."""
+CandidateChooser = Callable[[tuple["BranchResult", ...], Mapping[str, Path]], Awaitable[str | None]]
+"""Picks the one candidate to merge (`run_candidates`): it gets every candidate's result,
+in id order, and each candidate's workspace (still on disk); `None` merges nothing."""
 
 
 @dataclass(frozen=True)
@@ -329,6 +337,9 @@ class FanoutResult(BaseModel):
     mismatches: tuple[AssumptionMismatch, ...] = ()
     open_questions: tuple[str, ...] = ()
     join_checks: tuple[CheckResult, ...] = ()
+    chosen: str | None = Field(
+        default=None, description="Candidates only: the one candidate that was merged."
+    )
     duration_s: float = Field(default=0.0, ge=0)
 
     @property
@@ -708,11 +719,14 @@ class _Run:
     run_dir: Path
     emit: FanoutEmit
     make_branch: bool
+    keep_workspaces: bool = False
+    """Candidates: keep each branch's workspace until the run ends (for the chooser)."""
     started: float = field(default_factory=time.monotonic)
     base: str = ""
     workspaces: list[Path] = field(default_factory=list)
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
     registry: FanoutRegistry | None = None
+    kept: dict[str, Path] = field(default_factory=dict)
 
     # --- workspaces --------------------------------------------------------------------
 
@@ -866,7 +880,9 @@ class _Run:
                 return result("failed", outcome.message or "the branch reported a failure", **extra)
             return result("done", outcome.message, patch=patch, **extra)
         finally:
-            if path is not None:
+            if path is not None and self.keep_workspaces:
+                self.kept[branch.id] = path  # removed by `cleanup`
+            elif path is not None:
                 self.drop(path)
 
     # --- the whole fan-out ---------------------------------------------------------------
@@ -989,9 +1005,28 @@ class _Run:
                 "failed", "merge conflict (F3)", ordered, conflicts=tuple(conflicts)
             ), None
 
+        listing = "\n".join(f"- {r.id}" for r in ordered)
+        return await self.integrate(
+            ordered,
+            ordered,
+            done=f"{len(ordered)} branch(es) merged",
+            note=f"Branches, in merge order:\n{listing}\n",
+        )
+
+    async def integrate(
+        self,
+        ordered: tuple[BranchResult, ...],
+        merged: Sequence[BranchResult],
+        *,
+        done: str,
+        note: str,
+        **extra: Any,
+    ) -> tuple[FanoutResult, Path | None]:
+        """F3 and F5: apply `merged`'s patches onto the integration workspace, in order,
+        run the join checks there, commit, and create the result branch."""
         union = sorted({p for b in self.branches for p in b.inputs})
         integration = self.workspace(JOIN_WORKSPACE, union)
-        for res in ordered:  # ascending id order (F7)
+        for res in merged:  # ascending id order (F7)
             if not res.patch:
                 continue
             error = self.vcs.apply_patch(integration, res.patch)
@@ -1001,9 +1036,9 @@ class _Run:
                     message=f"branch {res.id!r} does not apply onto the integration: {error}",
                 )
                 return self.finish(
-                    "failed", "merge conflict (F3)", ordered, conflicts=(conflict,)
+                    "failed", "merge conflict (F3)", ordered, conflicts=(conflict,), **extra
                 ), None
-        files = tuple(sorted(c.path for r in ordered for c in r.files))
+        files = tuple(sorted(c.path for r in merged for c in r.files))
         self.emit("merged", {"files": list(files)})
 
         checks = await self.run_join_checks(integration)
@@ -1015,13 +1050,10 @@ class _Run:
                 ordered,
                 files=files,
                 join_checks=checks,
+                **extra,
             ), integration
 
-        listing = "\n".join(f"- {r.id}" for r in ordered)
-        message = (
-            f"chipgraph fan-out {self.name} ({self.run_id})\n\n"
-            f"Branches, in merge order:\n{listing}\n"
-        )
+        message = f"chipgraph fan-out {self.name} ({self.run_id})\n\n{note}"
         commit = self.vcs.commit_all(integration, message, paths=files)
         tree = self.vcs.tree_hash(integration, commit)
         branch_name: str | None = None
@@ -1030,14 +1062,48 @@ class _Run:
             self.vcs.create_branch(self.root, branch_name, commit)
         return self.finish(
             "done",
-            f"{len(ordered)} branch(es) merged",
+            done,
             ordered,
             files=files,
             branch=branch_name,
             commit=commit,
             tree=tree,
             join_checks=checks,
+            **extra,
         ), integration
+
+    async def execute_candidates(
+        self, choose: CandidateChooser
+    ) -> tuple[FanoutResult, Path | None]:
+        """Candidates: run them all, let `choose` pick one while every workspace still
+        exists, and merge only that one (F2 and F4 do not apply between candidates)."""
+        self.base = self.vcs.head(self.root)
+        self.emit(
+            "start",
+            {"name": self.name, "base": self.base, "candidates": [b.id for b in self.branches]},
+        )
+        ordered = await self.run_branches()
+        chosen = await choose(ordered, dict(self.kept))
+        self.emit("chosen", {"candidate": chosen})
+        if chosen is None:
+            return self.finish("failed", "no candidate was chosen", ordered), None
+        winner = next((r for r in ordered if r.id == chosen), None)
+        if winner is None:
+            raise FanoutError(f"the chooser picked {chosen!r}, which is not a candidate")
+        if not winner.ok:
+            return self.finish(
+                "failed",
+                f"the chosen candidate {chosen!r} did not finish ({winner.status})",
+                ordered,
+                chosen=chosen,
+            ), None
+        return await self.integrate(
+            ordered,
+            (winner,),
+            done=f"candidate {chosen!r} chosen of {len(ordered)}",
+            note=f"Chosen candidate: {chosen} (of {', '.join(r.id for r in ordered)})\n",
+            chosen=chosen,
+        )
 
 
 @contextlib.asynccontextmanager
@@ -1071,14 +1137,52 @@ async def open_fanout(
     limits. Every workspace and the run directory are removed when the context exits,
     whatever the reason (an exception, a cancel, KeyboardInterrupt).
     """
+    ordered = _order(branches)
+    check_write_sets({b.id: b.write_set for b in ordered}, shared)
+    async with _open_run(
+        ordered,
+        root=root,
+        vcs=vcs,
+        name=name,
+        run_id=run_id,
+        join_checks=join_checks,
+        max_parallel=max_parallel,
+        branch_timeout_s=branch_timeout_s,
+        previous=previous,
+        tmp_root=tmp_root,
+        layout=layout,
+        ctx=ctx,
+        make_branch=make_branch,
+        choose=None,
+    ) as session:
+        yield session
+
+
+@contextlib.asynccontextmanager
+async def _open_run(
+    ordered: tuple[FanoutBranch, ...],
+    *,
+    root: Path,
+    vcs: FanoutVcs,
+    name: str,
+    run_id: str | None,
+    join_checks: Sequence[JoinCheck],
+    max_parallel: int | None,
+    branch_timeout_s: float | None,
+    previous: FanoutResult | None,
+    tmp_root: Path | None,
+    layout: StateLayout | None,
+    ctx: ExecContext | None,
+    make_branch: bool,
+    choose: CandidateChooser | None,
+) -> AsyncIterator[FanoutSession]:
+    """The run shared by `open_fanout` and `run_candidates` (after their own checks)."""
     repo = root.resolve()
     rid = run_id if run_id is not None else new_run_id()
     if not _RUN_ID_RE.match(rid):
         raise FanoutError(f"invalid run id {rid!r}")
     if not _NAME_RE.match(name):
         raise FanoutError(f"invalid fan-out name {name!r}: must match {_NAME_RE.pattern!r}")
-    ordered = _order(branches)
-    check_write_sets({b.id: b.write_set for b in ordered}, shared)
     limit = max_parallel if max_parallel is not None else FanoutCfg().effective_max_parallel()
     if limit < 1:
         raise FanoutError(f"max_parallel must be >= 1, got {limit}")
@@ -1104,10 +1208,14 @@ async def open_fanout(
         run_dir=run_dir,
         emit=_emitter(ctx, rid),
         make_branch=make_branch,
+        keep_workspaces=choose is not None,
     )
     try:
         run.write_registry()
-        result, integration = await run.execute()
+        if choose is not None:
+            result, integration = await run.execute_candidates(choose)
+        else:
+            result, integration = await run.execute()
         yield FanoutSession(result=result, integration=integration)
     finally:
         await run.stop_tasks()
@@ -1151,6 +1259,64 @@ async def run_fanout(
         return session.result
 
 
+async def run_candidates(
+    candidates: Sequence[FanoutBranch],
+    *,
+    choose: CandidateChooser,
+    root: Path,
+    vcs: FanoutVcs,
+    name: str = "candidates",
+    run_id: str | None = None,
+    shared: Iterable[str] = (),
+    join_checks: Sequence[JoinCheck] = (),
+    max_parallel: int | None = None,
+    branch_timeout_s: float | None = None,
+    tmp_root: Path | None = None,
+    layout: StateLayout | None = None,
+    ctx: ExecContext | None = None,
+    make_branch: bool = True,
+) -> FanoutResult:
+    """Candidates of ONE piece of work: run each, merge only the one `choose` picks.
+
+    Every candidate gets its own workspace, seeded identically, and must declare the same
+    write set and inputs (they overlap by design, so F2 does not apply between them; the
+    write set is still checked against `shared`). Each is diffed against its seed as in
+    `run_fanout` (a change outside the write set rejects it). When all have finished,
+    `choose` gets their results and their workspaces, which still exist; the chosen
+    candidate's patch alone is applied onto the integration workspace, the join checks
+    run there (F5), and the result branch is created. Workspaces are removed on any exit,
+    as in `open_fanout`. `FanoutResult.chosen` names the merged candidate.
+    """
+    ordered = _order(candidates)
+    if not ordered:
+        raise FanoutError("run_candidates needs at least one candidate")
+    first = ordered[0]
+    for other in ordered[1:]:
+        if set(other.write_set) != set(first.write_set) or set(other.inputs) != set(first.inputs):
+            raise FanoutError(
+                f"candidates {first.id!r} and {other.id!r} differ in write set or inputs: "
+                "candidates are the same work, run more than once"
+            )
+    check_write_sets({first.id: first.write_set}, shared)
+    async with _open_run(
+        ordered,
+        root=root,
+        vcs=vcs,
+        name=name,
+        run_id=run_id,
+        join_checks=join_checks,
+        max_parallel=max_parallel,
+        branch_timeout_s=branch_timeout_s,
+        previous=None,
+        tmp_root=tmp_root,
+        layout=layout,
+        ctx=ctx,
+        make_branch=make_branch,
+        choose=choose,
+    ) as session:
+        return session.result
+
+
 __all__ = [
     "JOIN_WORKSPACE",
     "REGISTRY_FILE",
@@ -1162,6 +1328,7 @@ __all__ = [
     "BranchOutcome",
     "BranchResult",
     "BranchStatus",
+    "CandidateChooser",
     "Conflict",
     "FanoutBranch",
     "FanoutEmit",
@@ -1183,6 +1350,7 @@ __all__ = [
     "keyed_assumptions",
     "normalize_assumption",
     "open_fanout",
+    "run_candidates",
     "run_fanout",
     "seed_workspace",
     "sweep_stale",
