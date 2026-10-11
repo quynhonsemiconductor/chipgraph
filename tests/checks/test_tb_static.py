@@ -306,3 +306,55 @@ def test_the_sim_stage_runs_only_after_the_static_rules_pass(tmp_path: Path) -> 
     res = _run(root, FakeRunner(), top="tiny_{block}", sim={"use": "no-such-adapter"})
     assert res.status == "error"  # type: ignore[attr-defined]
     assert "no-such-adapter" in res.issues[-1].msg  # type: ignore[attr-defined]
+
+
+# --- cocotb 2.x: a one-bit port's value is a Logic ---------------------------------------
+
+_WIDE_IFACE = Interface(
+    module="tiny_timer",
+    block="gpio",
+    source="spec",
+    ports=(
+        InterfacePort(name="clk", source="spec", width=1),
+        InterfacePort(name="irq", source="spec", width=1),
+        InterfacePort(name="count", source="spec", width=32),
+    ),
+    clock="clk",
+)
+
+_LOGIC_TEST = '''\
+import cocotb
+
+
+@cocotb.test()
+async def test_irq(dut):
+    """REQ-GPIO-001"""
+    # verifies: REQ-GPIO-001
+    assert dut.irq.value.to_unsigned() == 0, "irq low"
+    assert dut.count.value.to_unsigned() == 0, "count 0"
+    assert int(dut.irq.value) == 0, "also fine"
+'''
+
+
+def test_to_unsigned_on_a_one_bit_port_is_flagged(tmp_path: Path) -> None:
+    issues = _issues(tmp_path, _LOGIC_TEST, interface=_WIDE_IFACE)
+    [issue] = [i for i in issues if i.rule == "tb_static.logic_method"]
+    assert issue.line == 8
+    assert "irq" in issue.msg and "int(dut.irq.value)" in issue.msg
+    assert issue.severity == "error"
+
+
+def test_to_unsigned_on_a_wide_or_unsized_port_is_not_flagged(tmp_path: Path) -> None:
+    text = _LOGIC_TEST.replace("dut.irq.value.to_unsigned()", "int(dut.irq.value)")
+    assert "tb_static.logic_method" not in _rules(
+        _issues(tmp_path, text, interface=_WIDE_IFACE), "error"
+    )
+    # a port whose width the interface does not know is left alone
+    unsized = Interface(
+        module="m",
+        block="gpio",
+        source="spec",
+        ports=(InterfacePort(name="irq", source="spec"), InterfacePort(name="clk", source="spec")),
+        clock="clk",
+    )
+    assert "tb_static.logic_method" not in _rules(_issues(tmp_path, _LOGIC_TEST, interface=unsized))

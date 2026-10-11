@@ -181,12 +181,32 @@ class FakeReviewRuntime:
         return SampleRun(answer, note=f"review {status}", details=details)
 
 
+def tool_search_loads_only(call_input: dict[str, Any], allowed: tuple[str, ...]) -> bool:
+    """True when a `ToolSearch` call only loads tools the run may use.
+
+    `ToolSearch` fetches the schemas of deferred tools, so Claude Code needs it before a
+    tool such as `next_task` can be called; it reads and writes nothing itself. It is
+    neutral only for a `select:a,b` query whose every name is allowed; a keyword query,
+    or one that loads any other tool (say `select:SendMessage`), counts as foreign.
+    """
+    query = str(call_input.get("query", "")).strip()
+    if not query.startswith("select:"):
+        return False
+    names = [n.strip() for n in query[len("select:") :].split(",") if n.strip()]
+    return bool(names) and all(n in allowed for n in names)
+
+
 def foreign_calls(sid: str, calls: list[dict[str, Any]]) -> list[str]:
     """Calls a review run must not make: main-session tools other than the loop's, critic
-    tools other than its own, and any subagent other than the critic."""
+    tools other than its own, and any subagent other than the critic. A `ToolSearch` is
+    ignored only when it loads allowed tools."""
     out = []
     for call in calls:
         allowed = MAIN_ALLOWED if call["parent"] is None else CRITIC_ALLOWED
+        if call["name"] == "ToolSearch":
+            if not tool_search_loads_only(call["input"], allowed):
+                out.append(f"{sid}:ToolSearch({call['input'].get('query', '')})")
+            continue
         if call["name"] not in allowed:
             out.append(f"{sid}:{call['name']}")
     out += [f"{sid}:Agent({t})" for t, _ in streams.agents(calls) if t != CRITIC_AGENT]
