@@ -45,6 +45,7 @@ directories. In a template, `{block}` is the block name and `{BLOCK}` is the blo
 | Kind | Path template |
 |---|---|
 | filelist | `design/{block}/{block}.f` |
+| rtl | `design/{block}/rtl/*.sv` |
 | spec | `doc/specs/QNSC_{BLOCK}_MAS.md` |
 
 Per-block overrides:

@@ -2,25 +2,9 @@ name: image
 
 on:
   pull_request:
-    paths:
-      - docker/**
-      - pyproject.toml
-      - uv.lock
-      - src/**
-      - tests/e2e/**
-      - examples/**
-      - .github/workflows/image.yml
   push:
     branches: [main]
     tags: ["v*"]
-    paths:
-      - docker/**
-      - pyproject.toml
-      - uv.lock
-      - src/**
-      - tests/e2e/**
-      - examples/**
-      - .github/workflows/image.yml
 
 permissions:
   contents: read
@@ -36,16 +20,49 @@ jobs:
   build-test:
     name: build test image, run tinysoc e2e
     runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.changes.outputs.relevant }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2 # the merge commit and both parents: enough to diff against the base
+
+      # The job always runs, so it can be a required check; when nothing the image is built
+      # from changed, every later step is skipped and the job still reports success.
+      - name: Decide whether the image is affected
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          # Paths the test image is built from or tested with.
+          RELEVANT: '^(docker/|pyproject\.toml$|uv\.lock$|src/|tests/e2e/|examples/|docs/tb-claude-code/|\.dockerignore$|\.github/workflows/image\.yml$)'
+        run: |
+          set -eu
+          relevant=false
+          files=""
+          if [ "$EVENT" = push ] && [ "${REF#refs/tags/}" != "$REF" ]; then
+            relevant=true # a release tag always builds
+          elif ! files="$(git diff --name-only HEAD^1 HEAD)"; then
+            relevant=true # cannot tell: build
+          elif printf '%s\n' "$files" | grep -Eq "$RELEVANT"; then
+            relevant=true
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          {
+            echo "### image job: relevant=$relevant"
+            echo '```'
+            printf '%s\n' "$files"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.changes.outputs.relevant == 'true'
 
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        if: steps.changes.outputs.relevant == 'true'
         with:
           context: .
           file: docker/Dockerfile
@@ -57,6 +74,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Tool versions in the image
+        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -o pipefail
           {
@@ -73,6 +91,7 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Run the tinysoc e2e suite inside the image
+        if: steps.changes.outputs.relevant == 'true'
         env:
           REPORT_DIR: ${{ runner.temp }}/e2e-report
         run: |
@@ -84,6 +103,7 @@ jobs:
             sh -c 'uv run --no-sync pytest -m e2e tests/e2e -q --junitxml=/tmp/report/e2e-junit.xml'
 
       - name: Fail if the e2e tests did not actually run
+        if: steps.changes.outputs.relevant == 'true'
         env:
           REPORT_DIR: ${{ runner.temp }}/e2e-report
         run: |
@@ -119,6 +139,7 @@ jobs:
     name: publish image to GHCR
     needs: build-test
     if: >-
+      needs.build-test.outputs.relevant == 'true' &&
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest

@@ -37,6 +37,10 @@ spec:
 layout:
   filelist: "design/{block}/{block}.f"
   spec: "doc/specs/QNSC_{BLOCK}_MAS.md"
+  # RTL sources of a block. Besides naming them for the checks, this is what lets a role that
+  # must not see the RTL (the testbench author, M2-01) be refused these files: without it, the
+  # refusal rests on the filelists and file suffixes only.
+  rtl: "design/{block}/rtl/*.sv"
 
 adapters:
   lint:
