@@ -14,9 +14,15 @@ spec:
 layout:
   filelist: "filelists/{block}.f"
   spec: "doc/specs/TINY_{BLOCK}_MAS.md"
+  # RTL sources. A new module of a block's plan is written in this directory
+  # (`rtl/<module>.sv`, rule digital-rtl/rtl_module), and a plan may only write here or
+  # under `tb`. A role that must not see the RTL (the testbench author) is refused these.
+  rtl: "rtl/*.sv"
   # The testbenches and tests. A role that must not see them (the RTL author, M2-04) is
   # refused these paths, on top of every file named like a test (`test_*.py`, `tb_*`).
-  tb: "dv/**"
+  # The first entry is where a new testbench goes (`dv/<block>/test_<block>.py`, rule
+  # dv/tb_module); the hand-written ones are directly under `dv/`.
+  tb: ["dv/{block}/**", "dv/**"]
 
 # The style an RTL author imitates and the `style` check measures (M2-04), and the
 # formatter the `format` check runs on generated RTL before the other checks: none is

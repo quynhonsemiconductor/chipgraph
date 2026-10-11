@@ -6,6 +6,9 @@ the result branch). All git invocations go through `subprocess.run` with argumen
 (never `shell=True`); a failed command raises `VcsError` naming the command and its
 stderr.
 
+`push_branch` (M2-11a) publishes a result branch: a fast-forward push, never a force,
+with an HTTPS token given to git only through a `GIT_ASKPASS` helper (`askpass_helper`).
+
 The fan-out methods never touch the working tree, index or HEAD of the user's checkout:
 they run in their own worktree (or only add a ref), with no hooks
 (`core.hooksPath=/dev/null`, `--no-verify`), no signing, no auto gc, and an environment
@@ -19,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -323,3 +327,124 @@ class GitVcs:
         """Create branch `name` at `commit`; fails if it exists. HEAD is not moved."""
         _git(["check-ref-format", "--branch", name], cwd=root)
         _git(["branch", "--no-track", "--", name, commit], cwd=root)
+
+    # --- publishing a result branch (M2-11a) -----------------------------------------
+
+    def branch_tip(self, root: Path, name: str) -> str | None:
+        """The commit branch `name` points at, or `None` if there is no such branch."""
+        _git(["check-ref-format", "--branch", name], cwd=root)
+        result = _git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"],
+            cwd=root,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return _out(result) or None
+
+    def advance_branch(self, root: Path, name: str, commit: str, old: str) -> None:
+        """Move branch `name` from `old` to `commit`, only if `commit` descends from `old`.
+
+        A fast-forward only, and only if the branch is still at `old` (compare and swap);
+        HEAD, the index and the working tree are not touched.
+        """
+        if commit == old:
+            return
+        ancestor = _git(["merge-base", "--is-ancestor", old, commit], cwd=root, check=False)
+        if ancestor.returncode != 0:
+            raise VcsError(
+                f"refusing to move branch {name!r}: {commit} does not descend from {old}"
+            )
+        _git(["update-ref", f"refs/heads/{name}", commit, old], cwd=root)
+
+    def remote_url(self, root: Path, remote: str) -> str:
+        """The URL git pushes to for `remote` (raises `VcsError` if there is none)."""
+        return _out(_git(["remote", "get-url", "--push", "--", remote], cwd=root))
+
+    def push_branch(
+        self,
+        root: Path,
+        remote: str,
+        commit: str,
+        branch: str,
+        *,
+        token: str | None = None,
+        username: str = "x-access-token",
+    ) -> None:
+        """Push `commit` to `refs/heads/<branch>` of `remote`: a fast-forward, never a force.
+
+        With `token` (an HTTPS remote), git gets it through a `GIT_ASKPASS` helper script
+        in a private temporary directory, removed afterwards: never in the command line,
+        the URL, git config, the environment of git or an error message. No credential
+        helper runs (so nothing is stored), no terminal prompt, no hook. A remote that
+        refuses (not a fast-forward, no access) raises `VcsError`.
+        """
+        _git(["check-ref-format", "--branch", branch], cwd=root)
+        args = [
+            "-c",
+            "credential.helper=",
+            "-c",
+            "core.askPass=",
+            "push",
+            "--porcelain",
+            "--no-verify",
+            "--",
+            remote,
+            f"{commit}:refs/heads/{branch}",
+        ]
+        env = {k: v for k, v in _fanout_env().items() if k not in _TOKEN_VARS}
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env.pop("SSH_ASKPASS", None)
+        if token is None:
+            env.pop("GIT_ASKPASS", None)
+            _push(args, root, env, secret=None)
+            return
+        with tempfile.TemporaryDirectory(prefix="chipgraph-askpass-") as tmp:
+            helper = askpass_helper(Path(tmp), token, username=username)
+            env["GIT_ASKPASS"] = str(helper)
+            _push(args, root, env, secret=token)
+
+
+_TOKEN_VARS = ("CHIPGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GIT_ASKPASS")
+"""Variables a push never passes on to git: tokens, and any other askpass helper."""
+
+
+def askpass_helper(directory: Path, token: str, *, username: str = "x-access-token") -> Path:
+    """Write a `GIT_ASKPASS` helper in `directory` (private): `username` for git's
+    username prompt, the token for its password prompt. The token is in a separate file,
+    readable by the owner only; the script names that file, not the token."""
+    directory.chmod(0o700)
+    secret = directory / "token"
+    fd = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    script = directory / "askpass.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  Username*|username*) printf '%s\\n' {_sh_quote(username)} ;;\n"
+        f"  *) cat {_sh_quote(str(secret))} ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    return script
+
+
+def _sh_quote(text: str) -> str:
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def _push(args: Sequence[str], root: Path, env: dict[str, str], *, secret: str | None) -> None:
+    cmd = ["git", *_SAFE_CONFIG, *args]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, cwd=root, env=env)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", "replace").strip()
+        stdout = exc.stdout.decode("utf-8", "replace").strip()
+        message = f"git push to {args[-2]!r} failed in {root}: {stderr or stdout}"
+        if secret:
+            message = message.replace(secret, "***")
+        raise VcsError(message) from None
+    except FileNotFoundError as exc:
+        raise VcsError(f"git push failed in {root}: {exc}") from None

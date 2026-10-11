@@ -16,6 +16,10 @@
 # in M2-11) will set `module` and write one test per module; until then the test file is
 # named after the block.
 #
+# The output is in the block's testbench directory, `{layout.tb}`: the directory part of
+# the first `layout.tb` template of the block (QSoC's `dv/{block}/**` gives `dv/pwm`),
+# `dv/{block}` when the profile has none (`chipgraph.packs.digital_rtl.layout`).
+#
 # Checks: `tb_static` (no simulator, no RTL: the file compiles, imports cocotb, has a
 # `@cocotb.test()` coroutine, uses only interface ports, reads no file, cites every
 # requirement id). A profile that sets `adapters.tb_static.sim` also runs the test on the
@@ -31,7 +35,7 @@ inputs:
   - model: "block/{block}"
   - model: "interface/{block}"
 outputs:
-  - "dv/{block}/test_{block}.py"
+  - "{layout.tb}/test_{block}.py"
 checks: [tb_static]
 skills: [dv/cocotb]
 budget:

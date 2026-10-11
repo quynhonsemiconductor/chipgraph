@@ -6,7 +6,9 @@ Model, the profile and the build graph's other rules (`PlanEnv`). The Planner ge
 issues as the redo text of the normal agent loop. It rejects:
 
 - write sets: two modules writing the same file (F2), a write outside the block's
-  layout paths (`blocks.<b>.layout`), a write to a path another rule produces (a file
+  `rtl` and `tb` layout paths (`layout.rtl`, `layout.tb`, per block under
+  `blocks.<b>.layout`; a kind with no layout key allows its default directory, `rtl/`
+  or `dv/<block>/`), a write to a path another rule produces (a file
   a `gen`/`import`/`human` rule writes is the engine's or a person's, never a plan's),
   an existing file the plan does not say it replaces (`replaces: true`), and a module
   whose write set misses a file a `foreach: plan.modules` rule will write for it;
@@ -66,12 +68,13 @@ from chipgraph.core.config.loader import load as load_profile
 from chipgraph.core.config.models import PlanCfg, Profile
 from chipgraph.core.contracts import CheckResult, CheckSpec, Issue, RuleSpec
 from chipgraph.core.contracts.types import CheckStatus
-from chipgraph.core.engine.graph import GraphError, build_graph
+from chipgraph.core.engine.graph import ForeachEntry, GraphError, build_graph
 from chipgraph.core.engine.records import RecordStore
 from chipgraph.core.model.model import DesignModel
 from chipgraph.core.model.store import ModelStore, default_model_db_path
 from chipgraph.core.plugin_api.types import ToolContext
 from chipgraph.core.state.layout import StateLayout
+from chipgraph.packs.digital_rtl.layout import LayoutError, fill_vars, layout_vars, write_globs
 from chipgraph.packs.digital_rtl.plan.model import Plan, PlanModule
 
 DEFAULT_PLAN_PATH = "plan/{block}.plan.yml"
@@ -149,13 +152,15 @@ class PlanEnv:
     """Where `interface` came from: `spec`, `rtl:<module>` or `none`."""
     existing_modules: tuple[ModuleInfo, ...] = ()
     layout: tuple[str, ...] = ()
-    """The block's layout templates, `{block}`/`{BLOCK}` filled in."""
+    """Where the block's modules may write: its `rtl` and `tb` layout templates,
+    `{block}`/`{BLOCK}` filled in (`chipgraph.packs.digital_rtl.layout.write_globs`)."""
     engine_outputs: Mapping[str, str] = field(default_factory=dict)
     """Path -> instance id, for every output of a non-agent rule."""
     agent_outputs: Mapping[str, str] = field(default_factory=dict)
     """Path -> instance id, for every output of an agent rule not expanded from a plan."""
     module_outputs: tuple[tuple[str, str], ...] = ()
-    """(rule id, output template) of every rule with `foreach: plan.modules`."""
+    """(rule id, output template) of every rule with `foreach: plan.modules`, the
+    block's layout directories (`{layout.rtl}`, `{layout.tb}`) filled in."""
     existing: Mapping[str, str] = field(default_factory=dict)
     """Path -> content hash, for the plan's write paths that exist on disk."""
     built: Mapping[str, frozenset[str]] = field(default_factory=dict)
@@ -205,11 +210,6 @@ def _fill(template: str, params: Mapping[str, str]) -> str | None:
 
     filled = _PLACEHOLDER_RE.sub(_replace, template)
     return None if missing else filled
-
-
-def _layout_template(template: str, block: str) -> str:
-    """A layout template with `{block}`/`{BLOCK}` filled in; other fields stay fields."""
-    return template.replace("{block}", block).replace("{BLOCK}", block.upper())
 
 
 def dependency_depth(plan: Plan) -> int:
@@ -574,14 +574,39 @@ def parse_plan(text: str, *, plan_path: str) -> tuple[Plan | None, list[Issue]]:
 # --- the environment, from a project --------------------------------------------------
 
 
-class _BlocksOnly:
-    """Expands `blocks` only; any other selector (a plan's modules) to nothing."""
+_PER_BLOCK = ("blocks", "plan.block", "plan.blocks")
+"""Selectors with one entry per block (at most): every block, for the outputs they take."""
 
-    def __init__(self, blocks: Iterable[str]) -> None:
+
+class _BlocksOnly:
+    """Expands the per-block selectors to every block (with its layout directories as
+    template values); any other selector (a plan's modules) to nothing."""
+
+    def __init__(self, blocks: Iterable[str], values: Mapping[str, Mapping[str, str]]) -> None:
         self._blocks = sorted(blocks)
+        self._values = values
 
     def expand(self, expr: str) -> list[dict[str, str]]:
-        return [{"block": b} for b in self._blocks] if expr == "blocks" else []
+        return [dict(e.params) for e in self.expand_entries(expr)]
+
+    def expand_entries(self, expr: str) -> list[ForeachEntry]:
+        if expr not in _PER_BLOCK:
+            return []
+        return [
+            ForeachEntry(params={"block": b}, vars=dict(self._values.get(b, {})))
+            for b in self._blocks
+        ]
+
+
+def _block_vars(resolved: ResolvedProfile) -> dict[str, dict[str, str]]:
+    """Each block's layout directories; a block whose layout is malformed gets none."""
+    out: dict[str, dict[str, str]] = {}
+    for block in resolved.profile.blocks:
+        try:
+            out[block] = layout_vars(resolved, block)
+        except LayoutError:
+            continue
+    return out
 
 
 def project_rules(root: Path, resolved: ResolvedProfile) -> list[RuleSpec]:
@@ -592,12 +617,12 @@ def project_rules(root: Path, resolved: ResolvedProfile) -> list[RuleSpec]:
 
 
 def _other_outputs(
-    rules: Sequence[RuleSpec], blocks: Iterable[str]
+    rules: Sequence[RuleSpec], resolved: ResolvedProfile
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Outputs of the graph's rules that are not expanded from a plan: non-agent, agent."""
     fixed = [r for r in rules if r.foreach != PLAN_MODULES]
     try:
-        graph = build_graph(fixed, _BlocksOnly(blocks))
+        graph = build_graph(fixed, _BlocksOnly(resolved.profile.blocks, _block_vars(resolved)))
     except GraphError:
         return {}, {}
     engine: dict[str, str] = {}
@@ -727,11 +752,12 @@ def load_env(
         if getattr(m, "block", None) == key
     )
     interface, source = _interface(model, block, profile, modules)
-    layout: list[str] = []
-    for value in profile.layout.values():
-        templates = (value,) if isinstance(value, str) else value
-        layout.extend(_layout_template(t, block) for t in templates)
-    engine, agent = _other_outputs(rules, resolved.profile.blocks)
+    try:
+        values = layout_vars(resolved, block)
+    except LayoutError as exc:
+        raise PlanEnvError(str(exc)) from exc
+    layout = write_globs(resolved, block)
+    engine, agent = _other_outputs(rules, resolved)
     existing = {
         path: sha256_file(root / path)
         for path in dict.fromkeys(write_paths)
@@ -749,7 +775,10 @@ def load_env(
         engine_outputs=engine,
         agent_outputs=agent,
         module_outputs=tuple(
-            (r.id, t) for r in rules if r.foreach == PLAN_MODULES for t in r.outputs
+            (r.id, fill_vars(t, values))
+            for r in rules
+            if r.foreach == PLAN_MODULES
+            for t in r.outputs
         ),
         existing=existing,
         built=_built(root, rules, block),

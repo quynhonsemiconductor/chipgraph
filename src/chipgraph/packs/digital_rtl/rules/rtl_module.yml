@@ -15,9 +15,15 @@
 # refuses reads of them, and what `submit` tells the author of a failed check is
 # filtered the same way (behavioural text such as `expected 0x2, got 0x0` is kept).
 #
-# The output is the module's file under the default RTL path; the plan must list it in
-# the module's writes (`plan_check` says so), and the graph refuses an output outside
-# them. A project with another RTL layout writes its own copy of this rule in its pack.
+# The output is the module's file in the block's RTL directory, `{layout.rtl}`: the
+# directory part of the profile's `layout.rtl` for the block (QSoC's
+# `design/{block}/rtl/*.sv` gives `design/pwm/rtl`), `rtl` when the profile has none
+# (`chipgraph.packs.digital_rtl.layout`). The plan must list it in the module's writes
+# (`plan_check` says so), and the graph refuses an output outside them.
+#
+# Besides the approved plan, the resolver adds the profile's `style.exemplars` and its
+# naming rules file as inputs: editing one makes the module stale, so it is written
+# again in the new style (an exemplar the plan itself rewrites is left out).
 #
 # Checks, in this order, each an adapter id of the profile:
 #   format     the project's formatter on the outputs, run by the engine before the
@@ -40,7 +46,7 @@ inputs:
   - model: "block/{block}"
   - model: "interface/{module}"
 outputs:
-  - "rtl/{module}.sv"
+  - "{layout.rtl}/{module}.sv"
 skills: [lang-sv/rtl, org/naming]
 checks: [format, lint, naming, style, hardcode]
 budget:

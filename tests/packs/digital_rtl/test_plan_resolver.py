@@ -140,7 +140,11 @@ def test_an_approved_plan_expands_with_params_edges_and_write_sets(project: Path
         {"block": "timer", "module": "tiny_timer_irq"},
     )
     assert top.writes == frozenset({"rtl/tiny_timer.sv"})
-    assert top.inputs == ("plan/timer.approved.json",)
+    # The approved plan, then the style files (M2-11a): the exemplars the plan does not
+    # rewrite (`rtl/tiny_timer.sv` is its own output). The stub profile's `naming` check
+    # is a command, so it names no rules file.
+    assert top.inputs == ("plan/timer.approved.json", "rtl/tiny_gpio.sv")
+    assert top.vars == {"layout.rtl": "rtl", "layout.tb": "dv/timer"}
 
     graph = _graph(project)
     ids = sorted(i for i, inst in graph.instances.items() if inst.rule_id == STUB_RULE)

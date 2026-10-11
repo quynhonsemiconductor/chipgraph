@@ -39,12 +39,16 @@ layout:
   spec: "doc/specs/QNSC_{BLOCK}_MAS.md"
   # RTL sources of a block. Besides naming them for the checks, this is what lets a role that
   # must not see the RTL (the testbench author, M2-01) be refused these files: without it, the
-  # refusal rests on the filelists and file suffixes only.
+  # refusal rests on the filelists and file suffixes only. A planned module is written in its
+  # directory (`design/<block>/rtl/<module>.sv`, rule digital-rtl/rtl_module), and a block's
+  # plan may only write under `rtl` and `tb`.
   rtl: "design/{block}/rtl/*.sv"
   # Testbenches and tests of a block. A role that must not see them (the RTL author, M2-04)
   # is refused these paths, on top of every file named like a test (`test_*.py`, `tb_*`).
-  # `design/<block>/dv` is a symlink to `dv/<block>`: both paths are listed.
-  tb: ["design/{block}/dv/**", "dv/{block}/**"]
+  # `design/<block>/dv` is a symlink to `dv/<block>`: both paths are listed. The first is
+  # where a new testbench is written (`dv/<block>/test_<block>.py`, rule dv/tb_module):
+  # the real directory, so git can commit it (it refuses a path through a symlink).
+  tb: ["dv/{block}/**", "design/{block}/dv/**"]
 
 adapters:
   lint:

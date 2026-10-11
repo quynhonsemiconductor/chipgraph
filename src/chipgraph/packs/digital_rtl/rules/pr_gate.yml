@@ -1,0 +1,27 @@
+# The human gate on a block's pull request (DESIGN.md 6.1; task M2-11a).
+#
+# Its input is the PR record `open_pr` wrote (and, from `foreach: plan.block`, the block's
+# files). With `review: {use: github}` the gate `pr:{block}` is the pull request's review:
+# approved when a reviewer approves at the PR's current head commit (a later push makes
+# the approval stale), rejected when one requests changes. With the `file` adapter (no
+# GitHub, offline) a person approves it here:
+#
+#   chipgraph approve pr:<block>
+#
+# Once approved, `pr_gate` writes the approved head below. Merging stays a person's act.
+rule: pr_gate
+kind: gen
+description: >-
+  Wait for a person to approve the block's pull request at its current head, then
+  record what was approved.
+foreach: plan.block
+inputs:
+  - artifact: "pr/{block}.json"
+outputs:
+  - "pr/{block}.approved.json"
+gate: "pr:{block}"
+run:
+  use: pr_gate
+  args:
+    pr: "pr/{block}.json"
+    out: "pr/{block}.approved.json"

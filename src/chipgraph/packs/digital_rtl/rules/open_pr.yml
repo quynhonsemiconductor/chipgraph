@@ -1,0 +1,30 @@
+# A block's pull request (DESIGN.md 6.1; task M2-11a).
+#
+# For each block with an approved, valid plan (`foreach: plan.block`), once every module's
+# RTL, the testbench and the Critic's review are built (the resolver adds the module
+# files and the testbench as inputs), the `open_pr` tool builds the branch
+# `chipgraph/<run id>/<block>` in a workspace outside the user's checkout (HEAD, index
+# and working tree untouched), with exactly those files; with `review: {use: github}` it
+# pushes it to `review.remote` (default origin; an https remote needs
+# CHIPGRAPH_GITHUB_TOKEN, given to git through GIT_ASKPASS only) and opens the PR into
+# `review.base` (idempotent), with the plan, requirement coverage, check results and the
+# Critic's verdict as its body. It writes `pr/{block}.json`: branch, head commit, PR number
+# and URL. A re-run with changed files moves the same branch forward (never a force push)
+# and reuses the open PR.
+#
+# The gate `pr:{block}` is on `digital-rtl/pr_gate`. chipgraph never merges.
+rule: open_pr
+kind: gen
+description: >-
+  Commit the block's RTL and testbench on a branch of their own, push it and open a pull
+  request whose body says what the plan, the checks and the Critic found.
+foreach: plan.block
+inputs:
+  - artifact: "reports/review/{block}.json"
+outputs:
+  - "pr/{block}.json"
+run:
+  use: open_pr
+  args:
+    review: "reports/review/{block}.json"
+    out: "pr/{block}.json"

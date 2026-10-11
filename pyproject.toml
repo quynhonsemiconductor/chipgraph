@@ -50,6 +50,8 @@ local = "chipgraph.adapters.runner.local:LocalRunner"
 cmd = "chipgraph.adapters.tool.cmd:CmdTool"
 edalize = "chipgraph.adapters.tool.edalize:EdalizeTool"
 plan_expand = "chipgraph.packs.digital_rtl.plan.expand:PlanExpandTool"
+open_pr = "chipgraph.packs.digital_rtl.pr.open:OpenPrTool"
+pr_gate = "chipgraph.packs.digital_rtl.pr.gate:PrGateTool"
 
 [project.entry-points."chipgraph.adapters.parser"]
 verilator = "chipgraph.adapters.parser.verilator:VerilatorParser"
