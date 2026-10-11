@@ -5,7 +5,7 @@
 #
 #   docs/tb-claude-code/run.sh [OUT_DIR]      # OUT_DIR must be /tmp/cg-tb-<name>
 #
-# Env: MAIN_MODEL (default haiku: the session that runs /chipgraph:run); MEDIUM_MODEL
+# Env: MAIN_MODEL (default sonnet: the session that runs /chipgraph:run); MEDIUM_MODEL
 # (default sonnet) and LARGE_MODEL (default sonnet): the copy's `models.tiers`, so the
 # tb-author subagents (tier medium, escalating to large) run on sonnet. Haiku is cheaper,
 # but an offline estimate is that it often writes cocotb 1.x idioms (`units=`,
@@ -34,7 +34,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-/tmp/cg-tb-run}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 MEDIUM_MODEL="${MEDIUM_MODEL:-sonnet}"
 LARGE_MODEL="${LARGE_MODEL:-sonnet}"
 MAX_TURNS="${MAX_TURNS:-40}"

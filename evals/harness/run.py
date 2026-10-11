@@ -31,7 +31,7 @@ from .tasks import RUN_KEY, suite_task
 
 DEFAULT_BUDGET_USD = 3.0
 DEFAULT_TIME_LIMIT_S = 3600
-DEFAULT_MAIN_MODEL = "haiku"
+DEFAULT_MAIN_MODEL = "sonnet"
 DEFAULT_SMALL_MODEL = "haiku"
 DEFAULT_LARGE_MODEL = "opus"
 

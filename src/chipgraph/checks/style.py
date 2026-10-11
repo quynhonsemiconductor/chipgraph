@@ -15,6 +15,8 @@ The features (the keys, `chipgraph.core.config.models.STYLE_KEYS`):
 | `ports`       | port declarations: ANSI or not, one per line, direction keywords padded |
 |               | so the types line up                                                   |
 | `reset`       | reset style: asynchronous or synchronous, active low or high, its name |
+| `reset_kind`  | asynchronous or synchronous reset, only that: always an **error**,       |
+|               | whatever `style.enforce` says (a wrong kind is a functional change)    |
 | `sequential`  | the sequential block: `always_ff` or `always`, the clock edge          |
 | `suffix`      | signal suffixes: the registered (`_q`, `_r`, `_reg`, `_ff`) and         |
 |               | next-state (`_d`, `_next`, `_nxt`) ones, `_i`/`_o` on ports            |
@@ -616,15 +618,22 @@ def deviations(profile: StyleProfile, obs: Observed) -> tuple[list[Deviation], d
             off_r = 0
             for b in resets:
                 parts = []
-                if b.reset_kind != want_r.kind:
-                    parts.append(f"{b.reset_kind}hronous (exemplars: {want_r.kind}hronous)")
+                kind_off = b.reset_kind != want_r.kind
+                if kind_off:
+                    add(
+                        "reset_kind",
+                        b.line,
+                        f"reset is {b.reset_kind}hronous, the exemplars' is {want_r.kind}hronous: "
+                        "a different kind of reset changes the behaviour, not only the style",
+                    )
                 if b.reset_active != want_r.active:
                     parts.append(f"active {b.reset_active} (exemplars: active {want_r.active})")
                 if b.reset != want_r.name:
                     parts.append(f"named {b.reset} (exemplars: {want_r.name})")
                 if parts:
-                    off_r += 1
                     add("reset", b.line, "reset is " + ", ".join(parts))
+                if parts or kind_off:
+                    off_r += 1
             missing = [b for b in obs.seq if b.reset_kind is None]
             for b in missing[:1]:
                 if not resets:
@@ -740,6 +749,10 @@ def style_distance(profile: StyleProfile, file: str | Observed) -> float:
     return round(sum(share.values()) / len(share), 4) if share else 0.0
 
 
+ALWAYS_ERRORS: frozenset[str] = frozenset({"reset_kind"})
+"""Keys reported as errors whatever `style.enforce` lists: a deviation that changes behaviour."""
+
+
 def style_issues(
     profile: StyleProfile,
     obs: Observed,
@@ -755,7 +768,7 @@ def style_issues(
     issues: list[Issue] = []
     for key in STYLE_KEYS:
         devs = by_key.get(key, [])
-        severity: Severity = "error" if key in strict else "warning"
+        severity: Severity = "error" if key in strict or key in ALWAYS_ERRORS else "warning"
         for dev in devs[:MAX_ISSUES_PER_KEY]:
             issues.append(
                 Issue(

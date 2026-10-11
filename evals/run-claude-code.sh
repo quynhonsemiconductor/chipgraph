@@ -15,7 +15,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-/tmp/cg-eval-run}"
 SUITES="${SUITES:-ask triage triage-holdout triage-holdout2}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 BUDGET_USD="${BUDGET_USD:-3}"
 
 # OUT_DIR is deleted first: accept only /tmp/cg-eval-<name> (after resolving symlinks).

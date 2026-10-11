@@ -221,7 +221,7 @@ def test_the_ask_suite_reads_the_checked_answer(tmp_path: Path, fake_claude: Pat
     ]
     assert _opt(calls[0]["argv"], "--max-turns") == "12"
     assert "--disallowedTools" not in calls[0]["argv"]
-    assert result.summary["models"] == {"main": "haiku", "asker": "haiku"}
+    assert result.summary["models"] == {"main": "sonnet", "asker": "haiku"}
     items = {i["id"]: i for i in result.summary["items"]}
     assert items["q16"]["passed"] and not items["q01"]["passed"]
 

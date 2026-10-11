@@ -5,7 +5,7 @@
 #
 #   docs/roles-claude-code/run.sh [OUT_DIR]      # OUT_DIR must be /tmp/cg-roles-<name>
 #
-# Env: MAIN_MODEL (default haiku: the session that runs /chipgraph:run); MEDIUM_MODEL
+# Env: MAIN_MODEL (default sonnet: the session that runs /chipgraph:run); MEDIUM_MODEL
 # (default haiku) and LARGE_MODEL (default sonnet): the copy's `models.tiers`, so both
 # role subagents (tier medium, escalating to large) stay cheap; MAX_TURNS (default 40).
 #
@@ -27,7 +27,7 @@ unset VIRTUAL_ENV  # uv uses the checkout's own .venv
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 OUT="${1:-/tmp/cg-roles-run}"
-MAIN_MODEL="${MAIN_MODEL:-haiku}"
+MAIN_MODEL="${MAIN_MODEL:-sonnet}"
 MEDIUM_MODEL="${MEDIUM_MODEL:-haiku}"
 LARGE_MODEL="${LARGE_MODEL:-sonnet}"
 MAX_TURNS="${MAX_TURNS:-40}"

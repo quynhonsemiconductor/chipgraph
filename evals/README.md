@@ -8,7 +8,7 @@ Real-model runs use `chipgraph eval --runtime claude-code`, by hand or in the `e
 ## `chipgraph eval`: the framework (task M1-17)
 
 ```bash
-chipgraph eval SUITE [--runtime fake|claude-code] [--main-model haiku]
+chipgraph eval SUITE [--runtime fake|claude-code] [--main-model sonnet]
                [--small-model haiku] [--large-model opus] [--budget-usd 3]
                [--time-limit 3600] [--out DIR] [--only ID,ID...]
 ```
@@ -49,7 +49,7 @@ Exit code: 0 pass (or no data), 1 fail, 2 error. Runtimes:
   `"/chipgraph:triage logs/<id>.log [check]"` per sample, in a fresh tinysoc copy (its own
   git repo, ingested, the triage logs in `logs/`) with the dev plugin (`plugin/` with a
   `.mcp.json` that runs this checkout). The main session runs `--main-model` (default
-  `haiku`); the asker subagent runs haiku (its frontmatter); the decider tiers are
+  `sonnet`); the asker subagent runs haiku (its frontmatter); the decider tiers are
   `--small-model`/`--large-model`, written into the copy's profile. The tools allowed are
   those of the acceptance scripts (`docs/ask-claude-code/`, `docs/triage-claude-code/`).
   Each sample's stream is kept in `DIR/streams/`.
@@ -69,6 +69,11 @@ Exit code: 0 pass (or no data), 1 fail, 2 error. Runtimes:
   `--time-limit` (default 3600 s) does the same for time; one sample may take 900 s at
   most. With a plan token, `total_cost_usd` is the list-price equivalent, not a bill.
 
+  **Main session = sonnet, workers = haiku** (since 2026-10-11). A Haiku main session slipped in
+  real runs (a duplicate Critic subagent and a `TaskStop`, a `ToolSearch` for a tool the loop
+  does not use) and the harness rightly failed those runs, so the session that runs the loop is
+  Sonnet; Haiku stays the model of the workers (deciders, asker, tiers). Expect a real run to
+  cost about 2-3x the numbers below, which were measured with a Haiku main session.
   Expected cost with haiku: triage about $1.1 for the 22 samples (the M1-14 acceptance run:
   haiku main session, haiku/opus deciders; most samples are decided by rules). The two
   holdouts (12 samples each) have not been measured; holdout2 has more simulation failures,
@@ -242,7 +247,7 @@ it, it is spent too.
 `next_task`, `get_context` (diff, spec and model slices) and `submit` (validation, the
 engine writing `reports/review/<block>.json`) with a scripted Critic reply that names the
 planted defect. `claude-code`: one `claude -p "/chipgraph:run <target>"` per sample; the
-main session on `--main-model` (default haiku), the `chipgraph:critic` subagent on the
+main session on `--main-model` (default sonnet), the `chipgraph:critic` subagent on the
 `large` tier, `--large-model` (default opus). Not measured yet: expect an opus critic to
 cost more per sample than triage, so raise `--budget-usd` for the 20 samples:
 
