@@ -11,7 +11,8 @@ must not guess it.
 What to use from the context:
 
 - `interface.ports`: the only signals you may touch, as `dut.<name>`. Drive inputs
-  with `dut.<name>.value = ...`, sample outputs with `dut.<name>.value.to_unsigned()`.
+  with `dut.<name>.value = ...`, sample outputs with `int(dut.<name>.value)` (see the
+  table below: a one-bit port is not a vector).
   A port marked `rtl differs` or `missing in rtl` disagrees with the design: test what
   the spec says, and say so in `assumptions`.
 - `interface.clock` and `interface.reset` (with `reset_active_low`): start the clock with
@@ -23,6 +24,25 @@ What to use from the context:
   small `write(dut, offset, value)` and `read(dut, offset)` helpers on those ports, and
   name each offset as a constant from the register map.
 - `requirements`: every id must be cited at least once.
+
+cocotb 2.x API (checked against cocotb 2.1.0; a name that is not in this table is a
+guess: look for it here first):
+
+| You want | Write | Not this |
+|---|---|---|
+| Read any port as a number | `int(dut.x.value)` (raises `ValueError` if a bit is `X`/`Z`) | `dut.x.value.integer` (deprecated) |
+| Read a multi-bit port, explicit | `dut.x.value.to_unsigned()`, `.to_signed()` (a `LogicArray`) | |
+| Read a **one-bit** port | `int(dut.irq.value)` or `dut.irq.value == 1` (its value is a `Logic`) | `dut.irq.value.to_unsigned()`: `Logic` has no such method (`AttributeError`) |
+| Check for `X`/`Z` | `dut.x.value.is_resolvable` | comparing to a string |
+| Compare | `dut.x.value == 0xA5`, `dut.irq.value == 1` | |
+| Write a port | `dut.x.value = 5`; takes effect at the end of the current time step, so read the effect after the next `await RisingEdge(dut.clk)` | writing and reading in the same step |
+| One bit, a slice of a vector | `dut.x.value[0]` is a `Logic`; `dut.x.value[7:4]` is a `LogicArray` | |
+| Build a vector | `from cocotb.types import LogicArray, Range`; `LogicArray.from_unsigned(5, 8)`, `LogicArray(0xA5, Range(7, 0))` | `BinaryValue` / `cocotb.binary` (removed) |
+| Clock | `Clock(dut.clk, 10, unit="ns")`, started with `cocotb.start_soon(clock.start())` | `units=` (deprecated), `cocotb.fork`, `@cocotb.coroutine` (removed) |
+| Wait | `await RisingEdge(dut.clk)`, `await ClockCycles(dut.clk, n)`, `await Timer(10, unit="ns")` | `yield` |
+| Start a task | `task = cocotb.start_soon(coro())`; `await cocotb.start(coro())` runs it now; `task.cancel()` | `cocotb.fork` |
+| Fail a test | a plain `assert cond, "message"` | raising `TestFailure` |
+| Time limit for a test | `@cocotb.test(timeout_time=50, timeout_unit="us")` | a hand-made counter loop |
 
 How to write it:
 

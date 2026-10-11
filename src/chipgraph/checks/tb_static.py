@@ -309,6 +309,47 @@ def _port_issues(tree: ast.Module, rel: str, allowed: frozenset[str]) -> list[Is
     return issues
 
 
+# --- cocotb 2.x types ------------------------------------------------------------------------
+
+_ARRAY_ONLY = frozenset(
+    {"to_unsigned", "to_signed", "to_bytes", "binstr", "integer", "signed_integer"}
+)
+"""Methods of `LogicArray` that a one-bit signal's value (a `Logic`) does not have."""
+
+
+def _logic_issues(
+    tree: ast.Module, rel: str, widths: Mapping[str, int | str | None]
+) -> list[Issue]:
+    """`dut.<port>.value.to_unsigned()` on a one-bit port: its value is a `Logic`, which has no
+    such method (cocotb 2.x), so the test would die with an AttributeError in the simulator."""
+    issues: list[Issue] = []
+    duts = _dut_names(tree)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and node.attr in _ARRAY_ONLY):
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Attribute) and value.attr == "value"):
+            continue
+        port = value.value
+        if (
+            isinstance(port, ast.Attribute)
+            and isinstance(port.value, ast.Name)
+            and port.value.id in duts
+            and widths.get(port.attr) == 1
+        ):
+            issues.append(
+                _issue(
+                    rel,
+                    node.lineno,
+                    "tb_static.logic_method",
+                    f"{port.value.id}.{port.attr}.value.{node.attr}: {port.attr} is one bit wide, "
+                    f"so its value is a `Logic`, which has no `{node.attr}`; use "
+                    f"`int({port.value.id}.{port.attr}.value)`",
+                )
+            )
+    return issues
+
+
 # --- requirements --------------------------------------------------------------------------
 
 
@@ -451,6 +492,7 @@ def static_issues(
             n for n in (interface.clock, interface.reset) if n
         }
         issues.extend(_port_issues(tree, rel, frozenset(names) | allow))
+        issues.extend(_logic_issues(tree, rel, {p.name: p.width for p in interface.ports}))
     issues.extend(_requirement_issues(rel, text, tree, model, block))
     return sorted(issues, key=lambda i: (i.line or 0, i.rule, i.msg))
 
