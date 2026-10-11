@@ -7,9 +7,14 @@
 
 BLOCKS := timer gpio top
 
+# The wrappers of a block, each linted as its own top with filelists/<wrapper>.f: the
+# generated wrapper plus the vendor IP's filelist (vendor/<ip>/<ip>.f).
+WRAPPERS_top := tiny_fifo_wrap
+WRAPPER_LINT := verilator --lint-only -Wall
+
 .PHONY: lint lint-all clean
 
-# lint: run Verilator in lint-only mode over one block's filelist.
+# lint: run Verilator in lint-only mode over one block's filelist, then each of its wrappers.
 #   make lint BLOCK=timer
 lint:
 	@if [ -z "$(BLOCK)" ]; then \
@@ -17,6 +22,10 @@ lint:
 		exit 2; \
 	fi
 	verilator --lint-only -Wall -f filelists/$(BLOCK).f --top-module tiny_$(BLOCK)
+	@for w in $(WRAPPERS_$(BLOCK)); do \
+		echo "$(WRAPPER_LINT) -f filelists/$$w.f --top-module $$w"; \
+		$(WRAPPER_LINT) -f filelists/$$w.f --top-module $$w || exit 1; \
+	done
 
 lint-all:
 	@for b in $(BLOCKS); do \

@@ -47,7 +47,7 @@ def test_byte_identical_files(tmp_path: Path) -> None:
 def test_ignore_globs_exclude_vendor(tmp_path: Path) -> None:
     """A duplicate under a `vendor` path is ignored by default."""
     root = tinysoc_project(tmp_path)
-    (root / "vendor").mkdir()
+    (root / "vendor").mkdir(exist_ok=True)
     (root / "vendor" / "tiny_gpio.sv").write_text(
         "module tiny_gpio (input logic clk); endmodule\n", encoding="utf-8"
     )

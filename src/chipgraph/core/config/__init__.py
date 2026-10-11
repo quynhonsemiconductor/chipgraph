@@ -46,6 +46,7 @@ from chipgraph.core.config.models import (
     TargetCfg,
     TemplatesCfg,
     UserConfig,
+    WrapperCfg,
 )
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "TargetCfg",
     "TemplatesCfg",
     "UserConfig",
+    "WrapperCfg",
     "builtin_data_dir",
     "find_profile",
     "load",

@@ -130,7 +130,12 @@ def _resolver_for(ctx: AppContext, rules: Iterable[RuleSpec] | None = None) -> F
             return expand_plans(ctx, rules)
 
         plan_modules = _expand
-    return _ProfileForeach(ctx.require_profile().profile.blocks, plan_modules)
+    resolver: ForeachResolver = _ProfileForeach(ctx.require_profile().profile.blocks, plan_modules)
+    from chipgraph.packs.digital_rtl.wrapper.resolver import SELECTORS, WrapperForeach
+
+    if any(rule.foreach in SELECTORS for rule in rules):  # `wrappers` (M2-12)
+        resolver = WrapperForeach(resolver, ctx.require_profile().profile)
+    return resolver
 
 
 def agent_executor(ctx: AppContext) -> Executor:

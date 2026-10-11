@@ -36,6 +36,8 @@ class _Modules:
     def expand_entries(self, expr: str) -> list[ForeachEntry]:
         if expr == "blocks":
             return [ForeachEntry(params={"block": "pwm"})]
+        if expr.startswith("wrappers"):
+            return []
         return [
             ForeachEntry(
                 params={"block": "pwm", "module": "tiny_pwm"},

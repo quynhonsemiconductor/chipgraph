@@ -1,0 +1,35 @@
+# The generated wrapper: emacs verilog-mode expands a wrapper's source (task M2-12).
+#
+# For each wrapper (`foreach: wrappers.vendor`: the same instances as `digital-rtl/wrapper`,
+# with the IP's `vendor_files` as inputs, so a change to the IP regenerates the wrapper),
+# the tool `emacs_auto` runs `emacs -Q --batch <copy> -f verilog-batch-auto` on a scratch
+# copy of the source, with verilog-mode's variables pinned, and writes `<wrapper>.sv`
+# under a "generated, do not edit" header that names the source and its sha256 (with the
+# `generated` check's marker). Same source, same IP: same bytes. Missing emacs or
+# verilog-mode is an `error` with the install hint.
+#
+# Checks, each an adapter id of the profile:
+#   wrap_check  the regeneration equals the written file, and the expanded instance
+#               connects every IP port through the template (`{ use: wrap_check }`)
+#   format      the project's formatter, for a `files` arg only: without one it is skipped
+#               for a wrapper task (the layout of a generated wrapper is verilog-mode's,
+#               and reformatting it would make it differ from what the generator writes)
+#   lint        the project's lint of the block (tinysoc: `make lint BLOCK={block}`, which
+#               also lints the block's wrappers)
+#   naming      the project's naming rule, on the generated file too
+rule: wrapper_gen
+kind: gen
+description: >-
+  Expand the wrapper's source with emacs verilog-mode (AUTOINST, AUTOWIRE, AUTOINPUT, ...)
+  into the wrapper the build compiles, marked as generated.
+foreach: wrappers.vendor
+inputs:
+  - artifact: "rtl/emacs/{wrapper}.src.sv"
+outputs:
+  - "rtl/{wrapper}.sv"
+run:
+  use: emacs_auto
+  args:
+    src: "rtl/emacs/{wrapper}.src.sv"
+    out: "rtl/{wrapper}.sv"
+checks: [wrap_check, format, lint, naming]

@@ -28,7 +28,9 @@ block's spec side with the requirements cut to the module's, ``interface/<module
 to the `rtl` section, and the `rtl` section holds the module's approved plan entry, its
 requirements, interface and dependencies, the naming rules as text and the style
 exemplars (`chipgraph.packs.digital_rtl.rtl.context`). An exemplar the role must not read
-is refused there. No other project file's text.
+is refused there. No other project file's text. A wrapper's task (a `wrapper` param,
+M2-12) gets `rtl.wrapper` instead: the IP's port declaration, the wrapper's ports and the
+naming rules (`chipgraph.packs.digital_rtl.wrapper.context`), never the IP's body.
 """
 
 from __future__ import annotations
@@ -189,8 +191,13 @@ class RtlAuthorContext:
         self.is_denied = is_denied
         self.block = instance.params.get("block")
         self.module = instance.params.get("module")
+        self.wrapper = instance.params.get("wrapper")
         self.model = _load_model(ctx)
         self._section: dict[str, Any] | None = None
+        if self.wrapper is not None:  # a wrapper's source (M2-12): `rtl.wrapper`
+            from chipgraph.packs.digital_rtl.wrapper.context import INSTRUCTIONS
+
+            self.instructions = INSTRUCTIONS
 
     def section(self) -> dict[str, Any]:
         """The `rtl` section (built once)."""
@@ -199,6 +206,18 @@ class RtlAuthorContext:
 
             if self.block is None:
                 self._section = {"note": "this task has no block param"}
+            elif self.wrapper is not None:
+                from chipgraph.packs.digital_rtl.wrapper.context import wrapper_author_context
+
+                self._section = wrapper_author_context(
+                    self.ctx.root,
+                    self.ctx.require_profile(),
+                    self.rules,
+                    params=dict(self.instance.params),
+                    outputs=[r.path for r in self.instance.outputs if r.path is not None],
+                    model=self.model,
+                    is_denied=self.is_denied,
+                )
             else:
                 self._section = rtl_author_context(
                     self.ctx.root,
@@ -221,6 +240,10 @@ class RtlAuthorContext:
 
         entry: dict[str, Any] = {"model_key": key}
         kind, _, name = key.partition("/")
+        if kind == "interface" and name and self.wrapper is not None:
+            entry["section"] = "rtl.wrapper.interface"
+            entry["note"] = "see the context's `rtl.wrapper.interface` and `rtl.wrapper.vendor`"
+            return entry
         if kind == "interface" and name:
             entry["section"] = "rtl.interface"
             entry["note"] = "see the context's `rtl.interface` and `rtl.dependencies`"

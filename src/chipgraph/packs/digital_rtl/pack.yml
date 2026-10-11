@@ -8,9 +8,14 @@ description: >-
   `plan:{block}` on `digital-rtl/plan_expand`, after which rules may say
   `foreach: plan.modules`; and the RTL of each planned module: the rule
   `digital-rtl/rtl_module` (role `rtl-author`, which never sees a testbench; skills
-  `lang-sv/rtl` and `org/naming`; checks format, lint, naming, style, hardcode).
+  `lang-sv/rtl` and `org/naming`; checks format, lint, naming, style, hardcode); and the
+  wrappers around vendor IP in the emacs verilog-mode AUTO style: the rule
+  `digital-rtl/wrapper` (role `rtl-author`, skill `rtl/wrapper-auto`) writes a wrapper's
+  source, `digital-rtl/wrapper_gen` (tool `emacs_auto`) expands it, check `wrap_check`.
 provides:
   rules:
     - rules
+    - wrapper/rules
   skills:
     - skills
+    - wrapper/skills

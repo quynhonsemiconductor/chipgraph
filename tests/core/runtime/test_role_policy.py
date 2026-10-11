@@ -91,7 +91,14 @@ def test_the_review_rule_of_the_digital_rtl_pack_passes() -> None:
     packs_dir = builtin_packs_dir()
     assert packs_dir is not None
     rules = load_pack_rules(discover_packs([packs_dir])["digital-rtl"])
-    blocks = StaticForeach({"blocks": [{"block": "timer"}, {"block": "gpio"}], "plan.modules": []})
+    blocks = StaticForeach(
+        {
+            "blocks": [{"block": "timer"}, {"block": "gpio"}],
+            "plan.modules": [],
+            "wrappers": [],
+            "wrappers.vendor": [],
+        }
+    )
     graph = build_graph(rules, blocks)
     check_agent_rules(graph.rules, graph.instances.values())
     assert sorted(i for i in graph.instances if i.startswith("digital-rtl/review")) == [
