@@ -1,0 +1,350 @@
+# Critic review evals, second set (review-holdout2): sample diffs on a copy of examples/tinysoc.
+#
+# Written blind: its author never read the Critic's prompt, role data, review skill,
+# context builder, review tests, the ReviewReport schema or any real-run report. Only the
+# data format of `defects.yml`, `grade.py`, the eval harness and examples/tinysoc (RTL and
+# specs) were read. Every label comes from the planted fault and the spec line it
+# contradicts, never from a model. Nobody tunes the Critic on this set: once anything is
+# changed because of a result on it, it is spent.
+#
+# Schema: the one of `defects.yml` (same fields, same grader). Ids `r2-NN` (defect) and
+# `r2-cN` (clean). The defect classes are the categories `defects.yml` uses. No defect
+# repeats one of `defects.yml`: every planted construct is new, no (file, line, class) is
+# the same, and no spec line it contradicts is one of the first set's.
+#
+# Grading (grade.py --set defects2): a defect is caught when one comment is on `at.file`,
+# within 3 lines of `at.line`, and its category is `class` (or one of `also`) or its
+# `req_id` is `req`. A clean sample is a false alarm when its review has any `blocker` or
+# `major` comment. The thresholds are the first set's, unchanged: the suite passes with
+# recall >= 70 % (at least 12 of the 17 defects) and at most 1 false alarm on the 8 clean
+# samples. Two clean samples look suspicious but are correct per the spec (r2-c7, r2-c8):
+# a Critic that flags them is wrong.
+schema_version: 1
+project: examples/tinysoc
+
+samples:
+  - id: r2-01
+    block: timer
+    class: reset
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:44
+    spec_has: "asynchronous active-low reset"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "  always_ff @(posedge clk or negedge rst_n) begin\n"
+        replace: "  always_ff @(posedge clk) begin\n"
+    at: {file: rtl/tiny_timer.sv, line: 26, has: "always_ff @(posedge clk) begin"}
+    description: The timer's reset became synchronous (rst_n left out of the sensitivity list); rst_n is an asynchronous reset.
+
+  - id: r2-02
+    block: gpio
+    class: reset
+    req: null
+    spec: doc/specs/TINY_GPIO_MAS.md:45
+    spec_has: "asynchronous active-low reset"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "    if (!rst_n) begin\n"
+        replace: "    if (rst_n) begin\n"
+    at: {file: rtl/tiny_gpio.sv, line: 30, has: "if (rst_n) begin"}
+    description: The reset branch tests rst_n high, so DATA_OUT and DIR are held in reset whenever reset is deasserted.
+
+  - id: r2-03
+    block: timer
+    class: counter
+    also: [width, spec_mismatch]
+    req: REQ-TIM-001
+    spec: doc/specs/TINY_TIMER_MAS.md:15
+    spec_has: "free-running 32-bit counter"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "        count_q <= count_q + 32'd1;\n"
+        replace: "        count_q <= (count_q == 32'h0000_FFFF) ? 32'd0 : count_q + 32'd1;\n"
+    at: {file: rtl/tiny_timer.sv, line: 34, has: "32'h0000_FFFF"}
+    description: COUNT wraps to 0 after 0xFFFF, a 16-bit counter; the counter is a free-running 32-bit one.
+
+  - id: r2-04
+    block: timer
+    class: counter
+    also: [spec_mismatch, missing_req]
+    req: REQ-TIM-002
+    spec: doc/specs/TINY_TIMER_MAS.md:71
+    spec_has: REQ-TIM-002
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      if (enable_q) begin\n        count_q <= count_q + 32'd1;\n      end\n\n      if (wr_en) begin\n"
+        replace: "      if (wr_en) begin\n"
+      - file: rtl/tiny_timer.sv
+        find: "        endcase\n      end\n\n      if (enable_q && count_q"
+        replace: "        endcase\n      end\n\n      if (enable_q) begin\n        count_q <= count_q + 32'd1;\n      end\n\n      if (enable_q && count_q"
+    at: {file: rtl/tiny_timer.sv, line: 48, has: "count_q <= count_q + 32'd1;"}
+    description: The increment moved after the register writes, so while enabled it overrides a write to COUNT, which is lost.
+
+  - id: r2-05
+    block: timer
+    class: spec_mismatch
+    also: [counter, missing_req]
+    req: REQ-TIM-001
+    spec: doc/specs/TINY_TIMER_MAS.md:68
+    spec_has: REQ-TIM-001
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      if (enable_q) begin\n        count_q"
+        replace: "      if (!enable_q) begin\n        count_q"
+    at: {file: rtl/tiny_timer.sv, line: 33, has: "if (!enable_q) begin"}
+    description: The count enable is inverted - COUNT runs while CTRL.EN = 0 and holds while it is 1.
+
+  - id: r2-06
+    block: timer
+    class: spec_mismatch
+    also: [missing_req]
+    req: REQ-TIM-003
+    spec: doc/specs/TINY_TIMER_MAS.md:49
+    spec_has: "level interrupt, high while pending"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "  assign irq = irq_q;\n"
+        replace: "  assign irq = enable_q && (count_q == compare_q);\n"
+    at: {file: rtl/tiny_timer.sv, line: 66, has: "assign irq = enable_q && (count_q == compare_q);"}
+    description: irq is the raw compare match, a one-cycle pulse, instead of the pending flag that stays high until cleared.
+
+  - id: r2-07
+    block: gpio
+    class: spec_mismatch
+    also: [missing_req]
+    req: REQ-GPIO-001
+    spec: doc/specs/TINY_GPIO_MAS.md:47
+    spec_has: "write strobe for `addr`"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "    end else if (wr_en) begin\n"
+        replace: "    end else begin\n"
+    at: {file: rtl/tiny_gpio.sv, line: 33, has: "end else begin"}
+    description: The register writes are no longer gated by wr_en, so every cycle at offset 0x0 or 0x2 overwrites DATA_OUT or DIR.
+
+  - id: r2-08
+    block: gpio
+    class: register_map
+    also: [missing_req, spec_mismatch]
+    req: null
+    spec: doc/specs/TINY_GPIO_MAS.md:62
+    spec_has: "`DATA_OUT` | 7:0 | RW"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "      2'd0:    rdata = {24'd0, out_q};\n"
+        replace: ""
+    at: {file: rtl/tiny_gpio.sv, line: 44, has: "2'd1:    rdata = {24'd0, pin_in};"}
+    description: The read mux lost DATA_OUT, so the RW register at offset 0x0 reads 0.
+
+  - id: r2-09
+    block: top
+    class: register_map
+    req: null
+    spec: chip.yml:21
+    spec_has: "size: 4"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  assign timer_wr_en = wr_en && (block_sel == kSelTimer);\n"
+        replace: "  assign timer_wr_en = wr_en && (addr <= 4'd4);\n"
+    at: {file: rtl/tiny_top.sv, line: 34, has: "addr <= 4'd4"}
+    description: The timer's write window ends one word late (0x0-0x4), so a write to GPIO DATA_OUT at 0x4 also loads timer COUNT.
+
+  - id: r2-10
+    block: top
+    class: bit_order
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:111
+    spec_has: "decoded from the low 2 bits of the word offset"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  assign inner_addr = addr[1:0];\n"
+        replace: "  assign inner_addr = {addr[0], addr[1]};\n"
+    at: {file: rtl/tiny_top.sv, line: 32, has: "{addr[0], addr[1]}"}
+    description: The block register address has its two bits swapped, so offsets 0x1 and 0x2 trade places in both blocks.
+
+  - id: r2-11
+    block: timer
+    class: bit_order
+    also: [spec_mismatch]
+    req: null
+    spec: doc/specs/TINY_TIMER_MAS.md:61
+    spec_has: "`EN` | 0 | RW"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "            enable_q <= wdata[0];\n"
+        replace: "            enable_q <= wdata[1];\n"
+    at: {file: rtl/tiny_timer.sv, line: 42, has: "enable_q <= wdata[1];"}
+    description: CTRL.EN is written from bit 1 (the IRQ_CLR bit) instead of bit 0.
+
+  - id: r2-12
+    block: top
+    class: width
+    req: null
+    spec: chip.yml:8
+    spec_has: "data_width: 32"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  logic [31:0] timer_rdata;\n"
+        replace: "  logic [15:0] timer_rdata;\n"
+    at: {file: rtl/tiny_top.sv, line: 28, has: "logic [15:0] timer_rdata;"}
+    description: The top holds the timer's read data in 16 bits, so COUNT and COMPARE lose their upper half on the 32-bit bus.
+
+  - id: r2-13
+    block: timer
+    class: latch
+    also: [spec_mismatch, missing_req]
+    req: REQ-TIM-005
+    spec: doc/specs/TINY_TIMER_MAS.md:83
+    spec_has: "offset `0x3` reads 0"
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      default: rdata = 32'd0;\n"
+        replace: "      default: ;\n"
+    at: {file: rtl/tiny_timer.sv, line: 62, has: "default: ;"}
+    description: The read mux default assigns nothing, so rdata latches for offset 0x3 instead of reading 0.
+
+  - id: r2-14
+    block: top
+    class: hard_coded
+    also: [spec_mismatch]
+    req: null
+    spec: doc/specs/TINY_GPIO_MAS.md:46
+    spec_has: "word register address"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "      .addr    (inner_addr),\n"
+        replace: "      .addr    (2'd0),\n"
+    at: {file: rtl/tiny_top.sv, line: 58, has: ".addr    (2'd0),"}
+    description: The GPIO's register address is tied to 0, so every GPIO access hits DATA_OUT.
+
+  - id: r2-15
+    block: gpio
+    class: hard_coded
+    also: [spec_mismatch, missing_req]
+    req: REQ-GPIO-003
+    spec: doc/specs/TINY_GPIO_MAS.md:52
+    spec_has: "per-bit direction, from `DIR`"
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "  assign pin_dir = dir_q;\n"
+        replace: "  assign pin_dir = 8'hFF;\n"
+    at: {file: rtl/tiny_gpio.sv, line: 52, has: "assign pin_dir = 8'hFF;"}
+    description: pin_dir is tied to all outputs instead of following the DIR register.
+
+  - id: r2-16
+    block: top
+    class: missing_req
+    also: [spec_mismatch]
+    req: null
+    spec: chip.yml:25
+    spec_has: "name: irq"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "      .irq   (timer_irq)\n"
+        replace: "      .irq   ()\n"
+    at: {file: rtl/tiny_top.sv, line: 52, has: ".irq   ()"}
+    description: The timer's interrupt is left unconnected, so the top-level timer_irq is never driven.
+
+  - id: r2-17
+    block: top
+    class: spec_mismatch
+    also: [register_map]
+    req: null
+    spec: chip.yml:20
+    spec_has: "base: 0x0"
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "      .wr_en (timer_wr_en),\n"
+        replace: "      .wr_en (gpio_wr_en),\n"
+      - file: rtl/tiny_top.sv
+        find: "      .wr_en   (gpio_wr_en),\n"
+        replace: "      .wr_en   (timer_wr_en),\n"
+    at: {file: rtl/tiny_top.sv, line: 49, has: ".wr_en (gpio_wr_en),"}
+    description: The two write strobes are swapped between the instances, so writes to the timer window land in the GPIO and back.
+
+  - id: r2-c1
+    block: top
+    clean: true
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  assign block_sel  = addr[3:2];\n"
+        replace: "  // addr[3:2] selects the block: 0 = timer (words 0x0-0x3), 1 = gpio (words 0x4-0x7).\n  assign block_sel  = addr[3:2];\n"
+    description: Comment only - the block select is documented with the address windows of chip.yml.
+
+  - id: r2-c2
+    block: timer
+    clean: true
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "    input  logic         wr_en,\n    input  logic [31:0]  wdata,\n    output logic [31:0]  rdata,\n    output logic         irq\n"
+        replace: "    input  logic        wr_en,\n    input  logic [31:0] wdata,\n    output logic [31:0] rdata,\n    output logic        irq\n"
+    description: Whitespace only - the port list is aligned in one column.
+
+  - id: r2-c3
+    block: gpio
+    clean: true
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "  logic [7:0] out_q;\n"
+        replace: "  logic [7:0] data_out_q;\n"
+      - file: rtl/tiny_gpio.sv
+        find: "      out_q <= 8'd0;\n"
+        replace: "      data_out_q <= 8'd0;\n"
+      - file: rtl/tiny_gpio.sv
+        find: "        2'd0: out_q <= wdata[7:0];\n"
+        replace: "        2'd0: data_out_q <= wdata[7:0];\n"
+      - file: rtl/tiny_gpio.sv
+        find: "      2'd0:    rdata = {24'd0, out_q};\n"
+        replace: "      2'd0:    rdata = {24'd0, data_out_q};\n"
+      - file: rtl/tiny_gpio.sv
+        find: "  assign pin_out = out_q;\n"
+        replace: "  assign pin_out = data_out_q;\n"
+    description: Rename - the local register out_q is renamed data_out_q at every use.
+
+  - id: r2-c4
+    block: top
+    clean: true
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  always_comb begin\n    unique case (block_sel)\n      kSelTimer: rdata = timer_rdata;\n      kSelGpio:  rdata = gpio_rdata;\n      default:   rdata = 32'd0;\n    endcase\n  end\n"
+        replace: "  assign rdata = (block_sel == kSelTimer) ? timer_rdata\n               : (block_sel == kSelGpio)  ? gpio_rdata\n               : 32'd0;\n"
+    description: Refactor - the top read mux is written as a conditional assign with the same three outcomes.
+
+  - id: r2-c5
+    block: gpio
+    clean: true
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "        2'd0: out_q <= wdata[7:0];\n"
+        replace: "        2'd0: out_q <= wdata[7:0];\n        2'd1: ;  // DATA_IN is read-only: a write is ignored\n"
+    description: Correct change - the write decode states that DATA_IN (RO) ignores a write.
+
+  - id: r2-c6
+    block: gpio
+    clean: true
+    edits:
+      - file: rtl/tiny_gpio.sv
+        find: "  assign pin_dir = dir_q;\n"
+        replace: "  assign pin_dir = dir_q;\n\n`ifndef SYNTHESIS\n  // REQ-GPIO-002, REQ-GPIO-003: no readback has a bit set above bit 7.\n  always_comb begin\n    assert (rdata[31:8] == 24'd0);\n  end\n`endif\n"
+    description: Added assertion - simulation checks that every GPIO readback is 0 above bit 7.
+
+  - id: r2-c7
+    block: top
+    clean: true
+    edits:
+      - file: rtl/tiny_top.sv
+        find: "  localparam logic [1:0] kSelGpio = 2'd1;\n"
+        replace: "  localparam logic [3:0] kGpioBase = 4'h4;\n  localparam logic [1:0] kSelGpio = kGpioBase[3:2];\n"
+    description: Looks suspicious, correct - the GPIO select is derived from base 0x4 (chip.yml), whose bits 3:2 are 1.
+
+  - id: r2-c8
+    block: timer
+    clean: true
+    edits:
+      - file: rtl/tiny_timer.sv
+        find: "      if (enable_q) begin\n        count_q <= count_q + 32'd1;\n      end\n"
+        replace: "      if (wr_en && addr == 2'd0) begin\n        count_q <= wdata;  // a COUNT write wins over the increment\n      end else if (enable_q) begin\n        count_q <= count_q + 32'd1;\n      end\n"
+      - file: rtl/tiny_timer.sv
+        find: "          2'd0: count_q <= wdata;\n"
+        replace: "          2'd0: ;  // COUNT: loaded above\n"
+    description: Looks suspicious, correct - the COUNT load moves out of the write decode; a write still replaces the count (REQ-TIM-002) and is not incremented.
