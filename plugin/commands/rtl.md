@@ -22,6 +22,12 @@ If it is empty, print `usage: /chipgraph:rtl <block>` and stop.
       testbench, `chipgraph:critic` for the review), `model` = the entry's `model`,
       `description` = "chipgraph <task_id>", `prompt` = the entry's `prompt`, unchanged.
       Start all of them in one message so they run in parallel; wait for every one.
+      A best-of-N entry has a `candidate` field (1..N): the engine dispatches N
+      candidates of the same task together, each with its own workspace and `variant`
+      hint; start all N in one message and submit each by its `task_id` (which includes
+      the candidate suffix `#N`). After all candidates submit, the engine selects the
+      best; the `selection` field in the submit answer names the winner and how it was
+      decided.
    d. For every finished subagent call `mcp__plugin_chipgraph_chipgraph__submit` with
       its `task_id` and `result` = `{"status": "done" or "needs_human",
       "files_written": [...], "assumptions": [...], "open_questions": [...]}` from its

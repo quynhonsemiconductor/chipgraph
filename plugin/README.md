@@ -290,6 +290,36 @@ plugin's hooks, not in agent frontmatter, because frontmatter hooks do not run u
   tool but `get_context`;
 - **fail closed**: any error (bad input, broken state) denies, with exit code 2.
 
+**Isolated workspaces** (M2-11c): when `fanout.isolate: true` in the profile, each agent
+task runs in its own workspace outside the user's tree (a git worktree at HEAD under
+`<state>/tmp/fanout/<run>/<task>/` with the task's inputs seeded in). The subagent writes
+only there; the user's files stay unchanged until the engine accepts the task and copies
+**its outputs only** back to the user's tree. The copy-back refuses if the user edited
+any output file since the workspace was seeded (a concurrent edit conflict): the task is
+rejected with an `infra` label and re-dispatched. Every ending (accept, reject, stop)
+removes the workspace. The guard's decision table for isolated mode:
+
+| Path | Agent bound? | Decision |
+|---|---|---|
+| `<workspace>/<allowed_write>` | yes | allow |
+| `<workspace>/<other>` | yes | deny ("not an output") |
+| `<project>/<any>` | yes | deny ("isolated: write to the workspace") |
+| outside workspace and project | yes | deny ("outside the workspace") |
+
+**Best-of-N selection** (M2-11c): for a rule that opts in (`best_of: N` as an instance
+parameter, or `select.rules[rule_id]: N` in the profile), `next_task` hands out N
+candidate entries for that task, each with its own workspace, `candidate: 1..N` and
+`variant` (a hint in the prompt context for different approaches). Start all N in one
+message; submit each by its `task_id` (the base task id plus `#N`). After all candidates
+submit, the engine runs `select_best`: the candidate that passed beats one that failed,
+then fewer errors, fewer warnings, and on a tie the lowest candidate id. Only the
+winner's outputs are copied to the user's tree; the other workspaces are removed. The
+journal gets one event per candidate and a `select` event (the winner, how it was
+decided, and the spend). The round counts as one dispatch of the base task; if no
+candidate passes, the next `next_task` hands out N fresh candidates (within the same
+dispatch bound). Acceptance run: `docs/isolation-claude-code/run.sh
+/tmp/cg-isolation-sonnet`.
+
 **Limit:** the guard sees tool calls, not prompts. It cannot stop the *main session* from
 reading RTL itself and pasting it into the prompt of a `tb-author` subagent: that text reaches
 the subagent without any tool call. The tb-author independence rule therefore holds for the

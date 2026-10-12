@@ -9,6 +9,8 @@ cached in that run's `IdempotencyStore`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from chipgraph.app.context import AppContext
 from chipgraph.app.findings import findings_from_check, layer_for_check
 from chipgraph.core.contracts import CheckResult, CheckSpec, Issue, RuleInstance
@@ -57,10 +59,17 @@ def _cap_severity(result: CheckResult, cap: object) -> CheckResult:
 class ProfileCheckRunner:
     """Runs a check id through the adapter `.chipgraph.yml` configures for it."""
 
-    def __init__(self, ctx: AppContext, *, run_id: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: AppContext,
+        *,
+        run_id: str | None = None,
+        root_override: Path | None = None,
+    ) -> None:
         self.ctx = ctx
         self.run_id = run_id
         self.finding_store = FindingStore(ctx.layout)
+        self._root = root_override if root_override is not None else ctx.root
 
     async def run(self, check_id: str, instance: RuleInstance) -> CheckResult:
         resolved = self.ctx.require_profile()
@@ -114,7 +123,7 @@ class ProfileCheckRunner:
         args = {k: v for k, v in cfg.model_dump().items() if k not in _RUNNER_KEYS}
         spec = CheckSpec(id=check_id, capability=check_id, adapter=cfg.use, args=args)
         tool_ctx = ToolContext(
-            repo_root=self.ctx.root,
+            repo_root=self._root,
             runner=self.ctx.registry.get("runner", "local"),
             env=dict(profile.env.vars),
             params=dict(instance.params),

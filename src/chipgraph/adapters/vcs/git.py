@@ -212,6 +212,14 @@ class GitVcs:
 
         return tuple(sorted(paths))
 
+    def status_all(self, root: Path) -> tuple[str, ...]:
+        """Every path that differs from HEAD in the tree at `root` (each untracked file too).
+
+        Ignored files are not listed.
+        """
+        status = _run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root)
+        return tuple(sorted(_parse_porcelain_z(status.stdout)))
+
     def create_workspace(self, root: Path, name: str) -> Path:
         """Create a detached worktree named `name` under the workspaces directory."""
         if not _NAME_RE.match(name):

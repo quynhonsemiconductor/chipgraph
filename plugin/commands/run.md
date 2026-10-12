@@ -22,6 +22,10 @@ Repeat, at most 12 rounds (one round = one `next_task` call):
    wait until every one of them has finished.
    An `in_progress` entry was dispatched before and never submitted. If none of your
    subagents is working on it, start one for it the same way.
+   A best-of-N entry has a `candidate` field (1..N): the engine dispatches N candidates
+   of the same task together, each with its own workspace and `variant` hint; start all
+   N in one message and submit each by its `task_id` (which includes the candidate
+   suffix `#N`). After all candidates of a task submit, the engine selects the best.
 4. For every task a subagent finished, call `mcp__plugin_chipgraph_chipgraph__submit`
    with its `task_id` and `result` built from the subagent's report:
    `{"status": "done" or "needs_human", "files_written": [...], "assumptions": [...],

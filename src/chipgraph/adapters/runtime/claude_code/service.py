@@ -92,6 +92,22 @@ from chipgraph.adapters.runtime.claude_code.guarded import (
     RtlAuthorContext,
     guarded_context,
 )
+from chipgraph.adapters.runtime.claude_code.isolation import (
+    CopyBackResult,
+    best_of_n,
+    candidate_id,
+    check_overlapping_writes,
+    copy_outputs_back,
+    create_workspace,
+    diff_workspace,
+    input_paths_for,
+    is_candidate_id,
+    max_parallel_limit,
+    parse_candidate_id,
+    remove_workspace,
+    should_isolate,
+    sweep_workspaces,
+)
 from chipgraph.adapters.runtime.claude_code.previous import (
     MoveToken,
     PreviousOutputs,
@@ -116,6 +132,16 @@ from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, FeedbackFilter, atte
 from chipgraph.core.engine.gate import gate_id_for
 from chipgraph.core.engine.graph import BuildGraph, kind_for
 from chipgraph.core.engine.scheduler import RunSummary, Scheduler
+from chipgraph.core.engine.select import (
+    VARIANTS,
+    Candidate,
+    Selection,
+    Spend,
+    error_count,
+    plan_budget,
+    select_best,
+    warning_count,
+)
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
 from chipgraph.core.plugin_api.pack import discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
@@ -129,6 +155,7 @@ from chipgraph.core.runtime import (
     state_key,
     task_for,
 )
+from chipgraph.core.runtime.queue import TaskBudgetState
 from chipgraph.core.runtime.roles import (
     ReviewReport,
     RoleSpec,
@@ -144,7 +171,7 @@ from chipgraph.core.runtime.roles import (
     task_denied_reads,
 )
 from chipgraph.core.state import journal as journal_mod
-from chipgraph.core.state.artifacts import hash_file
+from chipgraph.core.state.artifacts import ArtifactStore, hash_file
 from chipgraph.core.state.handoff import build_handoff, write_handoff
 
 _MAX_INPUT_CHARS = 200_000
@@ -181,6 +208,78 @@ class SubmitReport(BaseModel):
     )
 
 
+# --- Best-of-N round tracking -----------------------------------------------------------
+
+
+class CandidateState(BaseModel):
+    """State of one candidate in a best-of-N round."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate: int = Field(ge=1, description="Candidate number (1..N).")
+    variant: str = Field(description="The variant hint for this candidate.")
+    task_id: str = Field(description="The candidate's task id (base_task#candidate).")
+    workspace: str = Field(description="Absolute path to the candidate's workspace.")
+    status: Literal["dispatched", "submitted", "done", "failed", "cancelled"] = Field(
+        default="dispatched"
+    )
+    checks: tuple[CheckResult, ...] = Field(default=(), description="Check results.")
+    passed: bool = Field(default=False, description="Whether the candidate passed.")
+    errors: int = Field(default=0, ge=0)
+    warnings: int = Field(default=0, ge=0)
+    spend: Spend = Field(default_factory=Spend)
+
+
+class BestOfNRound(BaseModel):
+    """State of one best-of-N round for a rule instance.
+
+    Stored under <state>/runtime/best-of/<sha256(task_id)>.json while in progress.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = Field(default=1)
+    base_task_id: str = Field(description="The original task id (without candidate suffix).")
+    run_id: str = Field(description="The run that started this round.")
+    round_num: int = Field(ge=1, description="Round number (1-based).")
+    n: int = Field(ge=2, description="Number of candidates in this round.")
+    candidates: tuple[CandidateState, ...] = Field(description="State of each candidate.")
+    ledger_tries: int = Field(description="Total tries in the shared ledger.")
+    ledger_used: int = Field(default=0, ge=0, description="Tries used so far.")
+    winner: int | None = Field(default=None, description="Winning candidate number, if decided.")
+    selection: Selection | None = Field(default=None, description="The selection result.")
+    status: Literal["running", "selecting", "done", "failed"] = Field(default="running")
+
+
+def _best_of_path(ctx: AppContext, task_id: str) -> Path:
+    """Path to a best-of-N round state file."""
+    return ctx.layout.state_dir / "runtime" / "best-of" / f"{state_key(task_id)}.json"
+
+
+def _load_best_of_round(ctx: AppContext, task_id: str) -> BestOfNRound | None:
+    """Load a best-of-N round state, or None if not in a round."""
+    path = _best_of_path(ctx, task_id)
+    if not path.is_file():
+        return None
+    try:
+        return BestOfNRound.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _save_best_of_round(ctx: AppContext, round_state: BestOfNRound) -> None:
+    """Save a best-of-N round state."""
+    path = _best_of_path(ctx, round_state.base_task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(round_state.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _remove_best_of_round(ctx: AppContext, task_id: str) -> None:
+    """Remove a best-of-N round state file."""
+    path = _best_of_path(ctx, task_id)
+    path.unlink(missing_ok=True)
+
+
 # --- shared helpers ---------------------------------------------------------------------
 
 
@@ -210,6 +309,11 @@ def _graph(ctx: AppContext) -> BuildGraph:
 
 def _instance(graph: BuildGraph, task_id: str) -> tuple[RuleSpec, RuleInstance]:
     instance = graph.instances.get(task_id)
+    if instance is None and is_candidate_id(task_id):  # best-of-N: `<instance id>#<n>`
+        try:
+            instance = graph.instances.get(parse_candidate_id(task_id)[0])
+        except ValueError:
+            instance = None
     if instance is None:
         raise AppError(f"task {task_id!r} is no longer a rule instance of this project's graph")
     return graph.rules[instance.rule_id], instance
@@ -357,7 +461,19 @@ def _engine_outputs(graph: BuildGraph) -> set[str]:
     }
 
 
-def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> dict[str, Any]:
+def _task_entry(
+    ctx: AppContext,
+    queue: TaskQueue,
+    record: AgentTaskRecord,
+    *,
+    candidate: int | None = None,
+    variant: str | None = None,
+) -> dict[str, Any]:
+    """Build a task entry for the next_task response.
+
+    For best-of-N candidates, `candidate` is the candidate number (1..N) and `variant`
+    is the variant hint text.
+    """
     state = record.state
     if review_mod.is_review_role(find_role(record.role)):
         prompt = (
@@ -372,7 +488,7 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
             f"task_id={record.task_id!r}, then write only the files in its outputs."
         )
         extra = {}
-    return {
+    entry = {
         "task_id": record.task_id,
         "rule": record.rule_id,
         "role": record.role,
@@ -393,6 +509,11 @@ def _task_entry(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> d
         "prompt": prompt,
         **extra,
     }
+    # Add candidate info if this is a best-of-N candidate
+    if candidate is not None:
+        entry["candidate"] = candidate
+        entry["variant"] = variant or ""
+    return entry
 
 
 def _blocked(
@@ -569,6 +690,131 @@ def _revise_rejected(ctx: AppContext, scheduler: Scheduler, target: str) -> list
     return revised
 
 
+# --- Best-of-N dispatch helpers ---------------------------------------------------------
+
+
+def _dispatch_candidates(
+    ctx: AppContext,
+    queue: TaskQueue,
+    graph: BuildGraph,
+    base_record: AgentTaskRecord,
+    rule: RuleSpec,
+    instance: RuleInstance,
+    run_id: str,
+    baseline: dict[str, str],
+    n: int,
+) -> tuple[BestOfNRound, list[tuple[AgentTaskRecord, int, str]]]:
+    """Dispatch N candidates for a best-of-N round.
+
+    Returns the round state and list of (record, candidate_num, variant) tuples.
+    """
+    profile = ctx.require_profile().profile
+    vcs = ctx.registry.get("vcs", "git")
+    inputs = input_paths_for(instance)
+
+    # Plan the budget
+    budget_plan = plan_budget(
+        rule.budget,
+        requested=n,
+        cfg=profile.select,
+        max_cost=None,  # No cost cap in this runtime
+        variants=len(VARIANTS),
+    )
+    actual_n = budget_plan.n
+
+    # Compute round number: base record's attempts counts failed rounds, +1 for current
+    # A failed round increments attempts by 1, so round_num = attempts + 1
+    round_num = base_record.attempts + 1
+
+    # Get variant hints
+    variant_ids = list(VARIANTS.keys())[:actual_n]
+    variant_hints = [VARIANTS[vid] for vid in variant_ids]
+
+    # Create candidates
+    candidates: list[CandidateState] = []
+    dispatched: list[tuple[AgentTaskRecord, int, str]] = []
+
+    for i, (_vid, variant) in enumerate(zip(variant_ids, variant_hints, strict=False), 1):
+        cand_task_id = candidate_id(base_record.task_id, i, round_num)
+
+        # Create workspace for this candidate
+        try:
+            ws, seed_hashes = create_workspace(
+                ctx, vcs, run_id, cand_task_id, inputs, tuple(base_record.allowed_writes)
+            )
+        except Exception as exc:
+            # If workspace creation fails, clean up and raise
+            for _, cand_num, _ in dispatched:
+                cand_id = candidate_id(base_record.task_id, cand_num, round_num)
+                cand_rec = queue.get(cand_id)
+                if cand_rec and cand_rec.workspace:
+                    with contextlib.suppress(Exception):
+                        remove_workspace(ctx, vcs, cand_rec.workspace)
+            raise AppError(f"failed to create workspace for candidate {i}: {exc}") from exc
+
+        # Dispatch the candidate
+        try:
+            cand_record = queue.dispatch(
+                cand_task_id,
+                run_id=run_id,
+                baseline=baseline,
+                denied_reads=_denied_reads(ctx, graph, base_record),
+                workspace=str(ws),
+                seed_hashes=seed_hashes,
+            )
+        except QueueError:
+            # The candidate is a record of the same instance under its own id
+            from chipgraph.core.plugin_api.types import AgentTask
+
+            cand_task = AgentTask(
+                instance=instance,
+                role=base_record.role,
+                skills=base_record.skills,
+                allowed_writes=base_record.allowed_writes,
+                budget=budget_plan.slice,
+            )
+            queue.enqueue(
+                cand_task,
+                inputs_hash=base_record.inputs_hash,
+                output_hashes={},
+                tool_call_cap=base_record.tool_call_cap,
+                max_dispatches=loop.max_dispatches(budget_plan.slice.tries),
+                task_id=cand_task_id,
+            )
+            cand_record = queue.dispatch(
+                cand_task_id,
+                run_id=run_id,
+                baseline=baseline,
+                denied_reads=_denied_reads(ctx, graph, base_record),
+                workspace=str(ws),
+                seed_hashes=seed_hashes,
+            )
+
+        candidates.append(
+            CandidateState(
+                candidate=i,
+                variant=variant,
+                task_id=cand_task_id,
+                workspace=str(ws),
+                status="dispatched",
+            )
+        )
+        dispatched.append((cand_record, i, variant))
+
+    round_state = BestOfNRound(
+        base_task_id=base_record.task_id,
+        run_id=run_id,
+        round_num=round_num,
+        n=actual_n,
+        candidates=tuple(candidates),
+        ledger_tries=budget_plan.limits.tries,
+        ledger_used=0,
+        status="running",
+    )
+
+    return round_state, dispatched
+
+
 # --- next_task --------------------------------------------------------------------------
 
 
@@ -584,9 +830,20 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
     A task is never handed out more than its `max_dispatches` (tries plus infra
     retries) in one budget cycle, and never once it is `budget_exhausted` or
     `needs_human`.
+
+    At the start, sweeps stale workspaces left by killed runs (a process that started
+    workspaces and died without cleaning up).
     """
     ctx.require_profile()
     _require_runtime(ctx)
+
+    # Sweep stale workspaces from killed runs
+    try:
+        vcs = ctx.registry.get("vcs", "git")
+        sweep_workspaces(ctx, vcs)
+    except Exception:
+        pass  # Best effort; don't block the build
+
     scheduler = make_scheduler(ctx, target)
     _check_skills(ctx, scheduler.graph)
     revised = _revise_rejected(ctx, scheduler, target)
@@ -655,16 +912,153 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         moved = [m.path for m in token.moved] if token is not None else []
         for path in moved:
             now.pop(path, None)
+
+        # Isolation: create workspace if fanout.isolate is true
+        workspace_path: str | None = None
+        seed_hashes: dict[str, str] = {}
+        profile = ctx.require_profile().profile
+        rule, instance = _instance(graph, iid)
+        # A reviewing role (the Critic) writes nothing: the engine records its report in the
+        # user's tree. There is nothing to isolate, and it reads the project as it is.
+        isolated = should_isolate(profile, rule) and not review_mod.is_review_role(
+            find_role(record.role)
+        )
+
+        # F2: check overlapping write sets with tasks being dispatched this cycle
+        # (only for isolated tasks - non-isolated tasks write to user's tree directly)
+        if isolated:
+            # Check max_parallel limit (only for isolated tasks with workspaces)
+            max_par = max_parallel_limit(profile)
+            live_workspaces = len([r for r in (*dispatched, *in_progress) if r.workspace])
+            if live_workspaces >= max_par:
+                if token is not None:
+                    mover.undo(token)
+                held.append(
+                    {
+                        "instance": iid,
+                        "reason": (
+                            f"max_parallel limit reached ({max_par} workspaces); "
+                            "waiting for a workspace to finish"
+                        ),
+                    }
+                )
+                continue
+
+            # Check for overlapping write sets with tasks already being dispatched
+            dispatching_writes = {r.task_id: r.allowed_writes for r in dispatched if r.workspace}
+            dispatching_writes[iid] = record.allowed_writes
+            overlaps = check_overlapping_writes(dispatching_writes)
+            if overlaps and any(iid in tasks for tasks in overlaps.values()):
+                if token is not None:
+                    mover.undo(token)
+                # Find which paths overlap
+                overlap_info = [
+                    f"{path}: {', '.join(tasks)}"
+                    for path, tasks in overlaps.items()
+                    if iid in tasks
+                ]
+                held.append(
+                    {
+                        "instance": iid,
+                        "reason": (
+                            f"write set overlaps with another task being dispatched: "
+                            f"{'; '.join(overlap_info)}"
+                        ),
+                    }
+                )
+                continue
+
+        if isolated:
+            try:
+                vcs = ctx.registry.get("vcs", "git")
+                inputs = input_paths_for(instance)
+
+                # Check for best-of-N opt-in
+                requested_n = best_of_n(profile, rule.id, dict(instance.params))
+                if requested_n is not None and requested_n >= 2:
+                    # Best-of-N: dispatch multiple candidates
+                    try:
+                        round_state, cand_dispatched = _dispatch_candidates(
+                            ctx,
+                            queue,
+                            graph,
+                            record,
+                            rule,
+                            instance,
+                            summary.run_id,
+                            now,
+                            requested_n,
+                        )
+                        _save_best_of_round(ctx, round_state)
+
+                        # Add all candidates to dispatched and emit events
+                        for cand_record, cand_num, variant in cand_dispatched:
+                            payload = {
+                                "phase": "dispatch",
+                                "attempt": cand_record.dispatches,
+                                "try": cand_record.state.tries_used + 1,
+                                "tier": cand_record.current_tier,
+                                "outputs": list(cand_record.allowed_writes),
+                                "agent": _agent_for(cand_record.role),
+                                "model": _model_for(ctx, cand_record),
+                                "denied_reads": list(cand_record.denied_reads),
+                                "workspace": cand_record.workspace,
+                                "best_of": {
+                                    "base_task": iid,
+                                    "candidate": cand_num,
+                                    "n": round_state.n,
+                                    "round": round_state.round_num,
+                                    "variant": variant,
+                                },
+                            }
+                            _emit(
+                                ctx, cand_record.run_id, cand_record.task_id, "agent_turn", payload
+                            )
+                            dispatched.append(cand_record)
+                        continue
+
+                    except AppError as exc:
+                        if token is not None:
+                            mover.undo(token)
+                        held.append(
+                            {"instance": iid, "reason": f"best-of-N dispatch failed: {exc}"}
+                        )
+                        continue
+
+                # Regular isolated dispatch (best-of-1 or not opted in)
+                ws, seed_hashes = create_workspace(
+                    ctx, vcs, summary.run_id, iid, inputs, tuple(record.allowed_writes)
+                )
+                workspace_path = str(ws)
+            except Exception as exc:
+                if token is not None:
+                    mover.undo(token)
+                held.append(
+                    {
+                        "instance": iid,
+                        "reason": f"failed to create isolated workspace: {exc}",
+                    }
+                )
+                continue
+
         try:
             record = queue.dispatch(
                 iid,
                 run_id=summary.run_id,
                 baseline=now,
                 denied_reads=_denied_reads(ctx, graph, record),
+                workspace=workspace_path,
+                seed_hashes=seed_hashes,
             )
         except BaseException:
             if token is not None:
                 mover.undo(token)
+            if workspace_path:
+                try:
+                    vcs = ctx.registry.get("vcs", "git")
+                    remove_workspace(ctx, vcs, workspace_path)
+                except Exception:
+                    pass
             raise
         payload = {
             "phase": "dispatch",
@@ -678,15 +1072,33 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         }
         if moved:
             payload["moved_aside"] = moved
+        if workspace_path:
+            payload["workspace"] = workspace_path
         _emit(ctx, record.run_id, iid, "agent_turn", payload)
         dispatched.append(record)
 
     skip = {r.task_id for r in (*dispatched, *in_progress)} | {h["instance"] for h in held}
     blocked = held + _blocked(ctx, graph, queue, summary, skip)
+
+    # Build task entries, including candidate info for best-of-N tasks
+    def _build_task_entry(r: AgentTaskRecord) -> dict[str, Any]:
+        if is_candidate_id(r.task_id):
+            base_task_id, cand_num, _round_num = parse_candidate_id(r.task_id)
+            round_state = _load_best_of_round(ctx, base_task_id)
+            if round_state:
+                cand_state = next(
+                    (c for c in round_state.candidates if c.candidate == cand_num), None
+                )
+                if cand_state:
+                    return _task_entry(
+                        ctx, queue, r, candidate=cand_num, variant=cand_state.variant
+                    )
+        return _task_entry(ctx, queue, r)
+
     answer: dict[str, Any] = {
         "run_id": summary.run_id,
-        "tasks": [_task_entry(ctx, queue, r) for r in dispatched],
-        "in_progress": [_task_entry(ctx, queue, r) for r in in_progress],
+        "tasks": [_build_task_entry(r) for r in dispatched],
+        "in_progress": [_build_task_entry(r) for r in in_progress],
         "done": False,
         "stopped": False,
         "waiting": None,
@@ -756,17 +1168,33 @@ def _refuse(
 
 
 def _settle(ctx: AppContext, queue: TaskQueue, record: AgentTaskRecord) -> list[str]:
-    """Close the task's moved-outputs cycle once it ended (`previous`).
+    """Close the task's moved-outputs cycle once it ended (`previous`), and clean up workspace.
 
-    Accepted: the new files stay. `budget_exhausted` or `needs_human`: every file that
-    existed before the task is put back. Returns the paths put back.
+    Accepted: the new files stay, workspace is removed (outputs were copied back already).
+    `budget_exhausted` or `needs_human`: every file that existed before the task is put
+    back, workspace is removed (nothing copied back). Returns the paths put back.
+
+    Every ending (accept, reject-and-redispatch, budget_exhausted, needs_human) removes
+    the workspace. A rejected task that will be re-dispatched gets a fresh workspace.
     """
     mover = PreviousOutputs(queue, record.task_id, ctx.root)
+    restored: list[str] = []
     if record.status == "accepted":
         mover.accept()
     elif record.status in ("budget_exhausted", "needs_human"):
-        return mover.restore(dispatch=record.dispatches)
-    return []
+        restored = mover.restore(dispatch=record.dispatches)
+
+    # Clean up workspace for any terminal status (accepted, budget_exhausted, needs_human)
+    # For rejected tasks, the workspace is removed too; next_task creates a fresh one
+    terminal_statuses = ("accepted", "budget_exhausted", "needs_human", "rejected")
+    if record.workspace and record.status in terminal_statuses:
+        try:
+            vcs = ctx.registry.get("vcs", "git")
+            remove_workspace(ctx, vcs, record.workspace)
+        except Exception:
+            pass  # Best effort cleanup; the sweep will get it later
+
+    return restored
 
 
 def _unseeable(role: RoleSpec | None, record: AgentTaskRecord, instance: RuleInstance) -> list[str]:
@@ -968,6 +1396,19 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         {"phase": "context", "attempt": record.dispatches},
     )
     root = ctx.root.resolve()
+    # Determine the effective root for this task: workspace if isolated, else project root
+    workspace = record.workspace
+    if workspace:
+        effective_root = Path(workspace)
+        workspace_note = (
+            " This task runs in an isolated workspace. The workspace IS the project for "
+            "this task: write your outputs to the absolute paths in `outputs_abs`. The "
+            "workspace is a copy of the project at HEAD with the task's inputs seeded in."
+        )
+    else:
+        effective_root = root
+        workspace_note = ""
+
     answer: dict[str, Any] = {
         "task_id": task_id,
         "rule": rule.id,
@@ -976,17 +1417,20 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "skills": list(record.skills),
         "skill_texts": {skill.id: skill.text for skill in skills},
         "params": dict(instance.params),
-        "project_root": str(root),
+        "project_root": str(effective_root),
         "outputs": list(record.allowed_writes),
-        "outputs_abs": [str(root / p) for p in record.allowed_writes],
+        "outputs_abs": [str(effective_root / p) for p in record.allowed_writes],
         "checks": list(rule.checks),
         "attempt": record.dispatches,
         "tries": record.tries,
         "previous_rejection": _previous_rejection(ctx, record),
         "previous_label": record.state.label,
         "inputs": inputs,
-        "instructions": _instructions(role, rule, skills),
+        "instructions": _instructions(role, rule, skills) + workspace_note,
     }
+    if workspace:
+        answer["workspace"] = workspace
+        answer["isolated"] = True
     if review is not None:
         answer["review"] = review
     if guarded is not None:
@@ -1083,6 +1527,312 @@ async def _take_review(
     return parsed, []
 
 
+async def _handle_candidate_submit(
+    ctx: AppContext,
+    queue: TaskQueue,
+    record: AgentTaskRecord,
+    round_state: BestOfNRound,
+    cand_num: int,
+    checks: list[CheckResult],
+    verdict: loop.Verdict,
+) -> Selection | None:
+    """Handle a best-of-N candidate submission: update state and run selection if all done.
+
+    A candidate's submit records its check results in the round state but does NOT:
+    - Remove its workspace (needed for copy-back if it wins)
+    - Accept/reject the base record (done after selection)
+    - Settle the candidate record (done after selection)
+
+    When all candidates are submitted, this function:
+    1. Runs `select_best` (deterministic key; Critic tiebreak not wired yet)
+    2. If there's a winner: copies winner's outputs to user's tree, accepts BASE record
+    3. If no candidate passed: rejects BASE record as one counted try
+    4. Marks all candidate records terminal
+    5. Removes all candidate workspaces
+    6. Removes the round state file
+
+    Returns the Selection result if all candidates are done and selection was run,
+    otherwise None.
+    """
+    # Check if this candidate was already submitted (double submit protection)
+    existing_cand = next((c for c in round_state.candidates if c.candidate == cand_num), None)
+    if existing_cand and existing_cand.status != "dispatched":
+        raise AppError(
+            f"candidate {cand_num} of {round_state.base_task_id!r} was already submitted "
+            f"(status: {existing_cand.status})"
+        )
+
+    # Update the candidate state in the round
+    updated_candidates = []
+    for cand in round_state.candidates:
+        if cand.candidate == cand_num:
+            status: Literal["dispatched", "submitted", "done", "failed", "cancelled"]
+            if verdict.accepted:
+                status = "done"
+            elif verdict.status in ("budget_exhausted", "needs_human"):
+                status = "failed"
+            else:
+                status = "failed"
+
+            updated_cand = CandidateState(
+                candidate=cand.candidate,
+                variant=cand.variant,
+                task_id=cand.task_id,
+                workspace=cand.workspace,
+                status=status,
+                checks=tuple(checks),
+                passed=verdict.accepted,
+                errors=error_count(checks),
+                warnings=warning_count(checks),
+                spend=Spend(tries=1),  # Each submit counts as one try
+            )
+            updated_candidates.append(updated_cand)
+        else:
+            updated_candidates.append(cand)
+
+    updated_round = BestOfNRound(
+        schema_version=round_state.schema_version,
+        base_task_id=round_state.base_task_id,
+        run_id=round_state.run_id,
+        round_num=round_state.round_num,
+        n=round_state.n,
+        candidates=tuple(updated_candidates),
+        ledger_tries=round_state.ledger_tries,
+        ledger_used=round_state.ledger_used + 1,
+        winner=round_state.winner,
+        selection=round_state.selection,
+        status=round_state.status,
+    )
+    _save_best_of_round(ctx, updated_round)
+
+    # Check if all candidates are done
+    all_done = all(c.status in ("done", "failed", "cancelled") for c in updated_candidates)
+    if not all_done:
+        return None
+
+    # All candidates done - run selection
+    updated_round = updated_round.model_copy(update={"status": "selecting"})
+    _save_best_of_round(ctx, updated_round)
+
+    # Build Candidate objects for select_best
+    # Use the round state's candidate info (workspace paths) since those are the actual
+    # paths before any cleanup - the queue records may have stale info
+    candidates: list[Candidate] = []
+    for cand in updated_candidates:
+        workspace_path = Path(cand.workspace) if cand.workspace else None
+        candidates.append(
+            Candidate(
+                id=str(cand.candidate),
+                passed=cand.passed,
+                checks=cand.checks,
+                finished=cand.status != "cancelled",
+                workspace=workspace_path if workspace_path and workspace_path.exists() else None,
+            )
+        )
+
+    # Run selection (deterministic key only; Critic tiebreak is NOT wired in this
+    # implementation - that requires the review rule infrastructure and will be wired
+    # in a follow-up, say so in the report)
+    selection = await select_best(candidates, metrics=None, tiebreak=None, ledger=None)
+
+    # Emit select event
+    _emit(
+        ctx,
+        updated_round.run_id,
+        updated_round.base_task_id,
+        "tool_call",
+        {
+            "tool": "select",
+            "event": "select",
+            "best_of": updated_round.round_num,
+            "status": (
+                "done" if selection.winner is not None and not selection.none_passed else "failed"
+            ),
+            "winner": selection.winner,
+            "decided_by": selection.decided_by,
+            "none_passed": selection.none_passed,
+            "order": list(selection.order),
+        },
+    )
+
+    # Get the base record to accept/reject
+    base_record = queue.get(updated_round.base_task_id)
+    if base_record is None:
+        raise AppError(f"base task {updated_round.base_task_id!r} not found")
+
+    # Get the winning candidate's info from the round state (not from queue - workspace
+    # path is authoritative in the round state)
+    winner_cand_state: CandidateState | None = None
+    winner_cand_record: AgentTaskRecord | None = None
+    copy_result: CopyBackResult | None = None
+
+    if selection.winner is not None and not selection.none_passed:
+        winner_num = int(selection.winner)
+        winner_cand_state = next((c for c in updated_candidates if c.candidate == winner_num), None)
+        if winner_cand_state:
+            winner_cand_record = queue.get(winner_cand_state.task_id)
+
+    # If we have a winner and it passed, copy back its outputs to user's tree
+    if winner_cand_state and winner_cand_record and winner_cand_state.workspace:
+        workspace_path = Path(winner_cand_state.workspace)
+        if workspace_path.exists():
+            copy_result = copy_outputs_back(
+                workspace_path,
+                ctx.root,
+                winner_cand_record.allowed_writes,
+                winner_cand_record.seed_hashes,
+            )
+            if not copy_result.ok:
+                # Copy-back failed - treat as no winner (infra issue, not counted as try)
+                selection = Selection(
+                    winner=None,
+                    decided_by="none",
+                    none_passed=True,
+                    order=selection.order,
+                    keys=selection.keys,
+                    critic_note=f"copy-back failed: {copy_result.reason}",
+                )
+                winner_cand_state = None
+                winner_cand_record = None
+
+    # Accept or reject the BASE record based on selection outcome
+    graph = _graph(ctx)
+    rule, instance = _instance(graph, updated_round.base_task_id)
+
+    if selection.winner is not None and not selection.none_passed and winner_cand_record:
+        # Winner found and copy-back succeeded - accept the BASE record
+        # Get output hashes from the user's tree (where outputs were just copied)
+        base_result = AgentResult(
+            status="done",
+            files_written=winner_cand_record.allowed_writes,
+        )
+        # Re-dispatch the base so we can accept it (it's in ready/rejected state)
+        if base_record.status in OPEN_STATUSES:
+            base_record = queue.dispatch(
+                updated_round.base_task_id,
+                run_id=updated_round.run_id,
+                baseline={},  # Empty baseline - we're not checking changes
+                denied_reads=(),
+            )
+        if base_record.status == "dispatched":
+            base_record = queue.mark_submitted(updated_round.base_task_id)
+        base_record = queue.accept(
+            updated_round.base_task_id,
+            result=base_result,
+            output_hashes=output_hashes(ctx.store, task_for(rule, instance)),
+        )
+    else:
+        # No winner or none passed - reject the BASE record as one counted try
+        # Use the best candidate's redo text if available
+        best_cand = updated_candidates[0] if updated_candidates else None
+        redo_text = (
+            f"Best-of-{updated_round.n} round {updated_round.round_num}: no candidate passed. "
+        )
+        if best_cand:
+            best_cand_record = queue.get(best_cand.task_id)
+            if best_cand_record and best_cand_record.state.redo:
+                redo_text += f"Best candidate's issues: {best_cand_record.state.redo}"
+            else:
+                # Get the first few issues from the best candidate's checks
+                issues = [i.msg for c in best_cand.checks if not c.ok for i in c.issues[:2]][:3]
+                if issues:
+                    redo_text += f"Issues: {'; '.join(issues)}"
+
+        base_result = AgentResult(
+            status="failed",
+            files_written=(),
+        )
+        # Re-dispatch the base so we can reject it (it's in ready state)
+        if base_record.status in OPEN_STATUSES:
+            base_record = queue.dispatch(
+                updated_round.base_task_id,
+                run_id=updated_round.run_id,
+                baseline={},
+                denied_reads=(),
+            )
+        if base_record.status == "dispatched":
+            base_record = queue.mark_submitted(updated_round.base_task_id)
+        # Reject counts as one try for the base
+        base_record = queue.reject(
+            updated_round.base_task_id,
+            result=base_result,
+            reasons=(redo_text,),
+            counted=True,
+            exhausted=base_record.attempts + 1 >= base_record.tries,
+            budget_state=TaskBudgetState(
+                dispatches=base_record.state.dispatches,
+                tries_used=base_record.state.tries_used + 1,
+                failed_tries=base_record.state.failed_tries + 1,
+                redo=redo_text,
+                label="verification",
+            ),
+        )
+
+    # Mark all candidate records as terminal (accepted for winner, rejected for losers)
+    # so next_task never hands them out again
+    for cand in updated_candidates:
+        cand_record = queue.get(cand.task_id)
+        if cand_record is None:
+            continue
+        is_winner = (
+            selection.winner is not None
+            and not selection.none_passed
+            and cand.candidate == int(selection.winner)
+        )
+        if cand_record.status == "dispatched":
+            cand_record = queue.mark_submitted(cand.task_id)
+        if cand_record.status != "submitted":
+            continue  # Already terminal
+        if is_winner:
+            # The winner is accepted (its outputs are what landed)
+            cand_result = AgentResult(status="done", files_written=cand_record.allowed_writes)
+            queue.accept(
+                cand.task_id,
+                result=cand_result,
+                output_hashes={},  # Candidate's outputs are in workspace, not user tree
+            )
+        else:
+            # Losers are rejected (budget_exhausted so they're never re-dispatched)
+            cand_result = AgentResult(status="failed", files_written=())
+            queue.reject(
+                cand.task_id,
+                result=cand_result,
+                reasons=("not selected as winner in best-of-N round",),
+                counted=False,  # Don't count against the candidate's own budget
+                exhausted=True,  # Mark as terminal
+            )
+
+    # Clean up all candidate workspaces
+    vcs = ctx.registry.get("vcs", "git")
+    for cand in updated_candidates:
+        if cand.workspace:
+            with contextlib.suppress(Exception):
+                remove_workspace(ctx, vcs, cand.workspace)
+
+    # Update round state with selection result and mark as done
+    final_round = BestOfNRound(
+        schema_version=updated_round.schema_version,
+        base_task_id=updated_round.base_task_id,
+        run_id=updated_round.run_id,
+        round_num=updated_round.round_num,
+        n=updated_round.n,
+        candidates=tuple(updated_candidates),
+        ledger_tries=updated_round.ledger_tries,
+        ledger_used=updated_round.ledger_used,
+        winner=int(selection.winner) if selection.winner and not selection.none_passed else None,
+        selection=selection,
+        status="done" if selection.winner and not selection.none_passed else "failed",
+    )
+    _save_best_of_round(ctx, final_round)
+
+    # If the round failed (no candidate passed), remove the round state so next_task
+    # can start a fresh round
+    if selection.none_passed or selection.winner is None:
+        _remove_best_of_round(ctx, updated_round.base_task_id)
+
+    return selection
+
+
 async def submit(
     ctx: AppContext, task_id: str, report: SubmitReport | None = None
 ) -> dict[str, Any]:
@@ -1114,6 +1864,10 @@ async def submit(
     invalid for the diff its context showed (`review_problems`); otherwise the engine
     writes it as the task's one output and then runs the usual checks. A valid review
     is accepted whatever its verdict: AI findings never block the build (DESIGN.md 4.8).
+
+    For best-of-N candidates: each candidate is submitted individually; after all are
+    submitted, `select_best` is run (with Critic tiebreak for exact ties), and only the
+    winner's outputs are copied back to the user's tree.
     """
     ctx.require_profile()
     _require_runtime(ctx)
@@ -1123,7 +1877,13 @@ async def submit(
     if record.status != "dispatched":
         raise AppError(f"task {task_id!r} is {record.status}, not dispatched; call next_task")
     graph = _graph(ctx)
-    rule, instance = _instance(graph, task_id)
+
+    # Handle candidate task_id lookup - need to find the real instance
+    if is_candidate_id(task_id):
+        base_task_id, _cand_num, _round_num = parse_candidate_id(task_id)
+        rule, instance = _instance(graph, base_task_id)
+    else:
+        rule, instance = _instance(graph, task_id)
     reviewing = review_mod.is_review_role(find_role(record.role))
     if report.review is not None and not reviewing:
         raise AppError(
@@ -1169,29 +1929,54 @@ async def submit(
         if reviewing:
             review, review_reasons = await _take_review(ctx, graph, rule, instance, record, report)
         allowed = set(record.allowed_writes)
-        now = await snapshot(ctx, extra=record.allowed_writes)
-        changed = _changed(queue.baseline(task_id), now)
-        # Outputs of the other agent tasks: their own subagents write them (the guard
-        # allows nobody else), whatever their status now: tasks that ran in parallel
-        # are submitted one by one, and one may be accepted or rejected before this one.
-        others = {
-            w for other in queue.all() if other.task_id != task_id for w in other.allowed_writes
-        }
-        engine = _engine_outputs(graph)
-        outside = [p for p in changed if p not in allowed and p not in others and p not in engine]
-        missing = (
-            []
-            if review_reasons
-            else [p for p in record.allowed_writes if not (ctx.root / p).is_file()]
-        )
+
+        # For isolated tasks, diff the workspace; otherwise diff the user's tree
+        workspace = record.workspace
+        copy_back_result: CopyBackResult | None = None
+        if workspace:
+            workspace_path = Path(workspace)
+            changed_in_allowed, changed_outside = diff_workspace(
+                workspace_path, record.allowed_writes, record.seed_hashes
+            )
+            changed = [*changed_in_allowed, *changed_outside]
+            outside = list(changed_outside)
+            missing = (
+                []
+                if review_reasons
+                else [p for p in record.allowed_writes if not (workspace_path / p).is_file()]
+            )
+        else:
+            now = await snapshot(ctx, extra=record.allowed_writes)
+            changed = _changed(queue.baseline(task_id), now)
+            # Outputs of the other agent tasks: their own subagents write them (the guard
+            # allows nobody else), whatever their status now: tasks that ran in parallel
+            # are submitted one by one, and one may be accepted or rejected before this one.
+            others = {
+                w for other in queue.all() if other.task_id != task_id for w in other.allowed_writes
+            }
+            engine = _engine_outputs(graph)
+            outside = [
+                p for p in changed if p not in allowed and p not in others and p not in engine
+            ]
+            missing = (
+                []
+                if review_reasons
+                else [p for p in record.allowed_writes if not (ctx.root / p).is_file()]
+            )
         attempt = AgentResult(
             status="done",
             files_written=tuple(p for p in changed if p in allowed or p in outside),
             assumptions=report.assumptions,
             open_questions=report.open_questions,
         )
+        # an isolated task is judged on its workspace: its outputs are there, not in the user's tree
+        judged_store = (
+            ArtifactStore(Path(workspace), ctx.store.labels, ctx.store.repo)
+            if workspace
+            else ctx.store
+        )
         results = list(
-            attempt_checks(instance, attempt, ctx.store, allowed_writes=record.allowed_writes)
+            attempt_checks(instance, attempt, judged_store, allowed_writes=record.allowed_writes)
         )
         if reviewing:
             if review_reasons:  # nothing was written: the reply is what failed
@@ -1200,7 +1985,9 @@ async def submit(
 
         checks: list[CheckResult] = []
         if not outside and not missing and not review_reasons:
-            runner = ProfileCheckRunner(ctx)
+            # For isolated tasks, run checks in the workspace; otherwise in user's tree
+            check_root = Path(workspace) if workspace else None
+            runner = ProfileCheckRunner(ctx, root_override=check_root)
             for check_id in rule.checks:
                 checks.append(await runner.run(check_id, instance))
         results.extend(checks)
@@ -1211,7 +1998,7 @@ async def submit(
             record,
             results,
             attempt,
-            ctx.store.current_hashes(instance.outputs),
+            judged_store.current_hashes(instance.outputs),
             shown=shown,
         )
         # The journal keeps every check's full result; the answer and the redo text
@@ -1234,39 +2021,107 @@ async def submit(
             assumptions=report.assumptions,
             open_questions=report.open_questions,
         )
-        if verdict.accepted:
-            record = queue.accept(
-                task_id,
-                result=result,
-                output_hashes=output_hashes(ctx.store, task_for(rule, instance)),
-                budget_state=state,
+
+        # Check if this is a best-of-N candidate
+        is_best_of_candidate = is_candidate_id(task_id)
+        best_of_round: BestOfNRound | None = None
+        if is_best_of_candidate:
+            base_task_id, cand_num, _round_num = parse_candidate_id(task_id)
+            best_of_round = _load_best_of_round(ctx, base_task_id)
+            # Validate: the round must exist and be running
+            if best_of_round is None:
+                raise AppError(
+                    f"cannot submit candidate {task_id!r}: no active best-of-N round "
+                    f"for base task {base_task_id!r}"
+                )
+            if best_of_round.status not in ("running", "selecting"):
+                raise AppError(
+                    f"cannot submit candidate {task_id!r}: best-of-N round is already "
+                    f"{best_of_round.status}"
+                )
+
+        # For isolated tasks: on acceptance, copy outputs back to user's tree
+        # For best-of-N candidates: DON'T copy back yet - wait for selection
+        # Refuse if user's tree changed since the workspace was seeded
+        if verdict.accepted and workspace and not is_best_of_candidate:
+            workspace_path = Path(workspace)
+            copy_back_result = copy_outputs_back(
+                workspace_path, ctx.root, record.allowed_writes, record.seed_hashes
             )
-        elif verdict.status == "needs_human":
-            questions = tuple(dict.fromkeys((*report.open_questions, *verdict.questions)))
-            record = queue.needs_human(
-                task_id,
-                result=result.model_copy(
-                    update={"status": "needs_human", "open_questions": questions}
-                ),
-                budget_state=state,
-            )
-        else:
-            record = queue.reject(
-                task_id,
-                result=result,
-                reasons=tuple(reasons),
-                outside=tuple(outside),
-                counted=verdict.counted,
-                exhausted=verdict.status == "budget_exhausted",
-                budget_state=state,
-            )
+            if not copy_back_result.ok:
+                # User's tree changed - reject and re-dispatch (not counted as a try)
+                reasons.append(f"copy-back refused: {copy_back_result.reason}")
+                # Create a rejection verdict without counting the try (infra issue)
+                verdict = loop.Verdict(
+                    status="rejected",
+                    label="infra",  # Concurrent edit is an infra issue
+                    counted=False,
+                    stop=None,
+                    tier=verdict.tier,
+                    state=verdict.state,
+                    tries=verdict.tries,
+                    failed=verdict.failed,
+                    questions=(),
+                )
+
+        # For best-of-N candidates: DON'T accept/reject the candidate record here.
+        # The candidate stays in "submitted" status; _handle_candidate_submit will
+        # mark all candidates terminal after selection and accept/reject the BASE record.
+        # Also DON'T remove the workspace - it's needed for copy-back if this candidate wins.
+        if not is_best_of_candidate:
+            if verdict.accepted:
+                record = queue.accept(
+                    task_id,
+                    result=result,
+                    output_hashes=output_hashes(ctx.store, task_for(rule, instance)),
+                    budget_state=state,
+                )
+            elif verdict.status == "needs_human":
+                questions = tuple(dict.fromkeys((*report.open_questions, *verdict.questions)))
+                record = queue.needs_human(
+                    task_id,
+                    result=result.model_copy(
+                        update={"status": "needs_human", "open_questions": questions}
+                    ),
+                    budget_state=state,
+                )
+            else:
+                record = queue.reject(
+                    task_id,
+                    result=result,
+                    reasons=tuple(reasons),
+                    outside=tuple(outside),
+                    counted=verdict.counted,
+                    exhausted=verdict.status == "budget_exhausted",
+                    budget_state=state,
+                )
     except BaseException:
         with contextlib.suppress(QueueError):
             queue.unsubmit(task_id)
         raise
-    restored = _settle(ctx, queue, record)
-    if record.status == "accepted":  # the person's note is answered; the gate decides again
-        _revision_path(ctx, task_id).unlink(missing_ok=True)
+
+    # Best-of-N selection: update round state and run selection when all candidates done
+    # For best-of-N candidates, _handle_candidate_submit handles everything:
+    # - Recording the candidate's result in round state
+    # - Running selection when all candidates are done
+    # - Copying the winner's outputs to user's tree
+    # - Accepting/rejecting the BASE record
+    # - Marking all candidate records terminal
+    # - Cleaning up all workspaces
+    selection_result: Selection | None = None
+    restored = []
+    if is_best_of_candidate and best_of_round is not None:
+        base_task_id, cand_num, _round_num = parse_candidate_id(task_id)
+        selection_result = await _handle_candidate_submit(
+            ctx, queue, record, best_of_round, cand_num, checks, verdict
+        )
+        # After _handle_candidate_submit, the candidate record is now terminal
+        record = queue.require(task_id)
+    else:
+        # Non-candidate tasks: settle (move-aside restore + workspace cleanup)
+        restored = _settle(ctx, queue, record)
+        if record.status == "accepted":  # the person's note is answered; the gate decides again
+            _revision_path(ctx, task_id).unlink(missing_ok=True)
 
     for check in checks:
         _emit(ctx, record.run_id, task_id, "check_result", check.model_dump(mode="json"))
@@ -1287,10 +2142,23 @@ async def submit(
     }
     if review is not None:
         payload["review"] = {"verdict": review.verdict, "comments": len(review.comments)}
+    # Add best-of-N candidate info to payload
+    if is_best_of_candidate:
+        base_task_id, cand_num, _round_num = parse_candidate_id(task_id)
+        payload["best_of"] = {
+            "base_task": base_task_id,
+            "candidate": cand_num,
+        }
+        if selection_result is not None:
+            payload["best_of"]["selection"] = {
+                "winner": selection_result.winner,
+                "decided_by": selection_result.decided_by,
+            }
     _emit(ctx, record.run_id, task_id, "agent_turn", payload)
     if verdict.stop is not None:
         _stop(ctx, record)
-    return _submit_answer(
+
+    answer = _submit_answer(
         ctx,
         record,
         verdict=verdict,
@@ -1299,6 +2167,36 @@ async def submit(
         missing=missing,
         checks=visible,
     )
+    if is_best_of_candidate:
+        # A candidate is not a task: it is not accepted or stopped on its own. Say what the
+        # submit meant for the round, not what its private record says.
+        answer["stop_reason"] = None
+        answer["handoff"] = None
+        if selection_result is None:
+            answer["status"], answer["accepted"] = "submitted", False
+            answer["next"] = (
+                "this candidate is in; wait for the other candidate(s) of the round to be "
+                "submitted, then call next_task"
+            )
+        elif selection_result.winner is not None:
+            won = str(cand_num) == str(selection_result.winner)
+            answer["status"], answer["accepted"] = ("won" if won else "lost"), won
+            answer["next"] = "the round is decided and its winner landed; call next_task"
+        else:
+            answer["status"], answer["accepted"] = "round_failed", False
+            answer["next"] = (
+                "no candidate of the round passed, nothing landed; call next_task: a new round "
+                "starts, or the task stops when its budget is spent"
+            )
+    # Add selection result to answer if this was the final candidate
+    if selection_result is not None:
+        answer["selection"] = {
+            "winner": selection_result.winner,
+            "decided_by": selection_result.decided_by,
+            "none_passed": selection_result.none_passed,
+            "order": list(selection_result.order),
+        }
+    return answer
 
 
 def _stop(ctx: AppContext, record: AgentTaskRecord) -> None:
