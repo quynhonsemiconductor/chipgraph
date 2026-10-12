@@ -2,7 +2,7 @@
   "name": "chipgraph",
   "displayName": "chipgraph",
   "version": "0.1.0rc1",
-  "description": "AI agent system for chip (IC) design, in your own Claude Code: /chipgraph:status, /chipgraph:trace a requirement to spec, RTL and tests, /chipgraph:ask with checked citations, /chipgraph:triage a failing log, /chipgraph:init-chipgraph, and /chipgraph:run the build graph, over the chipgraph MCP server (Design Model queries, build, check, audit, approve).",
+  "description": "AI agent system for chip (IC) design, in your own Claude Code: /chipgraph:status, /chipgraph:trace a requirement to spec, RTL and tests, /chipgraph:ask with checked citations, /chipgraph:triage a failing log, /chipgraph:init-chipgraph, /chipgraph:run the build graph, /chipgraph:plan a block (you approve at the gate) and /chipgraph:rtl from the plan to a pull request, over the chipgraph MCP server (Design Model queries, build, check, audit, approve).",
   "author": {
     "name": "quynhonsemiconductor",
     "url": "https://github.com/quynhonsemiconductor"

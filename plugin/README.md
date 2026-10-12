@@ -57,6 +57,8 @@ checks both.
 | `/chipgraph:init-chipgraph [options]` | preview, then write, a `.chipgraph.yml` | `/chipgraph:init-chipgraph --from-learn` |
 | `/chipgraph:decide` | answer the questions `decide()` queued for a model | `/chipgraph:decide` |
 | `/chipgraph:run [target]` | the build loop: role subagents do the agent tasks | `/chipgraph:run pulse/pulse_manifest` |
+| `/chipgraph:plan <block>` | the Planner plans a block; you approve it at gate `plan:<block>` | `/chipgraph:plan pwm` |
+| `/chipgraph:rtl <block>` | from the approved plan to a pull request: RTL, testbench, Critic, PR | `/chipgraph:rtl pwm` |
 
 ### `/chipgraph:status`
 
@@ -209,13 +211,61 @@ task fixed on its second try, one that ends in HANDOFF) `docs/agent-loop-claude-
 /tmp/cg-loop-haiku`, and for the RTL author (one module written twice, with two exemplar
 sets) `docs/rtl-claude-code/run.sh /tmp/cg-rtl-haiku`.
 
+### `/chipgraph:plan <block>` (M2-11b)
+
+The target `plan:<block>` (`digital-rtl` pack), then the human gate, in the session:
+
+1. The same loop as `/chipgraph:run`, with `next_task(target="plan:<block>")`: the
+   `chipgraph:planner` subagent writes `plan/<block>.plan.yml`, `submit` runs
+   `plan_check` at once (a rejection's issues are the next try's redo text), at most 12
+   rounds, the same stop conditions.
+2. When the plan exists and passes `plan_check`, `plan_show(block)` gives what
+   `chipgraph plan show <block>` prints, and the command prints it: modules in build
+   order with their requirements, dependencies and write sets, REQ coverage, the
+   `plan_check` warnings, assumptions and open questions.
+3. **The gate is yours.** The command asks with `AskUserQuestion`: *Approve*, *Revise*
+   (with a note) or *Stop*. Only on *Approve* does it call `approve` for gate
+   `plan:<block>`; the server records the local user (`git config user.name`) as `by`.
+   *Revise* records your rejection with the note (`approve(reject=true, note=...)`, the
+   same as `chipgraph approve plan:<block> --reject --note "..."`): the next `next_task`
+   hands the planner task out again, and its context starts `previous_rejection` with
+   your note (at most 3 revisions per command). There is no `--approve` argument: only a
+   person's answer approves.
+4. **Headless** (`claude -p`, no `AskUserQuestion`): the command prints the plan and the
+   commands to run (`chipgraph plan show <block>`, then `chipgraph approve plan:<block>
+   --instance '...'`) and stops. It never approves without an answer.
+
+### `/chipgraph:rtl <block>` (M2-11b)
+
+Needs an approved plan: `plan_show` first, and if the gate `plan:<block>` is not
+approved the command says to run `/chipgraph:plan <block>` and stops. Then the loop of
+`/chipgraph:run` over `next_task(target="rtl:<block>")`, at most 20 rounds: one
+`chipgraph:rtl-author` per module (in parallel when the engine hands out several, in the
+plan's dependency order otherwise), the `chipgraph:tb-author` for the testbench, the
+`chipgraph:critic` (its JSON review passed to `submit` as `result.review`). `open_pr`
+(the branch `chipgraph/<run>/<block>` with exactly the block's files, pushed and opened
+as a PR with `review: {use: github}`) and `pr_gate` run inside `next_task`, never as a
+subagent. At the end it prints `status`: per task its files and the checks of its last
+submit, the Critic's verdict with its blocker and major comments, the PR URL or the
+local branch, and the gate `pr:<block>` waiting for a reviewer. It never approves a
+gate, never merges, never retries a stopped task by hand; a `budget_exhausted` or
+`needs_human` task ends the run with its HANDOFF path.
+
+Outside Claude Code: `chipgraph plan <block>`, `chipgraph plan show <block>`,
+`chipgraph approve plan:<block>`, `chipgraph rtl <block>`. Acceptance run (tinysoc's
+MAS-only block `pwm`, from plan to a branch, the script acting as the person at both
+gates): `docs/rtl-target-claude-code/run.sh /tmp/cg-rtl-target-sonnet`.
+
 ## MCP server
 
 `chipgraph` (`.mcp.json`) has these tools: `status`, `build`, `check`, `approve`,
-`config_show`, `audit`, `init`; the Design Model queries `model_block`, `model_module`,
+`plan_show`, `config_show`, `audit`, `init`; the Design Model queries `model_block`, `model_module`,
 `model_find`, `model_trace`, `model_impact`, `model_neighbors`, `model_search`;
 `ask_context` and `ask_check`; `triage`; `pending_decisions` and `answer_decision`; and
-`next_task`, `get_context`, `submit`. The server reloads the project on every call, so it
+`next_task`, `get_context`, `submit`. `status` of a named target's run (`rtl:<block>`)
+also has its `chain` in build order and, per block, the agent tasks, the Critic's review
+and the PR record; `approve` takes `instance` only when several instances have the gate,
+and records `by` (default: the local user). The server reloads the project on every call, so it
 starts in a project with no `.chipgraph.yml` and sees one as soon as `init` writes it.
 In Claude Code the tools are named `mcp__plugin_chipgraph_chipgraph__<tool>`.
 

@@ -53,6 +53,13 @@ instead (`review`): its context holds the diff, the spec slice and the model sli
 reply is a JSON review the main session passes as `result.review`; `submit` validates it
 and the engine itself writes it as the task's one output.
 
+A person who rejects a gate with a note (`approve(reject=true, note=...)`, or
+`chipgraph approve <gate> --reject --note ...`) asks for a revision (`_revise_rejected`):
+when every file the gate covers is an accepted agent task's output, the next `next_task`
+reopens that task (a new budget cycle), rewinds it in the build and hands it out again;
+its context starts `previous_rejection` with the note until it is accepted again. The
+answer lists it under `revised`. The gate then waits for the new output.
+
 The engine decides everything (P3): which task, which role, which files, which checks.
 Claude Code only runs the model. Each role's tool table (`chipgraph.core.runtime.roles`)
 picks the subagent (`chipgraph:<role>`), its model per attempt (the role's tier, then its
@@ -95,12 +102,20 @@ from chipgraph.app.build import graph_artifacts, make_scheduler, pack_search_pat
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
-from chipgraph.core.contracts import AgentResult, CheckResult, Event, RuleInstance, RuleSpec
+from chipgraph.core.contracts import (
+    AgentResult,
+    Approval,
+    CheckResult,
+    Event,
+    RuleInstance,
+    RuleSpec,
+)
 from chipgraph.core.contracts.event import EventType
 from chipgraph.core.contracts.types import FailureLabel, ModelTier
 from chipgraph.core.engine.agent_rule import OUTPUTS_CHECK, FeedbackFilter, attempt_checks
+from chipgraph.core.engine.gate import gate_id_for
 from chipgraph.core.engine.graph import BuildGraph, kind_for
-from chipgraph.core.engine.scheduler import RunSummary
+from chipgraph.core.engine.scheduler import RunSummary, Scheduler
 from chipgraph.core.model import ModelQuery, ModelStore, QueryError, default_model_db_path
 from chipgraph.core.plugin_api.pack import discover_packs
 from chipgraph.core.plugin_api.registry import PluginError
@@ -110,6 +125,8 @@ from chipgraph.core.runtime import (
     AgentTaskRecord,
     QueueError,
     TaskQueue,
+    instance_inputs_hash,
+    state_key,
     task_for,
 )
 from chipgraph.core.runtime.roles import (
@@ -439,6 +456,119 @@ def _blocked(
     return blocked
 
 
+# --- revise: a person rejected a gate with a note (M2-11b) ------------------------------
+
+
+def _revision_path(ctx: AppContext, task_id: str) -> Path:
+    """Where a task's pending revision note is kept (state backend, engine-owned)."""
+    return ctx.layout.state_dir / "runtime" / "revisions" / f"{state_key(task_id)}.json"
+
+
+def _revision(ctx: AppContext, task_id: str) -> dict[str, Any] | None:
+    """The person's note the task's next attempts must answer, if any."""
+    path = _revision_path(ctx, task_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _revision_text(revision: Mapping[str, Any]) -> str:
+    return (
+        f"A person ({revision.get('by', '?')}) rejected your last output at gate "
+        f"{revision.get('gate', '?')!r} with this note: {revision.get('note', '')} "
+        "Revise your outputs so they answer the note, and keep what the note does not ask "
+        "to change."
+    )
+
+
+def _latest_decision(ctx: AppContext, gate_id: str, instance: RuleInstance) -> Approval | None:
+    """The latest current decision file for `gate_id` over `instance`'s file inputs (the
+    rule `GateEvaluator` applies; waivers aside)."""
+    refs = [ref for ref in instance.inputs if ref.path is not None]
+    current = ctx.store.current_hashes(refs)
+    decisions = sorted(
+        (
+            a
+            for a in ctx.review.approvals(gate_id)
+            if a.decision != "waive"
+            and a.is_current(current)
+            and set(current) <= set(a.artifact_hashes)
+        ),
+        key=lambda a: a.at,
+    )
+    return decisions[-1] if decisions else None
+
+
+def _revise_rejected(ctx: AppContext, scheduler: Scheduler, target: str) -> list[dict[str, Any]]:
+    """Hand an accepted agent task out again when a person rejected its output, with a note.
+
+    For each gated instance of `target` whose gate is `rejected` by a decision file (a
+    person's `approve(reject=true, note=...)` or `chipgraph approve --reject --note`), when
+    every file the gate covers is the output of an accepted agent task that was accepted
+    before the rejection: each such task is reopened as a new `ready` task (a new budget
+    cycle) and rewound in the build, and the note is kept for its context
+    (`previous_rejection`) until it is accepted again. A rejection with no note, of a gate
+    over any file no agent writes, or one the task already answered (accepted after it)
+    changes nothing: the gate stays rejected for a person to decide.
+    """
+    graph = scheduler.graph
+    gates = scheduler.gates
+    if gates is None:
+        return []
+    queue = _queue(ctx)
+    producers: dict[str, str] = {}
+    for iid, inst in graph.instances.items():
+        if graph.rules[inst.rule_id].kind == "agent":
+            for ref in inst.outputs:
+                if ref.path is not None:
+                    producers[ref.path] = iid
+    revised: list[dict[str, Any]] = []
+    for iid in sorted(graph.select(target)):
+        instance = graph.instances[iid]
+        rule = graph.rules[instance.rule_id]
+        if not rule.gate:
+            continue
+        gate_id = gate_id_for(rule.gate, instance.params)
+        if gates.status(gate_id, instance) != "rejected":
+            continue
+        decision = _latest_decision(ctx, gate_id, instance)
+        if decision is None or decision.decision != "reject" or not decision.note.strip():
+            continue
+        covered = [ref.path for ref in instance.inputs if ref.path is not None]
+        owners = {producers.get(path) for path in covered}
+        if not covered or None in owners:
+            continue
+        for task_id in sorted(o for o in owners if o is not None):
+            record = queue.get(task_id)
+            if record is None or record.status != "accepted" or record.updated_at >= decision.at:
+                continue
+            task_rule, task_instance = _instance(graph, task_id)
+            # `enqueue` reopens an accepted task whose outputs no longer hash as accepted:
+            # the person's rejection says they no longer hold.
+            queue.enqueue(
+                task_for(task_rule, task_instance),
+                inputs_hash=instance_inputs_hash(ctx.store, task_instance),
+                output_hashes={"<rejected>": decision.at.isoformat()},
+                tool_call_cap=record.tool_call_cap,
+                max_dispatches=record.max_dispatches,
+            )
+            scheduler.rewind(task_id)
+            item = {
+                "task_id": task_id,
+                "gate": gate_id,
+                "by": decision.by,
+                "at": decision.at.isoformat(),
+                "note": decision.note,
+            }
+            path = _revision_path(ctx, task_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"schema_version": 1, **item}, indent=2), encoding="utf-8")
+            revised.append(item)
+    return revised
+
+
 # --- next_task --------------------------------------------------------------------------
 
 
@@ -459,9 +589,12 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
     _require_runtime(ctx)
     scheduler = make_scheduler(ctx, target)
     _check_skills(ctx, scheduler.graph)
+    revised = _revise_rejected(ctx, scheduler, target)
     summary = await scheduler.run(target)
     graph = scheduler.graph
     queue = _queue(ctx)
+    for item in revised:
+        _emit(ctx, summary.run_id, item["task_id"], "agent_turn", {"phase": "revise", **item})
 
     agent_ids = [
         iid
@@ -560,6 +693,8 @@ async def next_task(ctx: AppContext, target: str = "*") -> dict[str, Any]:
         "blocked": blocked,
         "handoff": None,
     }
+    if revised:
+        answer["revised"] = revised
     if dispatched or in_progress:
         return answer
     if summary.ok and not blocked:
@@ -706,13 +841,16 @@ def _feedback_filter(ctx: AppContext, record: AgentTaskRecord) -> FeedbackFilter
     )
 
 
-def _previous_rejection(record: AgentTaskRecord) -> list[str]:
-    """Why the last attempt was rejected: the redo instruction (it names the label and
-    each failure as `file:line`), or the bare reasons on a record from before it."""
+def _previous_rejection(ctx: AppContext, record: AgentTaskRecord) -> list[str]:
+    """Why the last attempt was rejected: a person's note from a rejected gate (until the
+    task is accepted again), then the redo instruction (it names the label and each
+    failure as `file:line`), or the bare reasons on a record from before it."""
+    revision = _revision(ctx, record.task_id)
+    head = [_revision_text(revision)] if revision is not None else []
     state = record.budget_state
     if state is not None and state.redo:
-        return [state.redo]
-    return list(record.reasons)
+        return [*head, state.redo]
+    return [*head, *record.reasons]
 
 
 async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
@@ -844,7 +982,7 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         "checks": list(rule.checks),
         "attempt": record.dispatches,
         "tries": record.tries,
-        "previous_rejection": _previous_rejection(record),
+        "previous_rejection": _previous_rejection(ctx, record),
         "previous_label": record.state.label,
         "inputs": inputs,
         "instructions": _instructions(role, rule, skills),
@@ -1127,6 +1265,8 @@ async def submit(
             queue.unsubmit(task_id)
         raise
     restored = _settle(ctx, queue, record)
+    if record.status == "accepted":  # the person's note is answered; the gate decides again
+        _revision_path(ctx, task_id).unlink(missing_ok=True)
 
     for check in checks:
         _emit(ctx, record.run_id, task_id, "check_result", check.model_dump(mode="json"))
