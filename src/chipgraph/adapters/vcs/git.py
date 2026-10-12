@@ -18,11 +18,13 @@ removed.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -101,8 +103,19 @@ _STATUS: dict[str, FileStatus] = {
 }
 
 
+_TOKEN_VARS = (
+    "CHIPGRAPH_GITHUB_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GIT_ASKPASS",
+    "CHIPGRAPH_ASKPASS_VALUE",
+)
+"""Variables no git command inherits: tokens, and any other askpass helper. Only
+`push_branch` gives git a token, in its own environment, for that one command."""
+
+
 def _fanout_env() -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in _REDIRECT_VARS}
+    env = {k: v for k, v in os.environ.items() if k not in _REDIRECT_VARS and k not in _TOKEN_VARS}
     # The identity comes from the environment when set there, else a fixed one; the
     # user's git config identity is not needed (and may be missing on a CI runner).
     for key, value in _IDENTITY.items():
@@ -326,7 +339,26 @@ class GitVcs:
     def create_branch(self, root: Path, name: str, commit: str) -> None:
         """Create branch `name` at `commit`; fails if it exists. HEAD is not moved."""
         _git(["check-ref-format", "--branch", name], cwd=root)
+        self._refuse_checked_out(root, name)
         _git(["branch", "--no-track", "--", name, commit], cwd=root)
+
+    def checked_out_branches(self, root: Path) -> frozenset[str]:
+        """Branches checked out in `root`'s repository or in any of its linked worktrees.
+
+        From `git worktree list --porcelain`; a detached worktree has no branch.
+        """
+        out = _out(_git(["worktree", "list", "--porcelain"], cwd=root))
+        prefix = "branch refs/heads/"
+        return frozenset(
+            line[len(prefix) :] for line in out.splitlines() if line.startswith(prefix)
+        )
+
+    def _refuse_checked_out(self, root: Path, name: str) -> None:
+        if name in self.checked_out_branches(root):
+            raise VcsError(
+                f"refusing to touch branch {name!r}: it is checked out in a worktree "
+                "(moving it would change that worktree's HEAD under it)"
+            )
 
     # --- publishing a result branch (M2-11a) -----------------------------------------
 
@@ -348,6 +380,7 @@ class GitVcs:
         A fast-forward only, and only if the branch is still at `old` (compare and swap);
         HEAD, the index and the working tree are not touched.
         """
+        self._refuse_checked_out(root, name)
         if commit == old:
             return
         ancestor = _git(["merge-base", "--is-ancestor", old, commit], cwd=root, check=False)
@@ -407,14 +440,32 @@ class GitVcs:
             _push(args, root, env, secret=token)
 
 
-_TOKEN_VARS = (
-    "CHIPGRAPH_GITHUB_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "GIT_ASKPASS",
-    "CHIPGRAPH_ASKPASS_VALUE",
-)
-"""Variables a push never passes on to git: tokens, and any other askpass helper."""
+def secret_forms(secret: str) -> tuple[str, ...]:
+    """Every spelling of `secret` that may show up in a message: as given, URL-encoded
+    (`quote`, `quote_plus`), base64 (standard and URL-safe, padded and not), and the
+    base64 of the HTTP Basic `user:token` pair that a header or a URL may carry."""
+    raw = secret.encode("utf-8")
+    forms = {secret, urllib.parse.quote(secret, safe=""), urllib.parse.quote_plus(secret)}
+    for blob in (raw, b"x-access-token:" + raw, b":" + raw):
+        for encoder in (base64.b64encode, base64.urlsafe_b64encode):
+            text = encoder(blob).decode("ascii")
+            forms.update({text, text.rstrip("=")})
+    return tuple(sorted((f for f in forms if f), key=len, reverse=True))
+
+
+def redact_secret(text: str, secret: str | None) -> str:
+    """`text` with every form of `secret` (see `secret_forms`) replaced by `***`."""
+    if not secret:
+        return text
+    for form in secret_forms(secret):
+        text = text.replace(form, "***")
+    return text
+
+
+def url_host(url: str) -> str | None:
+    """The host of an `http(s)://` URL, lower-case, without port or user info."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.hostname.lower() if parts.scheme in ("http", "https") and parts.hostname else None
 
 
 ASKPASS_VALUE_VAR = "CHIPGRAPH_ASKPASS_VALUE"
@@ -454,9 +505,9 @@ def _push(args: Sequence[str], root: Path, env: dict[str, str], *, secret: str |
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", "replace").strip()
         stdout = exc.stdout.decode("utf-8", "replace").strip()
-        message = f"git push to {args[-2]!r} failed in {root}: {stderr or stdout}"
-        if secret:
-            message = message.replace(secret, "***")
+        message = redact_secret(
+            f"git push to {args[-2]!r} failed in {root}: {stderr or stdout}", secret
+        )
         raise VcsError(message) from None
     except FileNotFoundError as exc:
         raise VcsError(f"git push failed in {root}: {exc}") from None

@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import stat
 import tempfile
 import time
 import urllib.parse
@@ -41,7 +43,7 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from chipgraph.adapters.review.github import TOKEN_ENV, GitHubReview, ReviewError
-from chipgraph.adapters.vcs.git import GitVcs, VcsError
+from chipgraph.adapters.vcs.git import GitVcs, VcsError, redact_secret, url_host
 from chipgraph.app.build import load_rules
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
@@ -98,6 +100,22 @@ def needs_token(url: str) -> bool:
     return urllib.parse.urlsplit(url).scheme in ("http", "https")
 
 
+def check_token_host(url: str, api_url: str) -> None:
+    """Refuse to send the token to a git host that is not the API's host.
+
+    The remote comes from the repo's git config; a token meant for `api_url`'s GitHub must
+    not be handed to whatever host `origin` points at.
+    """
+    git_host = url_host(url)
+    api_host = url_host(api_url)
+    allowed = {api_host, api_host.removeprefix("api.") if api_host else None} - {None}
+    if git_host is None or git_host not in allowed:
+        raise OpenPrError(
+            f"refusing to send the GitHub token to {git_host or url!r}: the API is at "
+            f"{api_host!r}, so the remote must be on {sorted(str(h) for h in allowed)}"
+        )
+
+
 def _latest_run(layout: StateLayout) -> str:
     runs = layout.runs_dir
     if runs.is_dir():
@@ -121,6 +139,64 @@ def read_record(path: Path) -> PrRecord | None:
         return None
 
 
+def check_branch(branch: str, block: str) -> None:
+    """Refuse a branch name that is not `chipgraph/<run id>/<block>`.
+
+    The name can come from `pr/<block>.json`, a file in the working tree that anyone may
+    edit; moving or pushing `main` because that file says so would publish without a PR.
+    """
+    pattern = rf"{re.escape(BRANCH_PREFIX)}/[A-Za-z0-9][A-Za-z0-9._-]*/{re.escape(block)}"
+    if re.fullmatch(pattern, branch) is None:
+        raise OpenPrError(
+            f"refusing branch {branch!r} for block {block!r}: a block's pull request branch "
+            f"is {BRANCH_PREFIX}/<run id>/{block}"
+        )
+
+
+def _plain_path(base: Path, rel: str, *, what: str) -> Path:
+    """`base / rel` with no symlink on the way and inside `base` (else `OpenPrError`).
+
+    Every component is checked, not only the last: a symlinked directory in the user's tree
+    would read from outside it, and one in the committed tree of the branch would write
+    outside the workspace.
+    """
+    parts = Path(rel).parts
+    if not parts or Path(rel).is_absolute() or any(part in ("", ".", "..") for part in parts):
+        raise OpenPrError(f"{what} path {rel!r} is not a plain relative path")
+    path = base
+    for part in parts:
+        path = path / part
+        if path.is_symlink():
+            raise OpenPrError(f"{what} path {rel!r}: {part!r} is a symlink")
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError:
+        raise OpenPrError(f"{what} path {rel!r} resolves outside {base}") from None
+    return path
+
+
+def _copy_file(src: Path, dest: Path) -> None:
+    """Copy the regular file `src` to `dest` without following a link at either end."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(src, flags)
+    except OSError as exc:
+        raise OpenPrError(f"cannot read {src}: {exc.strerror or exc}") from None
+    with os.fdopen(fd, "rb") as source:
+        mode = os.fstat(source.fileno()).st_mode
+        if not stat.S_ISREG(mode):
+            raise OpenPrError(f"{src} is not a regular file")
+        tmp = dest.with_name(f".{dest.name}.chipgraph-tmp")
+        try:
+            with open(tmp, "xb") as target:
+                shutil.copyfileobj(source, target)
+            os.chmod(tmp, stat.S_IMODE(mode))
+            os.replace(tmp, dest)  # replaces a link itself, never what it points at
+        finally:
+            if tmp.exists() or tmp.is_symlink():
+                tmp.unlink()
+
+
 def build_branch(
     vcs: GitVcs, root: Path, branch: str, files: Sequence[str], message: str
 ) -> tuple[str, str | None]:
@@ -130,6 +206,12 @@ def build_branch(
     outside the user's tree; the branch is then created or fast-forwarded. HEAD, the
     index and the working tree of `root` are never touched.
     """
+    if branch in vcs.checked_out_branches(root):
+        raise OpenPrError(
+            f"refusing branch {branch!r}: it is checked out in a worktree; switch that "
+            "worktree to another branch first (the PR branch is moved without a checkout)"
+        )
+    sources = {rel: _plain_path(root, rel, what="output") for rel in files}
     old = vcs.branch_tip(root, branch)
     base = old or vcs.head(root)
     holder = Path(tempfile.mkdtemp(prefix="chipgraph-pr-"))
@@ -137,12 +219,13 @@ def build_branch(
     try:
         workspace = vcs.create_branch_workspace(root, base, "pr", holder)
         for rel in files:
+            _plain_path(workspace, rel, what="branch")
             dest = workspace / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.is_symlink() or dest.is_dir():
-                raise OpenPrError(f"{rel} is a symlink or a directory at {base[:12]}")
-            shutil.copyfile(root / rel, dest)
-            shutil.copymode(root / rel, dest)
+            dest = _plain_path(workspace, rel, what="branch")  # again: mkdir made the parents
+            if dest.is_dir():
+                raise OpenPrError(f"{rel} is a directory at {base[:12]}")
+            _copy_file(sources[rel], dest)
         commit = vcs.commit_all(workspace, message, paths=list(files))
     finally:
         if workspace is not None:
@@ -199,6 +282,7 @@ def open_block_pr(
         if previous is not None and previous.block == block
         else f"{BRANCH_PREFIX}/{_latest_run(app.layout)}/{block}"
     )
+    check_branch(branch, block)
     message = f"chipgraph: RTL and testbench of block {block} from its approved plan"
     head, _old = build_branch(vcs, root, branch, files, message)
 
@@ -211,6 +295,7 @@ def open_block_pr(
         url = vcs.remote_url(root, remote)
         secret: str | None = None
         if needs_token(url):
+            check_token_host(url, review.api_url)
             secret = token
             if not secret:
                 raise OpenPrError(
@@ -247,7 +332,7 @@ def open_block_pr(
 
 
 def _scrub(text: str, secret: str | None) -> str:
-    return text.replace(secret, "***") if secret else text
+    return redact_secret(text, secret)
 
 
 class OpenPrTool:
@@ -304,6 +389,8 @@ __all__ = [
     "OpenPrTool",
     "PrRecord",
     "build_branch",
+    "check_branch",
+    "check_token_host",
     "needs_token",
     "open_block_pr",
     "read_record",
