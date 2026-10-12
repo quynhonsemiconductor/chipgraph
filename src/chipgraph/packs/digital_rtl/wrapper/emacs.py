@@ -58,15 +58,19 @@ from chipgraph.packs.digital_rtl.wrapper.common import (
     GEN_RULE,
     Wrapper,
     WrapperError,
+    emacs_arg,
     find_wrapper,
+    guarded,
     inside,
     paths,
+    timeout_arg,
 )
 
 EMACS = "emacs"
 """The emacs executable, unless the tool's or check's `emacs` arg names another."""
-TIMEOUT_S = 120.0
-"""How long one emacs run may take."""
+TIMEOUT_S = 30.0
+"""How long one emacs run may take, unless `timeout_s` says otherwise (at most
+`common.MAX_TIMEOUT_S`)."""
 INSTALL_HINT = (
     "install GNU Emacs, which ships verilog-mode: `brew install emacs` (macOS), "
     "`apt install emacs-nox` (Debian, Ubuntu), `dnf install emacs-nox` (Fedora)"
@@ -115,7 +119,7 @@ PINNED: tuple[tuple[str, str], ...] = (
     ("verilog-auto-tieoff-ignore-regexp", "nil"),
     ("verilog-typedef-regexp", "nil"),
     ("verilog-active-low-regexp", "nil"),
-    ("verilog-case-fold", "t"),
+    ("verilog-case-fold", "nil"),
     ("verilog-library-flags", "nil"),
     ("verilog-library-directories", '\'(".")'),
     ("verilog-library-extensions", '\'(".v" ".sv")'),
@@ -140,16 +144,106 @@ def lisp_string(text: str) -> str:
 
 
 def settings(library_files: Sequence[Path]) -> str:
-    """The `--eval` form: file-local variables off, no backups, `PINNED`, the library."""
+    """The `--eval` form: file-local variables off, no backups, `PINNED`, the library.
+
+    No backtrace on an error either: emacs prints one with `cl-prin1`, whose generic
+    functions build their dispatchers with `eval`, which `GUARD` would refuse."""
     files = " ".join(lisp_string(str(p)) for p in library_files)
     pinned = " ".join(f"{name} {value}" for name, value in PINNED)
     return (
         "(progn (setq-default indent-tabs-mode nil) "
         "(setq enable-local-variables nil enable-local-eval nil enable-dir-local-variables nil "
         "make-backup-files nil auto-save-default nil create-lockfiles nil "
-        "large-file-warning-threshold nil) "
+        "large-file-warning-threshold nil backtrace-on-error-noninteractive nil) "
         f"(require (quote verilog-mode)) (setq {pinned} verilog-library-files (list {files})))"
     )
+
+
+GUARD_PREFIX = "chipgraph-guard:"
+"""How the guard's refusals start, in emacs's log and in the error it signals."""
+
+
+def _elisp_regexp(pattern: str) -> str:
+    """A Python regexp of `lisp.SETQ_VARIABLE`'s shape (anchors, `(?:`, `|`) in Emacs syntax."""
+    out = pattern.replace("(?:", "\\(?:").replace("|", "\\|")
+    out = re.sub(r"(?<!\\)\)", r"\\)", out)
+    return "\\`" + out.removeprefix("^").removesuffix("$") + "\\'"
+
+
+def _guard() -> str:
+    functions = " ".join(lisp_string(name) for name in sorted(lisp.FUNCTIONS))
+    regexp_functions = " ".join(lisp_string(name) for name in sorted(lisp.REGEXP_FUNCTIONS))
+    setq = lisp_string(_elisp_regexp(lisp.SETQ_VARIABLE.pattern))
+    return f"""(progn
+ (defvar chipgraph-guard--functions (list {functions}))
+ (defvar chipgraph-guard--regexp-functions (list {regexp_functions}))
+ (defvar chipgraph-guard--setq {setq})
+ (defun chipgraph-guard--refuse (why form)
+  (let ((msg (format "{GUARD_PREFIX} %s: %S" why form)))
+   (message "%s" msg)
+   (error "%s" msg)))
+ (defun chipgraph-guard--check (form setq depth)
+  (cond
+   ((> depth {lisp.MAX_DEPTH}) (chipgraph-guard--refuse "nested too deep" form))
+   ((or (stringp form) (integerp form) (null form) (eq form t) (keywordp form)) t)
+   ((symbolp form)
+    (unless (string-prefix-p "vl-" (symbol-name form))
+     (chipgraph-guard--refuse "a variable other than vl-*" form)))
+   ((not (and (consp form) (proper-list-p form)))
+    (chipgraph-guard--refuse "not a string, integer, symbol or call" form))
+   ((eq (car form) (quote quote))
+    (unless (and (= (length form) 2) (symbolp (nth 1 form)))
+     (chipgraph-guard--refuse "quoted data other than a symbol" form)))
+   ((and setq (eq (car form) (quote setq)))
+    (let ((rest (cdr form)))
+     (when (or (null rest) (= (% (length rest) 2) 1))
+      (chipgraph-guard--refuse "a setq without pairs" form))
+     (while rest
+      (unless (and (symbolp (car rest))
+                   (let ((case-fold-search nil))
+                    (string-match-p chipgraph-guard--setq (symbol-name (car rest)))))
+       (chipgraph-guard--refuse "a setq of a variable other than verilog-mode's name filters"
+                                form))
+      (chipgraph-guard--check (nth 1 rest) nil (1+ depth))
+      (setq rest (nthcdr 2 rest)))))
+   ((not (and (symbolp (car form))
+              (member (symbol-name (car form)) chipgraph-guard--functions)))
+    (chipgraph-guard--refuse "a call of a function not allowed" form))
+   (t
+    (when (and (member (symbol-name (car form)) chipgraph-guard--regexp-functions)
+               (not (stringp (nth 1 form))))
+     (chipgraph-guard--refuse "a regexp that is not a literal string" form))
+    (dolist (arg (cdr form)) (chipgraph-guard--check arg nil (1+ depth))))))
+ (defun chipgraph-guard--eval (orig form &rest args)
+  (save-match-data (chipgraph-guard--check form nil 0))
+  (apply orig form args))
+ (defun chipgraph-guard--eval-region (orig start end &rest args)
+  (when (nth 1 args) (chipgraph-guard--refuse "eval-region with a read function" (nth 1 args)))
+  (save-match-data
+   (save-excursion
+    (save-restriction
+     (narrow-to-region start end)
+     (goto-char (point-min))
+     (let ((more t) form)
+      (while more
+       (condition-case err
+         (setq form (read (current-buffer)))
+        (end-of-file (setq more nil))
+        (error (chipgraph-guard--refuse "unreadable Lisp" err)))
+       (when more (chipgraph-guard--check form t 0)))))))
+  (apply orig start end args))
+ (advice-add (quote eval) :around (function chipgraph-guard--eval))
+ (advice-add (quote eval-region) :around (function chipgraph-guard--eval-region)))"""
+
+
+GUARD = _guard()
+"""The `--eval` form after `settings`: `:around` advice on `eval` and `eval-region` that
+checks, inside emacs, every form verilog-mode evaluates (each form of an `AUTO_LISP` region,
+read with `read` narrowed to it; each template function) against `lisp`'s allow-list:
+strings, integers, `nil`, `t`, keywords, `vl-*` variables, `(quote <symbol>)` and calls of
+`lisp.FUNCTIONS` (a regexp function's regexp a literal string); `setq` only in a region and
+only of `lisp.SETQ_VARIABLE`. Anything else is an error whose message starts with
+`GUARD_PREFIX` (also printed to the log, in case verilog-mode catches it)."""
 
 
 def emacs_argv(emacs: str, scratch_file: Path, library_files: Sequence[Path]) -> list[str]:
@@ -160,20 +254,61 @@ def emacs_argv(emacs: str, scratch_file: Path, library_files: Sequence[Path]) ->
         "--batch",
         "--eval",
         settings(library_files),
+        "--eval",
+        GUARD,
         str(scratch_file),
         "-f",
         "verilog-batch-auto",
     ]
 
 
-_LOCAL_VARIABLES_RE = re.compile(r"Local\s+Variables\s*:", re.IGNORECASE)
-_MODE_LINE_RE = re.compile(r"-\*-")
+# On `lisp.skeleton(text)`, whose offsets are the text's: every spelling emacs may take as
+# Lisp to run or as a file-local variable mark (a superset of what it matches).
+_INERT_RE = re.compile(
+    r"(?P<lisp>auto_lisp(?P<ws>\s*)\()"
+    r"|autoinsert(?P<insert>lisp|last)"
+    r"|(?P<local>local(?P<w1>\s*)variables(?P<w2>\s*):)"
+    r"|(?P<mode>-\*-)"
+)
 
 
-def neutralize(text: str) -> str:
-    """`text` with file-local variables made inert, line for line (see the module)."""
-    text = _LOCAL_VARIABLES_RE.sub("Local Variables (ignored):", text)
-    return _MODE_LINE_RE.sub("- * -", text)
+def neutralize(text: str, *, keep_accepted: bool = False) -> str:
+    """`text` with its Lisp and file-local variables made inert, line for line.
+
+    Matched on `lisp.skeleton(text)`, so a spelling with look-alike letters is caught too:
+    `AUTO_LISP(` becomes `AUTO_LISP (` (verilog-mode looks for `AUTO_LISP(`), unless
+    `keep_accepted` and it is the exact form the scanner accepts, `/*AUTO_LISP(` (the
+    source's copy, which `lisp.scan` has already read; never a vendor file's);
+    `AUTOINSERTLISP`/`AUTOINSERTLAST` become `AUTOINSERT LISP`/`AUTOINSERT LAST`;
+    `Local Variables:` becomes `Local Variables (ignored):` and `-*-` becomes `- * -`.
+    Whitespace in a match is kept, so the line numbers are.
+    """
+    out: list[str] = []
+    last = 0
+    for match in _INERT_RE.finditer(lisp.skeleton(text)):
+        start, end = match.span()
+        if match.group("lisp") is not None:
+            if (
+                keep_accepted
+                and not match.group("ws")
+                and text.startswith(lisp.ACCEPTED_AUTO_LISP, start - 2)
+                and start >= 2
+            ):
+                continue
+            new = "AUTO_LISP " + text[match.start("ws") : match.end("ws")] + "("
+        elif match.group("insert") is not None:
+            new = "AUTOINSERT " + match.group("insert").upper()
+        elif match.group("local") is not None:
+            w1 = text[match.start("w1") : match.end("w1")] or " "
+            w2 = text[match.start("w2") : match.end("w2")]
+            new = f"Local{w1}Variables{w2} (ignored):"
+        else:
+            new = "- * -"
+        out.append(text[last:start])
+        out.append(new)
+        last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def normalize(text: str) -> str:
@@ -304,7 +439,7 @@ async def expand(
     scratch = Path(tempfile.mkdtemp(prefix="chipgraph-wrap-"))
     try:
         target = scratch / f"{name}.sv"
-        target.write_text(neutralize(source), encoding="utf-8", newline="")
+        target.write_text(neutralize(source, keep_accepted=True), encoding="utf-8", newline="")
         copies = []
         for index, path in enumerate(library):
             copy = scratch / "ip" / str(index) / path.name
@@ -320,7 +455,7 @@ async def expand(
         if result.timed_out:
             issue = Issue(rule="wrap.emacs_timeout", msg=f"emacs ran over {timeout_s} s")
             return Expansion(ok=False, infra=True, issues=[issue], versions=found.versions, log=log)
-        if result.returncode != 0:
+        if result.returncode != 0 or GUARD_PREFIX in log:
             return Expansion(
                 ok=False,
                 issues=_emacs_errors(log, src_rel, target.name),
@@ -336,6 +471,19 @@ async def expand(
 def _emacs_errors(log: str, src_rel: str, scratch_name: str) -> list[Issue]:
     """emacs's `%Error: <file>:<line>: <msg>` lines, pointed at the source."""
     issues: list[Issue] = []
+    guarded_lines = sorted(
+        {entry.strip() for entry in log.splitlines() if entry.strip().startswith(GUARD_PREFIX)}
+    )
+    for entry in guarded_lines:
+        issues.append(
+            Issue(
+                file=src_rel,
+                rule="wrap.lisp",
+                msg=f"emacs refused Lisp the expansion tried to run: {entry[:300]}",
+            )
+        )
+    if issues:
+        return issues
     seen: set[tuple[int, str]] = set()
     for match in _ERROR_RE.finditer(log):
         line, msg = int(match.group("line")), match.group("msg").strip()
@@ -420,9 +568,9 @@ class EmacsAutoTool:
             src_rel, out_rel = paths(
                 wrapper, _str_arg(spec.args, "src", None), _str_arg(spec.args, "out", None)
             )
-            emacs = _str_arg(spec.args, "emacs", EMACS) or EMACS
-            timeout = float(spec.args.get("timeout_s", TIMEOUT_S))
-            src_path, out_path = inside(root, src_rel), inside(root, out_rel)
+            emacs = emacs_arg(_str_arg(spec.args, "emacs", EMACS) or EMACS)
+            timeout = timeout_arg(spec.args.get("timeout_s"), TIMEOUT_S)
+            src_path, out_path = guarded(root, src_rel, "src"), guarded(root, out_rel, "out")
         except (WrapperError, TypeError, ValueError) as exc:
             return _result(spec, "error", [Issue(rule="wrap.args", msg=str(exc))], start)
         if not src_path.is_file():
@@ -457,8 +605,11 @@ class EmacsAutoTool:
 
 __all__ = [
     "EMACS",
+    "GUARD",
+    "GUARD_PREFIX",
     "INSTALL_HINT",
     "PINNED",
+    "TIMEOUT_S",
     "EmacsAutoTool",
     "Expansion",
     "body_of",
