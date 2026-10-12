@@ -1,0 +1,52 @@
+# The approved-plan fixture of eval problem rom_wr_resp (evals/rtl/problems.yml), written
+# by hand from the structure of QNSC_ROM_MAS V3.2 (sections 3, 5, 7.3, 7.4, 12), not by a
+# model. The ROM block is three sub-blocks (MAS Table 3-1): the vendored AXI controller,
+# the generated image and the hand-written write-error responder; only the responder is
+# written here, so it is the plan's one module and its top. Its ports are the problem's
+# interface (the eval project's Design Model has them as the block's ports: the MAS's
+# interface tables list the wrapper's and the image's ports, with `i_bus_axi_aw_*` style
+# rows, not the responder's). Widths: QNSC_RAM_MAS Table 5-1 via MAS 5, as the RTL has them.
+schema_version: 1
+block: rom
+top: m_qnsc_rom_wr_resp
+modules:
+  - name: m_qnsc_rom_wr_resp
+    summary: >-
+      The ROM's write-error responder (MAS 7.3): accepts the AW handshake in IDLE and keeps
+      AWID, then accepts and drops W beats up to the one with WLAST, then holds BVALID with
+      BID = the kept AWID and BRESP = SLVERR (2'b10) until BREADY. Resets to IDLE (MAS 7.4).
+    reqs: [ROM_004]
+    interface:
+      ports:
+        - { name: i_clk_mem, direction: input, width: 1 }
+        - { name: i_rst_n_mem, direction: input, width: 1 }
+        - { name: i_bus_axi_aw_addr, direction: input, width: 32 }
+        - { name: i_bus_axi_aw_valid, direction: input, width: 1 }
+        - { name: o_bus_axi_aw_ready, direction: output, width: 1 }
+        - { name: i_bus_axi_aw_burst, direction: input, width: 2 }
+        - { name: i_bus_axi_aw_len, direction: input, width: 8 }
+        - { name: i_bus_axi_aw_id, direction: input, width: 7 }
+        - { name: i_bus_axi_w_data, direction: input, width: 32 }
+        - { name: i_bus_axi_w_strb, direction: input, width: 4 }
+        - { name: i_bus_axi_w_valid, direction: input, width: 1 }
+        - { name: o_bus_axi_w_ready, direction: output, width: 1 }
+        - { name: i_bus_axi_w_last, direction: input, width: 1 }
+        - { name: o_bus_axi_b_id, direction: output, width: 7 }
+        - { name: o_bus_axi_b_resp, direction: output, width: 2 }
+        - { name: o_bus_axi_b_valid, direction: output, width: 1 }
+        - { name: i_bus_axi_b_ready, direction: input, width: 1 }
+    writes:
+      - { path: design/rom/rtl/m_qnsc_rom_wr_resp.sv }
+    budget: { tries: 3, tier: medium }
+assumptions:
+  - AW address, burst and length and W data and strobe are accepted and not used (MAS 5).
+  - One write at a time; W is accepted only after AW (MAS 7.3).
+open_questions: []
+unassigned_reqs:
+  - { req: ROM_001, reason: "read path: the vendored controller and the generated image" }
+  - { req: ROM_002, reason: "read bursts: the vendored controller" }
+  - { req: ROM_003, reason: "first fetch: the bootloader image and the CPU's boot address" }
+  - { req: ROM_005, reason: "reads during a write: the controller's read path, not the responder" }
+  - { req: ROM_006, reason: "util/gen_rom.py and CI, not RTL" }
+  - { req: ROM_007, reason: "a system test through S_BUS" }
+  - { req: ROM_008, reason: "the generated image module and synthesis" }

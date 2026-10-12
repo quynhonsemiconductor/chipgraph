@@ -1,0 +1,179 @@
+# The problems of the `rtl` and `tb` evals (task M2-13): leaf modules of finished QSoC
+# blocks, each graded against the RTL its owner wrote (the oracle), never against an
+# AI-made label. Schema: evals/rtl/problems.py (`ProblemSet`).
+#
+# Every file named here is a fixture under evals/rtl/fixtures/<block>/<path>: the file of
+# quynhonsemiconductor/vlsi_deep_training (public, Apache-2.0) at `commit`, unchanged
+# below a header naming the repository, path, commit and licence
+# (tests/evals/test_rtl_fixtures.py checks them against a QSoC clone that has the commits).
+#
+# Per problem: `interface` is the module's port list as its RTL declares it (the tests
+# compare it with the oracle's declaration and the plan's ports); it is the only thing the
+# stimulus generator reads. `plan` is the approved-plan fixture (plans/), written by hand
+# from the MAS. `reference_tb` (reference/) is a hand-written cocotb test, the fake
+# testbench author's answer. `fake` scripts the fake authors, one reply per try:
+#   rtl: oracle | broken | syntax_error      tb: reference | broken | unknown_port
+# `broken_rtl` makes the oracle lint-clean but wrong; `broken_tb` makes the reference test
+# fail on the oracle. `mutants.exclude` drops generated mutants a spec-based test cannot
+# kill, each with its reason (mutants.py; reviewed by hand).
+schema_version: 1
+repo: quynhonsemiconductor/vlsi_deep_training
+licence: Apache-2.0
+
+# Human RTL of the same repository that is not an oracle: the style the authors imitate
+# (`style.exemplars` of the eval project, copied to style/<name>).
+exemplars:
+  - fixture: common/design/common/rtl/qnsc_sync.sv
+    path: design/common/rtl/qnsc_sync.sv
+    commit: 197927f1784cf36a205d9c56d1b35bf5fb5f9c2a
+    pull_request: 26
+
+problems:
+  - id: rom_wr_resp
+    block: rom
+    module: m_qnsc_rom_wr_resp
+    commit: 58d1d91e858036276c387ad240063b72ab96c7e0
+    pull_request: 51
+    files:
+      spec: doc/specs/QNSC_ROM_MAS.md
+      oracle: design/rom/rtl/m_qnsc_rom_wr_resp.sv
+      filelist: design/rom/rom.f
+    clock: i_clk_mem
+    reset: { name: i_rst_n_mem, active_low: true, kind: async }
+    interface:
+      - { name: i_clk_mem, direction: input, width: 1 }
+      - { name: i_rst_n_mem, direction: input, width: 1 }
+      - { name: i_bus_axi_aw_addr, direction: input, width: 32 }
+      - { name: i_bus_axi_aw_valid, direction: input, width: 1 }
+      - { name: o_bus_axi_aw_ready, direction: output, width: 1 }
+      - { name: i_bus_axi_aw_burst, direction: input, width: 2 }
+      - { name: i_bus_axi_aw_len, direction: input, width: 8 }
+      - { name: i_bus_axi_aw_id, direction: input, width: 7 }
+      - { name: i_bus_axi_w_data, direction: input, width: 32 }
+      - { name: i_bus_axi_w_strb, direction: input, width: 4 }
+      - { name: i_bus_axi_w_valid, direction: input, width: 1 }
+      - { name: o_bus_axi_w_ready, direction: output, width: 1 }
+      - { name: i_bus_axi_w_last, direction: input, width: 1 }
+      - { name: o_bus_axi_b_id, direction: output, width: 7 }
+      - { name: o_bus_axi_b_resp, direction: output, width: 2 }
+      - { name: o_bus_axi_b_valid, direction: output, width: 1 }
+      - { name: i_bus_axi_b_ready, direction: input, width: 1 }
+    plan: rom_wr_resp.plan.yml
+    reference_tb: rom_wr_resp.py
+    mutants:
+      exclude:
+        reset_value-1: >-
+          BID's value outside a response is not specified (MAS 7.3 states BID only with
+          BVALID), so a test from the spec cannot tell a different reset value of the
+          kept AWID; the differential simulation still sees it.
+    fake:
+      rtl: [oracle]
+      tb: [unknown_port, reference]
+      broken_rtl:
+        find: "assign o_bus_axi_b_resp   = 2'b10;"
+        replace: "assign o_bus_axi_b_resp   = 2'b00;"
+        why: answers OKAY instead of SLVERR (MAS 7.3); lints clean
+      broken_tb:
+        find: "SLVERR = 0b10"
+        replace: "SLVERR = 0b11"
+        why: expects BRESP 2'b11, which the MAS does not say
+    why: >-
+      The one hand-written FSM of the ROM block (MAS 3: "the responder is hand-written
+      logic"), with its own MAS section (7.3, 7.4) and verification item (ROM_004); a
+      small AXI write channel with a kept ID: state, handshakes, a reset state.
+    provenance: >-
+      The file header and the pull request's file table say "written by hand", owner
+      Nguyen Hao Nam; its two commits (d224361, f327792) carry a `Co-Authored-By: Claude`
+      trailer, so the owner was assisted by a model. It is the owner's reviewed design,
+      not the output of a generator or an RTL flow.
+    team_testbench: >-
+      None committed: the pull request says a dv/rom testbench (ROM_001/002/004/005)
+      passes locally against the wrapper, and is not in it.
+    notes: >-
+      Block rom also has the vendored AXI controller (nguyenquanicd/AXI4-SRAM-CONTROLLER,
+      licence MentorProvided-QNSC-Course: never copied here), the generated image and the
+      emacs-generated wrapper; none of them is in the problem. The filelist fixture is the
+      block's, as committed; the eval project compiles the module alone.
+
+  - id: syscsr_dbg_en
+    block: syscsr
+    module: m_qnsc_syscsr_dbg_en
+    commit: d792f03df2a03d01a7977c56def54ea46c580378
+    pull_request: 53
+    files:
+      spec: doc/specs/QNSC_SYSCSR_MAS.md
+      oracle: design/syscsr/rtl/m_qnsc_syscsr_dbg_en.sv
+      filelist: design/syscsr/syscsr.f
+    clock: i_clk_cpu
+    reset: { name: i_rst_n_por, active_low: true, kind: async }
+    interface:
+      - { name: i_clk_cpu, direction: input, width: 1 }
+      - { name: i_rst_n_por, direction: input, width: 1 }
+      - { name: i_dbg_en, direction: input, width: 1 }
+      - { name: i_dbg_en_mask, direction: input, width: 1 }
+      - { name: o_dbg_en_masked, direction: output, width: 1 }
+    plan: syscsr_dbg_en.plan.yml
+    reference_tb: syscsr_dbg_en.py
+    fake:
+      rtl: [syntax_error, oracle]
+      tb: [reference]
+      broken_rtl:
+        find: "assign o_dbg_en_masked = r_dbg_en_sync[1] & ~i_dbg_en_mask;"
+        replace: "assign o_dbg_en_masked = r_dbg_en_sync[0] & ~i_dbg_en_mask;"
+        why: one flip-flop instead of two (MAS 7.5); lints clean (a warning only)
+      broken_tb:
+        find: "LATENCY = 2"
+        replace: "LATENCY = 1"
+        why: expects the pin one clock edge later instead of two
+    why: >-
+      The only hand-written logic of SYSCSR (MAS 3, 7.5): a two-flop synchroniser of an
+      asynchronous pin and a mask, with its own verification items (SYSCSR_011, 012);
+      tiny, but latency, reset value and mask polarity are each easy to get wrong.
+    provenance: >-
+      Added by the block owner (Nguyen Hao Nam) in commit 3994908, which carries a
+      `Co-Authored-By: Claude` trailer, so the owner was assisted by a model; MAS 3 calls
+      it the hand-written sub-module. Not the output of a generator or an RTL flow.
+    team_testbench: >-
+      dv/syscsr/tb_syscsr.sv with tests/syscsr_011..013.svh (same commit) drive the
+      wrapper m_qnsc_wrap_syscsr over APB through the generated register block: not
+      runnable against the sub-module alone, so not copied. The reference test checks the
+      same MAS items at the sub-module's ports.
+    notes: >-
+      Block syscsr's register block m_qnsc_syscsr_csr is generated by APB-CSR-Generator
+      and its wrapper by emacs; neither is in the problem.
+
+# Blocks looked at in QSoC main (418b21a and 784c6fc) and its pull requests, and not used.
+rejected:
+  - block: pwm
+    source: "pull requests #26 (wrapper), #69 (testbench)"
+    reason: >-
+      The block is a wrapper around the vendored pulp-platform apb_adv_timer: its
+      behaviour is the vendor IP's, which stays out of the fixtures, and the human RTL is
+      the emacs AUTO wrapper (the digital-rtl/wrapper rule's problem, M2-12), not an
+      rtl_module. Its synchroniser qnsc_sync is used as the style exemplar.
+  - block: intmap
+    source: "pull requests #31 (closed), #32 (open)"
+    reason: >-
+      The RTL was generated with the teacher's AI RTL flow (commit 51cc6f8, the block
+      README): not written by people, so it cannot be an oracle for model-written RTL,
+      and AGENTS.md rule 7 keeps that flow's output out of chipgraph.
+  - block: gpio, uart, i2c, cpu, bus
+    source: "pull requests #45, #67, #11, #12, #34, #37"
+    reason: >-
+      Wrappers around vendored IP (PULP APB GPIO, APB UART and I2C, Ibex with
+      pulp-platform axi_from_mem and axi_mux, the pulp-platform AXI crossbar).
+  - block: syscsr (register block), rom (image, wrapper)
+    source: "pull requests #53, #51"
+    reason: >-
+      m_qnsc_syscsr_csr is APB-CSR-Generator output, m_qnsc_rom_image is util/gen_rom.py
+      output and the wrappers are emacs-generated: not written by people. Their
+      hand-written sub-modules are the two problems.
+  - block: common
+    source: "main (design/common/tech), pull request #26 (qnsc_sync)"
+    reason: >-
+      Technology-cell stand-ins and a generic synchroniser with no MAS of their own; the
+      clock gate's output is a clock, not comparable cycle by cycle. qnsc_sync is the
+      style exemplar.
+  - block: dma, dsram, isram, spi, timer, wdt, scrc, sysdbg, iomux, top
+    source: "main and every pull request"
+    reason: "No RTL written yet (rtl/.gitkeep only); top has only the generated qnsc_pkg."

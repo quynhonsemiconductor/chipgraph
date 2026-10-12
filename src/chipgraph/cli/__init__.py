@@ -1587,7 +1587,9 @@ def eval_cmd(
     suite: Annotated[
         str,
         typer.Argument(
-            help="ask, triage, triage-holdout, triage-holdout2, review or review-holdout2."
+            help=(
+                "ask, triage, triage-holdout, triage-holdout2, review, review-holdout2, rtl or tb."
+            )
         ),
     ],
     runtime: Annotated[
@@ -1596,19 +1598,25 @@ def eval_cmd(
     ] = "fake",
     main_model: Annotated[
         str, typer.Option("--main-model", help="claude-code: the main session's model.")
-    ] = "haiku",
+    ] = "sonnet",
     small_model: Annotated[
         str, typer.Option("--small-model", help="claude-code triage: the small decider tier.")
     ] = "haiku",
     large_model: Annotated[
-        str, typer.Option("--large-model", help="claude-code triage: the large decider tier.")
+        str,
+        typer.Option(
+            "--large-model",
+            help="claude-code: the large tier (triage decider, review critic, rtl/tb escalation).",
+        ),
     ] = "opus",
     budget_usd: Annotated[
-        float,
+        float | None,
         typer.Option(
-            "--budget-usd", min=0.01, help="claude-code: stop once the suite cost reaches this."
+            "--budget-usd",
+            min=0.01,
+            help="claude-code: stop once the suite cost reaches this (default 3; rtl, tb: 10).",
         ),
-    ] = 3.0,
+    ] = None,
     time_limit: Annotated[
         int, typer.Option("--time-limit", min=1, help="claude-code: suite time limit, seconds.")
     ] = 3600,

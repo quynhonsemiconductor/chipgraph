@@ -49,6 +49,9 @@ def runtime_solver(suite: Suite, runtime: Runtime, items: dict[str, Any]) -> Cal
             review = run.answer.get("review") or {}
             comments = len(review.get("comments") or [])
             state.output.completion = f"{review.get('verdict', 'no review')}: {comments} comment(s)"
+        elif suite.kind in ("rtl", "tb"):
+            tries = len(run.answer.get("attempts") or [])
+            state.output.completion = f"{run.answer.get('status')} after {tries} counted tries"
         else:
             state.output.completion = str(run.answer.get("label"))
         return state

@@ -1,0 +1,44 @@
+# The approved-plan fixture of eval problem syscsr_dbg_en (evals/rtl/problems.yml), written
+# by hand from the structure of QNSC_SYSCSR_MAS V3.2 (sections 3, 5, 7.5, 12), not by a
+# model. SYSCSR is the generated register block (APB-CSR-Generator), the emacs-generated
+# wrapper and one hand-written sub-module, `m_qnsc_syscsr_dbg_en` (MAS 3: "the only logic
+# outside the generated block"); only that sub-module is written here, so it is the plan's
+# one module and its top. Its ports are the problem's interface (the eval project's Design
+# Model has them as the block's ports: the MAS's interface table is the wrapper's).
+schema_version: 1
+block: syscsr
+top: m_qnsc_syscsr_dbg_en
+modules:
+  - name: m_qnsc_syscsr_dbg_en
+    summary: >-
+      DBG_BOOT.dbg_en (MAS 7.5): the asynchronous DBG_EN pin through two flip-flops on
+      i_clk_cpu, reset to 0 by i_rst_n_por, forced to 0 while the mask bit
+      DBG_BOOT.dbg_en_mask (i_dbg_en_mask) is 1: dbg_en = mask ? 0 : pin delayed by two
+      flip-flops. Not latched: it follows the pin, rising and falling.
+    reqs: [SYSCSR_011, SYSCSR_012]
+    interface:
+      ports:
+        - { name: i_clk_cpu, direction: input, width: 1 }
+        - { name: i_rst_n_por, direction: input, width: 1 }
+        - { name: i_dbg_en, direction: input, width: 1 }
+        - { name: i_dbg_en_mask, direction: input, width: 1 }
+        - { name: o_dbg_en_masked, direction: output, width: 1 }
+    writes:
+      - { path: design/syscsr/rtl/m_qnsc_syscsr_dbg_en.sv }
+    budget: { tries: 3, tier: medium }
+assumptions:
+  - The mask is the generated register field DBG_BOOT.dbg_en_mask, already in the i_clk_cpu domain.
+  - Behavioural flip-flops; there is no synchroniser cell in design/common/tech yet (MAS 7.5).
+open_questions: []
+unassigned_reqs:
+  - { req: SYSCSR_001, reason: "RESET_CAUSE and CHIP_ID_REV: the generated register block" }
+  - { req: SYSCSR_002, reason: "reset cause: the generated register block" }
+  - { req: SYSCSR_003, reason: "reset cause: the generated register block" }
+  - { req: SYSCSR_004, reason: "W1C RESET_CAUSE: the generated register block" }
+  - { req: SYSCSR_005, reason: "DOMAIN_RST_STATUS: the generated register block" }
+  - { req: SYSCSR_006, reason: "write effects and PSLVERR: the generated register block" }
+  - { req: SYSCSR_007, reason: "APB timing: the generated register block" }
+  - { req: SYSCSR_008, reason: "W1C against a watchdog reset: the generated register block" }
+  - { req: SYSCSR_009, reason: "a SoC test" }
+  - { req: SYSCSR_010, reason: "a netlist check of every SYSCSR flip-flop" }
+  - { req: SYSCSR_013, reason: "the register read path (bits 31:2): the generated register block" }

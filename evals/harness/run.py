@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import report as report_mod
+from .authors import ClaudeCodeAuthorRuntime, FakeAuthorRuntime, author_tiers, missing_tools
 from .project import copy_tinysoc, dev_plugin
 from .review import ClaudeCodeReviewRuntime, FakeReviewRuntime, enable_review
 from .runtimes import (
@@ -48,7 +49,9 @@ class EvalOptions:
     main_model: str = DEFAULT_MAIN_MODEL
     small_model: str = DEFAULT_SMALL_MODEL
     large_model: str = DEFAULT_LARGE_MODEL
-    budget_usd: float = DEFAULT_BUDGET_USD
+    budget_usd: float | None = None
+    """claude-code: the suite's cost cap; None: the suite's own default (`Suite.budget_usd`:
+    $3, or $10 for `rtl` and `tb`)."""
     time_limit_s: float = DEFAULT_TIME_LIMIT_S
     only: tuple[str, ...] = ()
     fake_overrides: Mapping[str, Any] = field(default_factory=dict)
@@ -127,12 +130,16 @@ def run_suite(
     if options.runtime not in RUNTIMES:
         raise EvalError(f"unknown runtime {options.runtime!r} (known: {', '.join(RUNTIMES)})")
     out.mkdir(parents=True, exist_ok=True)
+    budget = options.budget_usd if options.budget_usd is not None else suite.budget_usd
     info: dict[str, Any] = {"runtime": options.runtime, **_versions()}
     if not suite.has_data():
         summary = report_mod.no_data_summary(suite, info)
         _write(out, summary)
         return SuiteResult(summary, out)
     items = _select(suite, options.only)
+    authors = suite.kind in ("rtl", "tb")
+    if authors and (missing := missing_tools(suite.kind)):
+        raise EvalError(f"the {suite.name} suite needs {missing}")
     environ = dict(os.environ)
 
     claude: str | None = None
@@ -147,13 +154,15 @@ def run_suite(
             models["asker"] = "haiku"
         elif suite.kind == "review":
             models["critic"] = options.large_model
+        elif authors:
+            models.update(author_tiers(options.main_model, options.large_model))
         else:
             models.update(small=options.small_model, large=options.large_model)
         info.update(
             models=models,
             auth=auth,
             claude_code=_claude_version(claude, env),
-            cost_usd={"budget": options.budget_usd},
+            cost_usd={"budget": budget},
             time_limit_s=options.time_limit_s,
         )
     else:
@@ -167,12 +176,31 @@ def run_suite(
             tiers = {"small": options.small_model, "large": options.large_model}
         elif options.runtime == "claude-code" and suite.kind == "review":
             tiers = {"large": options.large_model}
-        project = copy_tinysoc(work / "tinysoc", suite, tiers=tiers)
+        project = work if authors else copy_tinysoc(work / "tinysoc", suite, tiers=tiers)
         runtime: Runtime
+        if suite.kind == "review" or authors:
+            (work / "samples").mkdir()
         if suite.kind == "review":
             enable_review(project)
-            (work / "samples").mkdir()
-        if options.runtime == "fake":
+        if authors and options.runtime == "fake":
+            runtime = FakeAuthorRuntime(suite.kind, work / "samples", options.fake_overrides)
+        elif authors:
+            assert claude is not None
+            streams_dir = out / "streams"
+            streams_dir.mkdir(exist_ok=True)
+            runtime = ClaudeCodeAuthorRuntime(
+                suite.kind,
+                work=work / "samples",
+                plugin_dir=dev_plugin(work / "plugin"),
+                streams_dir=streams_dir,
+                main_model=options.main_model,
+                tiers=author_tiers(options.main_model, options.large_model),
+                spend=Spend(budget, options.time_limit_s),
+                claude=claude,
+                env=env,
+                progress=progress,
+            )
+        elif options.runtime == "fake":
             if suite.kind == "ask":
                 runtime = FakeAskRuntime(project, options.fake_overrides)
             elif suite.kind == "review":
@@ -192,7 +220,7 @@ def run_suite(
                 plugin_dir=dev_plugin(work / "plugin"),
                 streams_dir=streams_dir,
                 main_model=options.main_model,
-                spend=Spend(options.budget_usd, options.time_limit_s),
+                spend=Spend(budget, options.time_limit_s),
                 claude=claude,
                 env=env,
                 progress=progress,
@@ -207,7 +235,7 @@ def run_suite(
                 plugin_dir=dev_plugin(work / "plugin"),
                 streams_dir=streams_dir,
                 main_model=options.main_model,
-                spend=Spend(options.budget_usd, options.time_limit_s),
+                spend=Spend(budget, options.time_limit_s),
                 claude=claude,
                 env=env,
                 progress=progress,
