@@ -35,6 +35,14 @@ _LINT_ADAPTER = """  lint:
 """
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tinysoc's `wrap_check` requires emacs when `CI` is set; these tests may run without
+    emacs, so they pin the outside-CI fallback (the CI behaviour is tested in
+    `test_wrap_check_hostile.py`)."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 def _drop_lint(dest: Path) -> None:
     """Remove tinysoc's `lint` adapter: it needs verilator, which CI's test job lacks."""
     profile = dest / ".chipgraph.yml"

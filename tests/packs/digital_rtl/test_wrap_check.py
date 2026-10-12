@@ -61,6 +61,12 @@ def root(tmp_path: Path) -> Path:
     return make_project(tmp_path / "t", commit=False)
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the fallback outside CI; in CI a missing emacs is an error."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 def test_the_check_is_registered() -> None:
     from importlib.metadata import entry_points
 

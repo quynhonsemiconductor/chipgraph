@@ -35,6 +35,14 @@ requires_eda = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tinysoc's `wrap_check` requires emacs when `CI` is set; these tests may run without
+    emacs, so they pin the outside-CI fallback (the CI behaviour is tested in
+    `test_wrap_check_hostile.py`)."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 def _layer(report: AuditReport, layer: int) -> object:
     for entry in report.layers:
         if entry.layer == layer:
