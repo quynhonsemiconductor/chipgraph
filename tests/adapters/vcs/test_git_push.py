@@ -5,7 +5,7 @@ token anywhere git or a log could show it.
   of a descendant is a fast-forward, a push that is not a fast-forward is refused and the
   remote is unchanged;
 - an HTTPS token reaches git only through a `GIT_ASKPASS` helper: not in the command line,
-  the URL, git's config, the environment (other than `GIT_ASKPASS` itself), or an error;
+  the URL, git's config, a file, an error, or any variable but `CHIPGRAPH_ASKPASS_SECRET`;
 - the push runs no hook and no credential helper, and does not prompt.
 """
 
@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from chipgraph.adapters.vcs import git as git_module
-from chipgraph.adapters.vcs.git import GitVcs, VcsError, askpass_helper
+from chipgraph.adapters.vcs.git import ASKPASS_SECRET_VAR, GitVcs, VcsError, askpass_helper
 
 TOKEN = "ghp_FAKE0123456789abcdefSECRETtoken"
 
@@ -115,17 +115,23 @@ def test_no_hook_runs_on_a_push(repo: tuple[Path, Path]) -> None:
 # --- the token ----------------------------------------------------------------------------
 
 
-def test_the_askpass_helper_names_the_token_file_not_the_token(tmp_path: Path) -> None:
+def test_the_askpass_helper_holds_no_secret_and_prints_it_from_the_environment(
+    tmp_path: Path,
+) -> None:
     directory = tmp_path / "ask"
     directory.mkdir()
-    script = askpass_helper(directory, TOKEN)
+    script = askpass_helper(directory)
     assert TOKEN not in script.read_text()
     assert stat.S_IMODE(os.stat(script).st_mode) == 0o700
-    assert stat.S_IMODE(os.stat(directory / "token").st_mode) == 0o600
     assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
-    ask = lambda prompt: subprocess.run(  # noqa: E731
-        [str(script), prompt], check=True, capture_output=True, text=True
-    ).stdout.strip()
+    assert [p.name for p in directory.iterdir()] == ["askpass.sh"]  # nothing secret on disk
+
+    def ask(prompt: str) -> str:
+        env = {"PATH": os.environ["PATH"], ASKPASS_SECRET_VAR: TOKEN}
+        return subprocess.run(
+            [str(script), prompt], check=True, capture_output=True, text=True, env=env
+        ).stdout.strip()
+
     assert ask("Username for 'https://github.com': ") == "x-access-token"
     assert ask("Password for 'https://x-access-token@github.com': ") == TOKEN
 
@@ -147,7 +153,7 @@ class _Spy:
         return [c for c in self.calls if "push" in c[0]]
 
 
-def test_the_token_is_only_in_the_askpass_helper_of_the_git_process(
+def test_the_token_is_only_in_one_variable_of_the_git_process(
     repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, bare = repo
@@ -160,7 +166,7 @@ def test_the_token_is_only_in_the_askpass_helper_of_the_git_process(
     GitVcs().push_branch(root, "origin", head, "feat", token=TOKEN)
     [(cmd, env)] = spy.pushes()
     assert not any(TOKEN in part for part in cmd)
-    assert not [k for k, v in env.items() if TOKEN in v]
+    assert [k for k, v in env.items() if TOKEN in v] == [ASKPASS_SECRET_VAR]
     assert env["GIT_ASKPASS"].endswith("askpass.sh") and env["GIT_ASKPASS"] != "/usr/bin/evil"
     assert not {"CHIPGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "SSH_ASKPASS"} & set(env)
     assert env["GIT_TERMINAL_PROMPT"] == "0"

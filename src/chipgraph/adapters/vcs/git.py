@@ -374,8 +374,9 @@ class GitVcs:
         """Push `commit` to `refs/heads/<branch>` of `remote`: a fast-forward, never a force.
 
         With `token` (an HTTPS remote), git gets it through a `GIT_ASKPASS` helper script
-        in a private temporary directory, removed afterwards: never in the command line,
-        the URL, git config, the environment of git or an error message. No credential
+        in a private temporary directory, removed afterwards, which prints the token from one
+        environment variable of the git process: never in the command line, the URL, git
+        config, a file or an error message. No credential
         helper runs (so nothing is stored), no terminal prompt, no hook. A remote that
         refuses (not a fast-forward, no access) raises `VcsError`.
         """
@@ -400,30 +401,41 @@ class GitVcs:
             _push(args, root, env, secret=None)
             return
         with tempfile.TemporaryDirectory(prefix="chipgraph-askpass-") as tmp:
-            helper = askpass_helper(Path(tmp), token, username=username)
+            helper = askpass_helper(Path(tmp), username=username)
             env["GIT_ASKPASS"] = str(helper)
+            env[ASKPASS_SECRET_VAR] = token
             _push(args, root, env, secret=token)
 
 
-_TOKEN_VARS = ("CHIPGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GIT_ASKPASS")
+_TOKEN_VARS = (
+    "CHIPGRAPH_GITHUB_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GIT_ASKPASS",
+    "CHIPGRAPH_ASKPASS_SECRET",
+)
 """Variables a push never passes on to git: tokens, and any other askpass helper."""
 
 
-def askpass_helper(directory: Path, token: str, *, username: str = "x-access-token") -> Path:
-    """Write a `GIT_ASKPASS` helper in `directory` (private): `username` for git's
-    username prompt, the token for its password prompt. The token is in a separate file,
-    readable by the owner only; the script names that file, not the token."""
+ASKPASS_SECRET_VAR = "CHIPGRAPH_ASKPASS_SECRET"
+"""The variable of the git process that the askpass helper prints as the password."""
+
+
+def askpass_helper(directory: Path, *, username: str = "x-access-token") -> Path:
+    """Write a `GIT_ASKPASS` helper in `directory` (private): it prints `username` for git's
+    username prompt and the value of `ASKPASS_SECRET_VAR` for its password prompt.
+
+    The script holds no secret and nothing secret is written to disk: the token is given to
+    the git process only as that one environment variable (never in the command line, the
+    URL or git's config), and is gone when the process ends.
+    """
     directory.chmod(0o700)
-    secret = directory / "token"
-    fd = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(token)
     script = directory / "askpass.sh"
     script.write_text(
         "#!/bin/sh\n"
         'case "$1" in\n'
         f"  Username*|username*) printf '%s\\n' {_sh_quote(username)} ;;\n"
-        f"  *) cat {_sh_quote(str(secret))} ;;\n"
+        f"  *) printf '%s\\n' \"${{{ASKPASS_SECRET_VAR}}}\" ;;\n"
         "esac\n",
         encoding="utf-8",
     )
