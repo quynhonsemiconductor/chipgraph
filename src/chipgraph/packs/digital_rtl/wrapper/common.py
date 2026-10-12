@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -92,6 +93,52 @@ def inside(root: Path, rel: str) -> Path:
     return path
 
 
+MAX_TIMEOUT_S = 600.0
+"""The longest `timeout_s` a tool or check accepts."""
+_PROTECTED_DIRS = (".git", ".chipgraph")
+
+
+def timeout_arg(value: object, default: float) -> float:
+    """`timeout_s`: `default` when None, else a finite number, `0 < t <= MAX_TIMEOUT_S`
+    (never a bool or a string); `WrapperError` otherwise."""
+    if value is None:
+        value = default
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or not 0 < value <= MAX_TIMEOUT_S
+    ):
+        raise WrapperError(
+            f"args['timeout_s'] must be a number of seconds, 0 < timeout_s <= {MAX_TIMEOUT_S:g}"
+        )
+    return float(value)
+
+
+def emacs_arg(value: str) -> str:
+    """`emacs`: a bare name (looked up on PATH) or an absolute path to an executable file;
+    `WrapperError` otherwise (a relative path would run a file the repository holds)."""
+    if "/" in value or "\\" in value or os.sep in value:
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+            raise WrapperError(
+                "args['emacs'] must be a command name or an absolute path to an executable"
+            )
+    return value
+
+
+def guarded(root: Path, rel: str, key: str = "path") -> Path:
+    """The repo file `rel` (`inside`: refused outside the repository), refused too when any
+    part is `.git` (in any case) or it is under `.chipgraph/`, as written or as resolved."""
+    path = inside(root, rel)
+    real = Path(os.path.realpath(path)).relative_to(Path(os.path.realpath(root)))
+    for parts in (Path(repo_rel(rel)).parts, real.parts):
+        folded = [p.casefold() for p in parts]
+        if ".git" in folded or (folded and folded[0] in _PROTECTED_DIRS):
+            raise WrapperError(f"args[{key!r}] may not name a file under .git/ or .chipgraph/")
+    return path
+
+
 def paths(wrapper: Wrapper, src: str | None = None, out: str | None = None) -> tuple[str, str]:
     """The wrapper's source and generated paths, from templates (default: the rules')."""
     params = wrapper.params
@@ -107,14 +154,18 @@ __all__ = [
     "DEFAULT_OUT",
     "DEFAULT_SRC",
     "GEN_RULE",
+    "MAX_TIMEOUT_S",
     "RULE",
     "Wrapper",
     "WrapperError",
     "all_wrappers",
+    "emacs_arg",
     "fill",
     "find_wrapper",
+    "guarded",
     "inside",
     "instance_id",
     "paths",
     "repo_rel",
+    "timeout_arg",
 ]
