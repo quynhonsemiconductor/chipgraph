@@ -43,7 +43,7 @@ resolve outside the repository, or under `.git/` or `.chipgraph/`), `compare`,
 `require_emacs`, `emacs` (the executable: a trusted profile value, since the check runs
 it; a bare name is looked up on `PATH`, a value with a path separator must be an
 absolute path to an executable file), `timeout_s` (a number of seconds,
-`0 < timeout_s <= 600`; default 120). A source or generated file that cannot be read,
+`0 < timeout_s <= 600`; default 30). A source or generated file that cannot be read,
 or is not UTF-8, is a `wrap.read` issue.
 
 Profile example (`.chipgraph.yml`)::
