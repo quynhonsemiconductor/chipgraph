@@ -190,7 +190,7 @@ def test_lisp_beyond_the_allowed_list_is_refused_before_emacs_runs(root: Path) -
         ({"out": "/etc/x.sv"}, "not a repo-relative path"),
         ({"src": "rtl/{nope}.src.sv"}, "placeholder"),
         ({"out": 3}, "must be a string"),
-        ({"timeout_s": "soon"}, "could not convert"),
+        ({"timeout_s": "soon"}, "timeout_s"),
     ],
 )
 def test_bad_arguments_are_an_error_naming_the_argument(
