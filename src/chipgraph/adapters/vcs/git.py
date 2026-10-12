@@ -403,7 +403,7 @@ class GitVcs:
         with tempfile.TemporaryDirectory(prefix="chipgraph-askpass-") as tmp:
             helper = askpass_helper(Path(tmp), username=username)
             env["GIT_ASKPASS"] = str(helper)
-            env[ASKPASS_SECRET_VAR] = token
+            env[ASKPASS_VALUE_VAR] = token
             _push(args, root, env, secret=token)
 
 
@@ -412,18 +412,18 @@ _TOKEN_VARS = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
     "GIT_ASKPASS",
-    "CHIPGRAPH_ASKPASS_SECRET",
+    "CHIPGRAPH_ASKPASS_VALUE",
 )
 """Variables a push never passes on to git: tokens, and any other askpass helper."""
 
 
-ASKPASS_SECRET_VAR = "CHIPGRAPH_ASKPASS_SECRET"
+ASKPASS_VALUE_VAR = "CHIPGRAPH_ASKPASS_VALUE"
 """The variable of the git process that the askpass helper prints as the password."""
 
 
 def askpass_helper(directory: Path, *, username: str = "x-access-token") -> Path:
     """Write a `GIT_ASKPASS` helper in `directory` (private): it prints `username` for git's
-    username prompt and the value of `ASKPASS_SECRET_VAR` for its password prompt.
+    username prompt and the value of `ASKPASS_VALUE_VAR` for its password prompt.
 
     The script holds no secret and nothing secret is written to disk: the token is given to
     the git process only as that one environment variable (never in the command line, the
@@ -435,7 +435,7 @@ def askpass_helper(directory: Path, *, username: str = "x-access-token") -> Path
         "#!/bin/sh\n"
         'case "$1" in\n'
         f"  Username*|username*) printf '%s\\n' {_sh_quote(username)} ;;\n"
-        f"  *) printf '%s\\n' \"${{{ASKPASS_SECRET_VAR}}}\" ;;\n"
+        f"  *) printf '%s\\n' \"${{{ASKPASS_VALUE_VAR}}}\" ;;\n"
         "esac\n",
         encoding="utf-8",
     )
