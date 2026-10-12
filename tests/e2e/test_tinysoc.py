@@ -40,6 +40,14 @@ _BUG_MARKER = "bogus_signal"
 _BUG_LINE = "  assign pin_out = bogus_signal;\n"
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tinysoc's `wrap_check` requires emacs when `CI` is set; these tests may run without
+    emacs, so they pin the outside-CI fallback (the CI behaviour is tested in
+    `test_wrap_check_hostile.py`)."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 def _invoke(root: Path, *args: str, json_output: bool = False) -> object:
     cli_args = (["--json"] if json_output else []) + ["-C", str(root), *args]
     result = runner.invoke(app, cli_args)

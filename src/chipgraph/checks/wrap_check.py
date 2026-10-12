@@ -23,16 +23,28 @@ generated from the current source (its header's source sha256): the author's che
 before the generator, so a missing or older file is not the author's fault.
 
 Without emacs (or without verilog-mode) the check cannot regenerate. With arg
-`require_emacs: true` that is an `error`. Otherwise (the default, so a CI machine
-without emacs can still run `chipgraph check`), when the committed file's
-`chipgraph:generated` marker matches its content and its header names the current
-source's sha256, the committed expansion is validated as in 3 and the check passes with
-a warning that the regeneration was not verified; anything else is an `error` with the
-install hint.
+`require_emacs: true` that is an `error`; `require_emacs` defaults to true when the
+environment variable `CI` is set (to anything but empty, `0`, `false` or `no`), so a
+CI run never passes on the weaker fallback unless the profile says
+`require_emacs: false`. Otherwise (outside CI, so a machine without emacs can still run
+`chipgraph check`), when the committed file's `chipgraph:generated` marker matches its
+content and its header names the current source's sha256, the committed expansion is
+validated as in 3 and the check passes with a warning that the regeneration was not
+verified; anything else is an `error` with the install hint.
+
+The fallback is weaker than a regeneration, by design: the marker is a plain sha256 of
+the file's content, not a MAC or a signature, so anyone who edits the generated body and
+re-renders the marker and header passes it (with the `wrap.not_regenerated` warning).
+Only a regeneration with emacs catches that edit (`wrap.differs`).
 
 Args (all optional): `src`, `out` (path templates with `{block}`, `{wrapper}`; default
-`rtl/emacs/{wrapper}.src.sv`, `rtl/{wrapper}.sv`, as the rules), `compare`,
-`require_emacs`, `emacs` (the executable), `timeout_s`.
+`rtl/emacs/{wrapper}.src.sv`, `rtl/{wrapper}.sv`, as the rules; refused when they
+resolve outside the repository, or under `.git/` or `.chipgraph/`), `compare`,
+`require_emacs`, `emacs` (the executable: a trusted profile value, since the check runs
+it; a bare name is looked up on `PATH`, a value with a path separator must be an
+absolute path to an executable file), `timeout_s` (a number of seconds,
+`0 < timeout_s <= 600`; default 30). A source or generated file that cannot be read,
+or is not UTF-8, is a `wrap.read` issue.
 
 Profile example (`.chipgraph.yml`)::
 
@@ -43,10 +55,13 @@ Profile example (`.chipgraph.yml`)::
 from __future__ import annotations
 
 import difflib
+import math
+import os
 import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from chipgraph.checks._common import compute_idempotency_key, sha256_file
@@ -182,6 +197,70 @@ def _opt_str(args: Mapping[str, Any], key: str) -> str | None:
     return value
 
 
+MAX_TIMEOUT_S = 600.0
+"""The longest `timeout_s` the check accepts."""
+_PROTECTED_DIRS = (".git", ".chipgraph")
+_CI_OFF = ("", "0", "false", "no")
+
+
+def _timeout(args: Mapping[str, Any]) -> float:
+    """`timeout_s`: a finite number, `0 < t <= MAX_TIMEOUT_S` (never a bool or a string)."""
+    value = args.get("timeout_s", gen.TIMEOUT_S)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or not 0 < value <= MAX_TIMEOUT_S
+    ):
+        raise WrapperError(
+            f"args['timeout_s'] must be a number of seconds, 0 < timeout_s <= {MAX_TIMEOUT_S:g}"
+        )
+    return float(value)
+
+
+def _in_ci() -> bool:
+    return os.environ.get("CI", "").strip().lower() not in _CI_OFF
+
+
+def _require(args: Mapping[str, Any]) -> bool:
+    """`require_emacs`: as given, else whether this runs in CI (see the module)."""
+    value = args.get("require_emacs")
+    if value is None:
+        return _in_ci()
+    if not isinstance(value, bool):
+        raise WrapperError("args['require_emacs'] must be true or false")
+    return value
+
+
+def _emacs(args: Mapping[str, Any]) -> str:
+    """`emacs`: a bare name (looked up on PATH) or an absolute path to an executable."""
+    value = _opt_str(args, "emacs") or gen.EMACS
+    if "/" in value or "\\" in value or os.sep in value:
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+            raise WrapperError(
+                "args['emacs'] must be a command name or an absolute path to an executable"
+            )
+    return value
+
+
+def _guarded(root: Path, rel: str, key: str) -> Path:
+    """The repo file `rel` (`inside`), refused under `.git/` or `.chipgraph/`, as written
+    or as resolved."""
+    path = inside(root, rel)
+    real = Path(os.path.realpath(path)).relative_to(Path(os.path.realpath(root)))
+    for parts in (Path(rel).parts, real.parts):
+        folded = [p.casefold() for p in parts]
+        if ".git" in folded or (folded and folded[0] in _PROTECTED_DIRS):
+            raise WrapperError(f"args[{key!r}] may not name a file under .git/ or .chipgraph/")
+    return path
+
+
+def _read_issue(rel: str, exc: OSError | UnicodeDecodeError) -> Issue:
+    why = "not UTF-8" if isinstance(exc, UnicodeDecodeError) else exc.strerror or str(exc)
+    return Issue(file=rel, rule="wrap.read", msg=f"cannot read {rel}: {why}")
+
+
 class WrapCheck:
     """Regenerates each wrapper and compares it with the committed file (see the module)."""
 
@@ -193,11 +272,9 @@ class WrapCheck:
         args = spec.args
         try:
             mode = _mode(args)
-            require = args.get("require_emacs", False)
-            if not isinstance(require, bool):
-                raise WrapperError("args['require_emacs'] must be true or false")
-            emacs = _opt_str(args, "emacs") or gen.EMACS
-            timeout = float(args.get("timeout_s", gen.TIMEOUT_S))
+            require = _require(args)
+            emacs = _emacs(args)
+            timeout = _timeout(args)
             resolved = load_profile(ctx.repo_root)
             if resolved is None:
                 raise WrapperError("no .chipgraph.yml: the wrappers are listed in the profile")
@@ -264,7 +341,7 @@ class WrapCheck:
         out = _Outcome()
         try:
             src_rel, out_rel = paths(wrapper, _opt_str(args, "src"), _opt_str(args, "out"))
-            src_path, out_path = inside(root, src_rel), inside(root, out_rel)
+            src_path, out_path = _guarded(root, src_rel, "src"), _guarded(root, out_rel, "out")
             vendor = [inside(root, rel) for rel in wrapper.cfg.vendor_files]
         except WrapperError as exc:
             out.issues.append(Issue(rule="wrap.args", msg=str(exc)))
@@ -276,14 +353,22 @@ class WrapCheck:
                 Issue(file=src_rel, rule="wrap.src_missing", msg=f"no wrapper source at {src_rel}")
             )
             return out
-        source = src_path.read_text(encoding="utf-8")
-        out.files.append((src_rel, sha256_file(src_path)))
-        for path, rel in zip(vendor, wrapper.cfg.vendor_files, strict=True):
-            if path.is_file():
-                out.files.append((rel, sha256_file(path)))
-        committed = out_path.read_text(encoding="utf-8") if out_path.is_file() else None
-        if committed is not None:
-            out.files.append((out_rel, sha256_file(out_path)))
+        reading = src_rel
+        try:
+            source = src_path.read_text(encoding="utf-8")
+            out.files.append((src_rel, sha256_file(src_path)))
+            for path, rel in zip(vendor, wrapper.cfg.vendor_files, strict=True):
+                reading = rel
+                if path.is_file():
+                    out.files.append((rel, sha256_file(path)))
+            reading = out_rel
+            committed = out_path.read_text(encoding="utf-8") if out_path.is_file() else None
+            if committed is not None:
+                out.files.append((out_rel, sha256_file(out_path)))
+        except (OSError, UnicodeDecodeError) as exc:
+            out.issues.append(_read_issue(reading, exc))
+            out.infra = isinstance(exc, OSError)
+            return out
         for note in lisp.scan(source):
             if note.note:
                 out.issues.append(
@@ -331,7 +416,12 @@ class WrapCheck:
         elif expansion.infra and {i.rule for i in expansion.issues} <= set(_NO_EMACS):
             marked = committed is not None and verify(committed) is True
             if require or not marked or not fresh:
-                if require:
+                if require and "require_emacs" not in args:
+                    why = (
+                        "the CI environment variable is set, so emacs is required (the "
+                        "marker fallback is not a proof; `require_emacs: false` accepts it)"
+                    )
+                elif require:
                     why = "the profile requires emacs (require_emacs)"
                 elif committed is None:
                     why = f"{out_rel} does not exist"
@@ -354,8 +444,10 @@ class WrapCheck:
                     rule="wrap.not_regenerated",
                     msg=(
                         f"emacs is not available, so {src_rel} was not regenerated: {out_rel} "
-                        "is checked by its generated marker and its source's sha256 instead "
-                        f"({gen.INSTALL_HINT})"
+                        "is checked by its generated marker and its source's sha256 instead. "
+                        "The marker is a plain sha256, not a signature: an edit of the body "
+                        "with a re-rendered header passes here, and only a regeneration "
+                        f"catches it ({gen.INSTALL_HINT})"
                     ),
                 )
             )
@@ -391,4 +483,4 @@ class WrapCheck:
         return out
 
 
-__all__ = ["COMPARE_MODES", "WrapCheck", "compare"]
+__all__ = ["COMPARE_MODES", "MAX_TIMEOUT_S", "WrapCheck", "compare"]

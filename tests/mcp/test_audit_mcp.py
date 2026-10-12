@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 from mcp import Client
 
 from chipgraph.mcp.server import build_server
@@ -25,6 +26,14 @@ _LINT_ADAPTER = """  lint:
     cmd: "make lint BLOCK={block}"
     parser: verilator
 """
+
+
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tinysoc's `wrap_check` requires emacs when `CI` is set; these tests may run without
+    emacs, so they pin the outside-CI fallback (the CI behaviour is tested in
+    `test_wrap_check_hostile.py`)."""
+    monkeypatch.delenv("CI", raising=False)
 
 
 def _drop_lint(dest: Path) -> None:
