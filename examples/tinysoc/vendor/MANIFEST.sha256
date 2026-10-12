@@ -1,0 +1,5 @@
+# sha256 of every vendored file, paths relative to this directory (check: shasum -a 256 -c
+# MANIFEST.sha256). The `vendor_guard` check fails when a file here differs; an IP update
+# replaces its files and this manifest in one reviewed commit.
+ea1acd4a91990986117e467fe82dac2371cdca9be80e8265fd68cf2686b08783  vendor_fifo/vendor_fifo.f
+12f35e0d8def8e168341a0a24bb4576d1d3ddcad9ea2b7ffb8026f1df38a86c1  vendor_fifo/vendor_fifo.sv

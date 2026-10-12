@@ -22,6 +22,11 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
   wired into this project's `.chipgraph.yml`, so `chipgraph check` needs no simulator.
 - `filelists/<block>.f` — one Verilator filelist per block (`timer`, `gpio`, `top`),
   paths relative to this directory.
+- `vendor/vendor_fifo/` — a small FIFO standing in for a third-party IP that must not be
+  edited (its hashes are in `vendor/MANIFEST.sha256`, checked by `vendor_guard`), and its
+  wrapper: `rtl/emacs/tiny_fifo_wrap.src.sv` (the AUTO_TEMPLATE source) expanded by emacs
+  verilog-mode to `rtl/tiny_fifo_wrap.sv` (`digital-rtl/wrapper_gen`; `wrap_check`
+  compares the two); `make lint BLOCK=top` also lints it (`filelists/tiny_fifo_wrap.f`).
 - `Makefile` — `make lint BLOCK=<block>` runs `verilator --lint-only -Wall`;
   `make lint-all` runs it for every block; `make clean` removes build output.
 - `scripts/gen_manifest.py` — writes `build/<block>.manifest.json`: the block's

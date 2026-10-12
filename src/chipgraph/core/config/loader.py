@@ -378,8 +378,8 @@ class ResolvedProfile:
         return leaves
 
     def check(self) -> list[ConfigIssue]:
-        """Consistency problems: user overreach, duplicate layout templates, plan limits,
-        the style section, local plugins."""
+        """Consistency problems: user overreach, duplicate layout templates, wrappers, plan
+        limits, the style section, local plugins."""
         issues: list[ConfigIssue] = []
         for area, user_level in self.user.autonomy.items():
             project_level = self.profile.autonomy.get(area)
@@ -437,6 +437,8 @@ class ResolvedProfile:
                     )
                 else:
                     instance_owner[instance] = block_name
+
+        issues.extend(_wrapper_issues(self.profile))
 
         plan = self.profile.plan
         if plan.max_total_tries < plan.max_modules:
@@ -528,9 +530,9 @@ class ResolvedProfile:
     def for_block(self, name: str) -> Profile:
         """The profile with `blocks[name]` merged over it, if any.
 
-        Only the fields the block sets are merged. `instances` is a block-level fact (D38),
-        not a `Profile` field, so it is dropped from the overlay here; it is consumed
-        directly from `profile.blocks` by ingest.
+        Only the fields the block sets are merged. `instances` (D38) and `wrappers` are
+        block-level facts, not `Profile` fields, so they are dropped from the overlay here;
+        they are read directly from `profile.blocks` (ingest, the wrapper rules).
         """
         override = self.profile.blocks.get(name)
         if override is None:
@@ -540,6 +542,7 @@ class ResolvedProfile:
         # must not reset the project's value to the model default.
         overlay = override.model_dump(mode="python", exclude_unset=True)
         overlay.pop("instances", None)
+        overlay.pop("wrappers", None)
         dummy_source = SourceRef(kind="project", location="", version="")
         merged = _merge(base, overlay, dummy_source, {})
         return Profile.model_validate(merged)
@@ -562,6 +565,54 @@ class ResolvedProfile:
             if rule.reason is not None:
                 reason = rule.reason
         return PathRule(checks=checks, write=write, reason=reason)
+
+
+def _wrapper_issues(profile: Profile) -> list[ConfigIssue]:
+    """`config check` notes on `blocks.<b>.wrappers`: a wrapper name is unique in the
+    project and is no IP's module name; an exemplar is a wrapper source, not an IP file."""
+    issues: list[ConfigIssue] = []
+    owner: dict[str, str] = {}
+    vendor_modules: dict[str, str] = {}
+    vendor_files: set[str] = set()
+    for block in sorted(profile.blocks):
+        for wrapper in profile.blocks[block].wrappers:
+            vendor_modules.setdefault(wrapper.vendor_module, block)
+            vendor_files.update(wrapper.vendor_files)
+    for block in sorted(profile.blocks):
+        for index, wrapper in enumerate(profile.blocks[block].wrappers):
+            key = f"blocks.{block}.wrappers[{index}]"
+            other = owner.setdefault(wrapper.name, block)
+            if other != block:
+                issues.append(
+                    ConfigIssue(
+                        severity="error",
+                        key=key,
+                        message=f"wrapper {wrapper.name!r} is already a wrapper of block {other!r}",
+                    )
+                )
+            if wrapper.name in vendor_modules:
+                issues.append(
+                    ConfigIssue(
+                        severity="error",
+                        key=key,
+                        message=(
+                            f"wrapper {wrapper.name!r} has the name of an IP module that a "
+                            f"wrapper of block {vendor_modules[wrapper.name]!r} instantiates"
+                        ),
+                    )
+                )
+            if wrapper.exemplar is not None and wrapper.exemplar in vendor_files:
+                issues.append(
+                    ConfigIssue(
+                        severity="warning",
+                        key=f"{key}.exemplar",
+                        message=(
+                            f"{wrapper.exemplar} is an IP file; an exemplar is another "
+                            "wrapper's source, whose structure the new wrapper imitates"
+                        ),
+                    )
+                )
+    return issues
 
 
 def _select_issues(profile: Profile) -> list[ConfigIssue]:

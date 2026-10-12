@@ -12,9 +12,14 @@ description: >-
   target `rtl:<block>` (`targets/`) ties them to the testbench of the `dv` pack, the review and
   a pull request: `open_pr` pushes the block's branch and opens the PR, `pr_gate` waits on
   the gate `pr:{block}`; chipgraph never merges. Where a module goes comes from the profile's
-  `layout.rtl`, the testbench's from `layout.tb`.
+  `layout.rtl`, the testbench's from `layout.tb`. Also the wrappers around vendor IP in the
+  emacs verilog-mode AUTO style: the rule `digital-rtl/wrapper` (role `rtl-author`, skill
+  `rtl/wrapper-auto`) writes a wrapper's source, `digital-rtl/wrapper_gen` (tool `emacs_auto`)
+  expands it, check `wrap_check`.
 provides:
   rules:
     - rules
+    - wrapper/rules
   skills:
     - skills
+    - wrapper/skills

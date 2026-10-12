@@ -50,6 +50,7 @@ local = "chipgraph.adapters.runner.local:LocalRunner"
 cmd = "chipgraph.adapters.tool.cmd:CmdTool"
 edalize = "chipgraph.adapters.tool.edalize:EdalizeTool"
 plan_expand = "chipgraph.packs.digital_rtl.plan.expand:PlanExpandTool"
+emacs_auto = "chipgraph.packs.digital_rtl.wrapper.emacs:EmacsAutoTool"
 open_pr = "chipgraph.packs.digital_rtl.pr.open:OpenPrTool"
 pr_gate = "chipgraph.packs.digital_rtl.pr.gate:PrGateTool"
 
@@ -75,6 +76,8 @@ tb_static = "chipgraph.checks.tb_static:TbStaticCheck"
 plan_check = "chipgraph.checks.plan_check:PlanCheck"
 format = "chipgraph.checks.format:FormatCheck"
 style = "chipgraph.checks.style:StyleCheck"
+wrap_check = "chipgraph.checks.wrap_check:WrapCheck"
+vendor_guard = "chipgraph.checks.vendor_guard:VendorGuardCheck"
 
 [project.entry-points."chipgraph.adapters.llm"]
 fake = "chipgraph.adapters.llm.fake:FakeProvider"

@@ -439,13 +439,77 @@ class BlockSpecOverride(BaseModel):
     )
 
 
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+class WrapperCfg(BaseModel):
+    """A wrapper module around a third-party IP of a block, written as a source the
+    project's generator expands (DESIGN 8.2; task M2-12).
+
+    The IP's files are never edited: the wrapper instantiates `vendor_module`, declared in
+    `vendor_files`, and maps its ports to the project's names. `exemplar` is an existing
+    wrapper source whose structure a new wrapper imitates.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(description="The wrapper module's name (also its file names).")
+    vendor_module: str = Field(description="The IP's module the wrapper instantiates.")
+    vendor_files: tuple[str, ...] = Field(
+        min_length=1, description="Repo-relative files that declare the IP's module."
+    )
+    exemplar: str | None = Field(
+        default=None, description="A repo-relative wrapper source to imitate, if any."
+    )
+
+    @field_validator("name", "vendor_module")
+    @classmethod
+    def _check_identifier(cls, value: str) -> str:
+        if not _IDENTIFIER_RE.match(value):
+            raise ValueError(f"{value!r} is not a module name")
+        return value
+
+    @field_validator("vendor_files")
+    @classmethod
+    def _check_files(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for path in value:
+            _check_repo_path(path)
+        if len(set(value)) != len(value):
+            raise ValueError("a vendor file is listed more than once")
+        return value
+
+    @field_validator("exemplar")
+    @classmethod
+    def _check_exemplar(cls, value: str | None) -> str | None:
+        return None if value is None else _check_repo_path(value)
+
+    @model_validator(mode="after")
+    def _check_names(self) -> Self:
+        if self.name == self.vendor_module:
+            raise ValueError(
+                f"wrapper {self.name!r} has the name of the module it wraps; give it its own"
+            )
+        return self
+
+
+def _check_repo_path(path: str) -> str:
+    parts = path.replace("\\", "/").split("/")
+    if not path or path.startswith("/") or re.match(r"^[A-Za-z]:", path) or ".." in parts:
+        raise ValueError(f"{path!r} is not a repo-relative path")
+    return path
+
+
 class BlockOverride(BaseModel):
-    """Per-block overrides: adapters, layout, autonomy, paths, spec requirements, instances.
+    """Per-block overrides: adapters, layout, autonomy, paths, spec requirements, instances,
+    and the block's wrappers.
 
     `instances` names the memory-map instances of this block, treated as an IP (D38):
     e.g. `blocks.timer.instances: [timer_0, timer_1]`. Each name is a single model-key
     part (non-empty, no ':' or '.') and must be unique within the block. With no
     `instances`, the block matches only a same-named instance in the chip contract.
+
+    `wrappers` lists the block's wrappers around third-party IP (`WrapperCfg`); like
+    `instances` it is a block-level fact, not merged into the block's profile.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -473,6 +537,19 @@ class BlockOverride(BaseModel):
             "(non-empty, no ':' or '.'), unique within the block."
         ),
     )
+    wrappers: tuple[WrapperCfg, ...] = Field(
+        default=(),
+        description="Wrappers of this block around third-party IP, each with a unique name.",
+    )
+
+    @field_validator("wrappers")
+    @classmethod
+    def _check_wrappers(cls, value: tuple[WrapperCfg, ...]) -> tuple[WrapperCfg, ...]:
+        names = [w.name for w in value]
+        repeated = sorted({n for n in names if names.count(n) > 1})
+        if repeated:
+            raise ValueError(f"wrapper {repeated[0]!r} is listed more than once")
+        return value
 
     @field_validator("instances")
     @classmethod

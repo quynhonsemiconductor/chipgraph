@@ -203,7 +203,12 @@ def _resolver_for(ctx: AppContext, rules: Iterable[RuleSpec] | None = None) -> F
             return PlanExpansion(ctx, rules)
 
         plans = _plans
-    return _ProfileForeach(ctx, rules, plans)
+    resolver: ForeachResolver = _ProfileForeach(ctx, rules, plans)
+    from chipgraph.packs.digital_rtl.wrapper.resolver import SELECTORS, WrapperForeach
+
+    if any(rule.foreach in SELECTORS for rule in rules):  # `wrappers` (M2-12)
+        resolver = WrapperForeach(resolver, ctx.require_profile().profile)
+    return resolver
 
 
 def project_graph(ctx: AppContext, rules: Sequence[RuleSpec] | None = None) -> BuildGraph:

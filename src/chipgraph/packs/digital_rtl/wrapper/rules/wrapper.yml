@@ -1,0 +1,41 @@
+# A wrapper around a third-party (vendor) IP, in the emacs verilog-mode AUTO style
+# (DESIGN.md 8.2; task M2-12).
+#
+# For each wrapper of the profile (`foreach: wrappers`, params `block` and `wrapper`;
+# `blocks.<block>.wrappers: [{name, vendor_module, vendor_files, exemplar?}]`), an
+# `rtl-author` task writes the wrapper's SOURCE: its port groups (`/*AUTOINPUT("re")*/`,
+# ...), the `AUTO_TEMPLATE` that maps each IP port to a project name, the instance with
+# its parameters and `/*AUTOINST*/`, `/*AUTOWIRE*/`; never the expanded port list, and
+# never a change to the IP's files. Its context (`rtl.wrapper`) holds the IP module's
+# port declaration only (pyslang, header; the IP's files are not inputs, so their text
+# never reaches the author), the wrapper's ports from the Design Model or the plan when
+# the project knows them, the naming rules, the exemplar wrapper when the profile names
+# one (an input) and how the generator expands the source. The author has no shell and
+# cannot run emacs: on submit `wrap_check` expands the source in a scratch copy and its
+# issues (with the expanded lines) are the redo text of the next try.
+#
+# `digital-rtl/wrapper_gen` then writes the expanded `<wrapper>.sv` from this source.
+# A project with another layout (QSoC: `design/{block}/rtl/emacs/`) writes its own copy
+# of both rules in its pack, with the same `src`/`out` templates in the generator's args
+# and the `wrap_check` adapter's.
+#
+# Checks: `wrap_check` (adapter `{ use: wrap_check }`; on the author's try it validates
+# the expansion; it compares with the committed file only once one was generated from
+# this source).
+rule: wrapper
+kind: agent
+role: rtl-author
+description: >-
+  Write the source of the wrapper around the vendor IP: the port groups, an AUTO_TEMPLATE
+  that maps every IP port to the project's names (tie-offs and unused outputs included),
+  and the instance with its parameters and /*AUTOINST*/; the generator expands it.
+foreach: wrappers
+inputs:
+  - model: "block/{block}"
+  - model: "interface/{wrapper}"
+outputs:
+  - "rtl/emacs/{wrapper}.src.sv"
+skills: [rtl/wrapper-auto, org/naming]
+checks: [wrap_check]
+budget:
+  tries: 3

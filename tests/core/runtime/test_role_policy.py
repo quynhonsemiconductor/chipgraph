@@ -93,7 +93,14 @@ def test_the_review_rule_of_the_digital_rtl_pack_passes() -> None:
     rules = load_pack_rules(discover_packs([packs_dir])["digital-rtl"])
     both = [{"block": "timer"}, {"block": "gpio"}]
     blocks = StaticForeach(
-        {"blocks": both, "plan.blocks": both, "plan.block": [], "plan.modules": []}
+        {
+            "blocks": both,
+            "plan.blocks": both,
+            "plan.block": [],
+            "plan.modules": [],
+            "wrappers": [],
+            "wrappers.vendor": [],
+        }
     )
     graph = build_graph(rules, blocks)
     check_agent_rules(graph.rules, graph.instances.values())

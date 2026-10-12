@@ -37,7 +37,7 @@ class _Modules:
         values = {"layout.rtl": "rtl", "layout.tb": "dv/pwm"}
         if expr in ("blocks", "plan.blocks"):
             return [ForeachEntry(params={"block": "pwm"}, vars=values)]
-        if expr == "plan.block":
+        if expr == "plan.block" or expr.startswith("wrappers"):
             return []
         return [
             ForeachEntry(

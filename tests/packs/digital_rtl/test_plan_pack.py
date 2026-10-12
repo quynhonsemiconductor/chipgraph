@@ -94,6 +94,8 @@ def test_the_plan_rules_load_from_the_pack(pack: Pack) -> None:
         "digital-rtl/pr_gate",
         "digital-rtl/review",
         "digital-rtl/rtl_module",
+        "digital-rtl/wrapper",
+        "digital-rtl/wrapper_gen",
     }
     plan = rules["digital-rtl/plan"]
     assert (plan.kind, plan.role, plan.foreach) == ("agent", "planner", "blocks")
@@ -119,6 +121,8 @@ def test_check_agent_rules_accepts_the_plan_rule(pack: Pack) -> None:
             "plan.blocks": [{"block": "timer"}],
             "plan.block": [],
             "plan.modules": [],
+            "wrappers": [],
+            "wrappers.vendor": [],
         }
     )
     graph = build_graph(rules.values(), resolver)

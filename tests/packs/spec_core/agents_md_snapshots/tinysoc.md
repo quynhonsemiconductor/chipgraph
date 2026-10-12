@@ -90,6 +90,8 @@ block name):
 | `spec_schema` | spec_schema | - | - |
 | `style` | style | - | - |
 | `trace` | trace | - | - |
+| `vendor_guard` | vendor_guard | - | - |
+| `wrap_check` | wrap_check | - | - |
 
 ### Requirement IDs
 

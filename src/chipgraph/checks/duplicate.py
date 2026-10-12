@@ -31,7 +31,9 @@ from chipgraph.core.contracts.types import CheckStatus
 from chipgraph.core.plugin_api.types import ToolContext
 
 _DEFAULT_SCOPE = ("**/*.sv", "**/*.v")
-_DEFAULT_IGNORE = ("**/vendor/**", "vendor/**")
+# A wrapper's AUTO source (`<name>.src.sv`, M2-12) declares the module its generated file
+# declares again; vendored IP is not the project's.
+_DEFAULT_IGNORE = ("**/vendor/**", "vendor/**", "**/*.src.sv")
 
 
 class DuplicateCheck:

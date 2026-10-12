@@ -66,6 +66,11 @@ adapters:
     rules: .chipgraph/naming.yml
     scope: ["rtl/**/*.sv"]
   style: { use: style }
+  # The wrapper of the vendored FIFO (M2-12): `wrap_check` regenerates it with emacs and
+  # compares (without emacs it checks the generated file's marker and source hash), and
+  # `vendor_guard` fails when a file under vendor/ differs from vendor/MANIFEST.sha256.
+  wrap_check: { use: wrap_check }
+  vendor_guard: { use: vendor_guard }
 
 blocks:
   timer: {}
@@ -73,3 +78,10 @@ blocks:
   # The top has no MAS of its own: say so, so ingest does not report it missing.
   top:
     layout: { spec: [] }
+    # A wrapper around a third-party IP (vendor/vendor_fifo), written as
+    # rtl/emacs/tiny_fifo_wrap.src.sv and expanded to rtl/tiny_fifo_wrap.sv
+    # (`digital-rtl/wrapper`, `digital-rtl/wrapper_gen`).
+    wrappers:
+      - name: tiny_fifo_wrap
+        vendor_module: vendor_fifo
+        vendor_files: [vendor/vendor_fifo/vendor_fifo.sv]

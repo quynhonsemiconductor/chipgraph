@@ -21,7 +21,8 @@ def test_pack_is_discovered_among_builtins(pack: Pack) -> None:
     assert pack.manifest.version == "0.1.0"
     assert pack.root.name == "digital_rtl"
     provides = pack.manifest.provides
-    assert provides.rules == ("rules",) and provides.skills == ("skills",)
+    assert provides.rules == ("rules", "wrapper/rules")
+    assert provides.skills == ("skills", "wrapper/skills")
     for field in ("agents", "checks", "workflows", "templates", "commands", "schemas"):
         assert getattr(provides, field) == (), field
 
