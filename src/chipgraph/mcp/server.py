@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -31,14 +32,18 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from chipgraph import __version__
 from chipgraph.adapters.runtime.claude_code import decisions as cc_decisions
+from chipgraph.adapters.runtime.claude_code import review as cc_review
 from chipgraph.adapters.runtime.claude_code import service as cc_service
-from chipgraph.app.build import make_scheduler
+from chipgraph.app.build import make_scheduler, project_graph
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity, find_repo_root
 from chipgraph.app.errors import AppError
 from chipgraph.core.config.errors import ConfigError
 from chipgraph.core.contracts import ArtifactRef, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
+from chipgraph.core.engine.graph import BuildGraph, GraphError
+from chipgraph.core.runtime import TaskQueue
+from chipgraph.core.runtime.roles import find_role
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.layout import StateLayout
 from chipgraph.mcp import model_tools
@@ -78,6 +83,153 @@ def _fake_check_instance(check_id: str, block: str | None) -> RuleInstance:
     )
 
 
+def _gated_instance(graph: BuildGraph, gate_id: str) -> str:
+    """The one instance whose rule's gate is `gate_id` (a re-implementation of
+    `chipgraph.cli._gated_instance`); a `ToolError` naming the gates when not exactly one."""
+    found: list[str] = []
+    known: set[str] = set()
+    for iid, inst in graph.instances.items():
+        rule = graph.rules[inst.rule_id]
+        if not rule.gate:
+            continue
+        try:
+            formatted = gate_mod.gate_id_for(rule.gate, inst.params)
+        except gate_mod.GateError:
+            formatted = rule.gate
+        known.add(formatted)
+        if formatted == gate_id:
+            found.append(iid)
+    if len(found) != 1:
+        what = "no instance has" if not found else f"{len(found)} instances have"
+        raise ToolError(
+            f"{what} gate {gate_id!r}: pass instance; gates: {', '.join(sorted(known)) or 'none'}"
+        )
+    return found[0]
+
+
+_SERIOUS = ("blocker", "major")
+"""Review comment severities `status` lists one by one (the others are counted)."""
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _last_checks(ctx: AppContext, run_id: str | None, task_id: str) -> list[dict[str, Any]]:
+    """The check results of a task's last submit: the `check_result` events after its
+    last dispatch in the journal of the run that dispatched it."""
+    if run_id is None or not ctx.layout.journal(run_id).is_file():
+        return []
+    checks: list[dict[str, Any]] = []
+    for event in journal_mod.read(ctx.layout.journal(run_id)).events:
+        if event.rule_instance != task_id:
+            continue
+        if event.type == "agent_turn" and event.payload.get("phase") == "dispatch":
+            checks = []
+        elif event.type == "check_result":
+            checks.append(
+                {
+                    "check_id": event.payload.get("check_id"),
+                    "status": event.payload.get("status"),
+                }
+            )
+    return checks
+
+
+def _block_report(
+    ctx: AppContext, graph: BuildGraph, selected: set[str], block: str
+) -> dict[str, Any]:
+    """What a person reads of one block of a named target's run: each agent task (status,
+    files, checks of its last submit), the Critic's review (verdict, summary, the blocker
+    and major comments) and the pull request record (branch, head, URL)."""
+    queue = TaskQueue(ctx.layout)
+    report: dict[str, Any] = {"tasks": [], "review": None, "pr": None}
+    for iid in graph.topo_order():
+        if iid not in selected:
+            continue
+        instance = graph.instances[iid]
+        if instance.params.get("block") != block:
+            continue
+        rule = graph.rules[instance.rule_id]
+        out = instance.outputs[0].path if instance.outputs else None
+        if rule.kind == "agent":
+            record = queue.get(iid)
+            if record is not None:
+                files = (
+                    sorted(record.accepted_hashes)
+                    if record.status == "accepted"
+                    else list(record.last_result.files_written if record.last_result else ())
+                )
+                report["tasks"].append(
+                    {
+                        "instance": iid,
+                        "role": record.role,
+                        "status": record.status,
+                        "tries_used": record.state.tries_used,
+                        "tries": record.tries,
+                        "files": files,
+                        "checks": _last_checks(ctx, record.run_id, iid),
+                    }
+                )
+            if out is not None and cc_review.is_review_role(find_role(rule.role or "")):
+                data = _read_json(ctx.root / out)
+                if data is not None:
+                    comments = [c for c in data.get("comments", []) if isinstance(c, dict)]
+                    report["review"] = {
+                        "path": out,
+                        "verdict": data.get("verdict"),
+                        "summary": data.get("summary"),
+                        "comments": [
+                            {
+                                k: c.get(k)
+                                for k in ("severity", "file", "line", "claim", "req_id")
+                                if c.get(k) is not None
+                            }
+                            for c in comments
+                            if c.get("severity") in _SERIOUS
+                        ],
+                        "other_comments": sum(c.get("severity") not in _SERIOUS for c in comments),
+                    }
+        elif rule.run is not None and rule.run.use == "open_pr" and out is not None:
+            data = _read_json(ctx.root / out)
+            if data is not None:
+                report["pr"] = {
+                    k: data.get(k)
+                    for k in ("gate", "review", "branch", "head_sha", "number", "url", "files")
+                }
+    return report
+
+
+def _chain_status(ctx: AppContext, rid: str, states: dict[str, str]) -> dict[str, Any]:
+    """The run's named target (`rtl:<block>`) in build order with each instance's state,
+    and a `_block_report` per block of it. Empty when the run's target is not a named
+    target or the graph cannot be built now (the same rows as `chipgraph status`)."""
+    empty: dict[str, Any] = {"target": None, "chain": [], "blocks": {}}
+    if ctx.resolved is None:
+        return empty
+    try:
+        target = journal_mod.read_manifest(ctx.layout, rid).target
+        empty["target"] = target
+        graph = project_graph(ctx)
+        if graph.targets is None or not graph.targets.is_target(target):
+            return empty
+        selected = graph.select(target)
+    except (AppError, GraphError, OSError, ValueError):
+        return empty
+    chain = [
+        {"instance": iid, "state": states.get(iid, "not run")}
+        for iid in graph.topo_order()
+        if iid in selected
+    ]
+    names = sorted({b for iid in selected if (b := graph.instances[iid].params.get("block"))})
+    blocks = {name: _block_report(ctx, graph, selected, name) for name in names}
+    return {"target": target, "chain": chain, "blocks": blocks}
+
+
 def _json_safe(value: object) -> object:
     """Make a `ResolvedProfile.explain()` leaf value JSON-serialisable (tuples -> lists)."""
     if isinstance(value, tuple | list):
@@ -108,7 +260,8 @@ def _guard[F: Callable[..., Awaitable[dict[str, Any]]]](func: F) -> F:
 def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
     """Build the MCP server for the project rooted at (or above) `start`.
 
-    Registers `status`, `build`, `check`, `approve` and `config_show`. `start` and
+    Registers `status`, `build`, `check`, `approve`, `plan_show`, `config_show` and the
+    rest below. `start` and
     `profile_path` are the server's fixed project start directory / profile override
     (mirroring the CLI's `-C/--dir` and `--profile`); everything else about the
     project (the profile, the graph, the state) is re-read from disk on every call.
@@ -118,7 +271,14 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
     def _load_ctx() -> AppContext:
         return AppContext.load(start, profile_path=profile_path)
 
-    @server.tool(description="Show the status of the latest run, or a given run id.")
+    @server.tool(
+        description=(
+            "Show the status of the latest run, or a given run id. For a named target "
+            "(rtl:<block>, plan:<block>) also its chain in build order and, per block, the "
+            "agent tasks (status, files, checks of the last submit), the Critic's verdict "
+            "with its blocker and major comments, and the pull request (branch, URL)."
+        )
+    )
     @_guard
     async def status(run_id: str | None = None) -> dict[str, Any]:
         ctx = _load_ctx()
@@ -149,6 +309,7 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
             "rules": dict(run_state.rules),
             "counts": dict(counts),
             "waiting_gates": waiting,
+            **_chain_status(ctx, rid, dict(run_state.rules)),
         }
 
     @server.tool(description="Build a target with the scheduler and return the run summary.")
@@ -202,12 +363,17 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
         return report.model_dump(mode="json")
 
     @server.tool(
-        description="Record an approve or reject decision for a gate over a rule instance."
+        description=(
+            "Record a person's approve or reject decision for a gate over a rule instance "
+            "(instance: optional when one instance has the gate). Only on a person's "
+            "explicit answer. `by` defaults to the local user (git user.name); a reject "
+            "with a note sends the note to the agent task whose output the gate covers."
+        )
     )
     @_guard
     async def approve(
         gate_id: str,
-        instance: str,
+        instance: str | None = None,
         reject: bool = False,
         by: str | None = None,
         note: str | None = None,
@@ -215,6 +381,8 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
         ctx = _load_ctx()
         ctx.require_profile()
         scheduler = make_scheduler(ctx, "*")
+        if instance is None:
+            instance = _gated_instance(scheduler.graph, gate_id)
         rule_instance = scheduler.graph.instances.get(instance)
         if rule_instance is None:
             raise ToolError(
@@ -233,6 +401,20 @@ def build_server(start: Path, *, profile_path: Path | None = None) -> MCPServer:
             note=note or "",
         )
         return approval.model_dump(mode="json")
+
+    @server.tool(
+        description=(
+            "A block's plan, for the person who approves gate plan:<block> (the data of "
+            "`chipgraph plan show`): gate status and approve command, plan_check errors "
+            "and warnings, modules in build order (summary, reqs, dependencies, write "
+            "sets, ports), REQ coverage, limits, assumptions, open questions. Read-only."
+        )
+    )
+    @_guard
+    async def plan_show(block: str) -> dict[str, Any]:
+        from chipgraph.packs.digital_rtl.plan.show import plan_summary
+
+        return plan_summary(_load_ctx(), block)
 
     @server.tool(description="Show the merged project profile, optionally with each key's source.")
     @_guard

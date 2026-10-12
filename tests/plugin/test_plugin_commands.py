@@ -30,7 +30,7 @@ AGENTS = sorted((PLUGIN / "agents").glob("*.md"))
 MCP_PREFIX = "mcp__plugin_chipgraph_chipgraph__"
 MCP_NAME = re.compile(rf"{MCP_PREFIX}(\w+)")
 # A subagent type the body tells the session to start (not a `/chipgraph:<command>`).
-SUBAGENT_REF = re.compile(r"(?<![/\w:-])chipgraph:([a-z_]+)")
+SUBAGENT_REF = re.compile(r"(?<![/\w:-])chipgraph:([a-z_]+(?:-[a-z_]+)*)")
 NON_MCP_ALLOWED = {"Agent", "AskUserQuestion"}
 FILE_TOOLS = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep"}
 # Every command must keep these out (`allowed-tools` only pre-approves; this removes).
@@ -39,7 +39,17 @@ ALWAYS_DENIED = {"Bash", "NotebookEdit", "Skill", "WebFetch", "WebSearch"}
 # role subagents write their task's outputs; the write guard bounds them).
 FILE_DENIED = {"Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"}
 
-EXPECTED_COMMANDS = {"ask", "decide", "init-chipgraph", "run", "status", "trace", "triage"}
+EXPECTED_COMMANDS = {
+    "ask",
+    "decide",
+    "init-chipgraph",
+    "plan",
+    "rtl",
+    "run",
+    "status",
+    "trace",
+    "triage",
+}
 
 
 def _split(text: str) -> tuple[dict[str, Any], str]:
@@ -141,6 +151,8 @@ def test_trace_and_status_and_init_reach_the_server_tools_they_need() -> None:
         "init-chipgraph": {"init"},
         "ask": {"ask_check"},
         "triage": {"triage", "pending_decisions", "answer_decision"},
+        "plan": {"next_task", "submit", "plan_show", "approve", "status"},
+        "rtl": {"next_task", "submit", "plan_show", "status"},
     }
     for name, tools in expected.items():
         meta, _ = _split((PLUGIN / "commands" / f"{name}.md").read_text(encoding="utf-8"))
