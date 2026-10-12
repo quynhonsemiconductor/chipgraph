@@ -209,10 +209,25 @@ class FanoutCfg(BaseModel):
 
     `max_parallel` unset means `min(4, cpu count)`; a profile sets it lower for an API rate
     limit or an EDA license count. `branch_timeout_s` unset means no limit.
+
+    `isolate` (default **false**) puts each dispatched agent task in its own workspace
+    outside the user's tree: a worktree at HEAD with the task's declared inputs copied
+    in. The subagent writes there, not the user's files. Nothing a subagent does can
+    touch the user's tree until the engine accepts the task and copies **its outputs
+    only** back. This is the F2/F3 isolation rules for parallel agent tasks.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    isolate: bool = Field(
+        default=False,
+        description=(
+            "Run each agent task in an isolated workspace. When true, a task gets its own "
+            "worktree at HEAD, seeded with the task's inputs; the subagent writes there, "
+            "and outputs are copied back only on acceptance. Default false: tasks write "
+            "the user's tree directly, as before."
+        ),
+    )
     max_parallel: int | None = Field(
         default=None,
         ge=1,

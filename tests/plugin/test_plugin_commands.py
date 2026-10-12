@@ -206,3 +206,23 @@ def test_descriptions_name_the_commands(server_tools: set[str]) -> None:
     # The README's tool list stays current: every server tool is named there.
     for tool in server_tools:
         assert f"`{tool}`" in readme or f"`{tool}(" in readme, f"README misses tool {tool}"
+
+
+def test_run_and_rtl_document_best_of_n_candidates() -> None:
+    """The /chipgraph:run and /chipgraph:rtl commands document the candidate field."""
+    run_body = (PLUGIN / "commands" / "run.md").read_text(encoding="utf-8")
+    rtl_body = (PLUGIN / "commands" / "rtl.md").read_text(encoding="utf-8")
+    for body, name in ((run_body, "run.md"), (rtl_body, "rtl.md")):
+        assert "`candidate`" in body or "candidate" in body, f"{name} documents candidate"
+        assert "best-of-N" in body or "best-of" in body.lower(), f"{name} mentions best-of-N"
+        has_suffix = "#N" in body or "candidate suffix" in body
+        assert has_suffix, f"{name} should mention candidate id format"
+
+
+def test_readme_documents_isolation_and_best_of_n() -> None:
+    """The plugin README documents isolated workspaces and best-of-N selection."""
+    readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+    assert "Isolated workspaces" in readme or "isolated workspace" in readme.lower()
+    assert "fanout.isolate" in readme
+    assert "best-of-N" in readme or "Best-of-N" in readme
+    assert "select.rules" in readme or "best_of" in readme

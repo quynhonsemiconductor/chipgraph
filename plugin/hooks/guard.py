@@ -118,6 +118,7 @@ def _check_task(path: Path, task: dict) -> dict:
         and isinstance(task.get("tool_call_cap"), int)
         and isinstance(task.get("denied_reads", []), list)
         and all(isinstance(p, str) for p in task.get("denied_reads", []))
+        and (task.get("workspace") is None or isinstance(task.get("workspace"), str))
     )
     if not ok:
         raise GuardError(f"{path} is not a chipgraph task record")
@@ -213,6 +214,36 @@ def _relative(raw: str, root: Path) -> str | None:
         return path.resolve().relative_to(root).as_posix()
     except ValueError:
         return None
+
+
+def _workspace_relative(raw: str, workspace: Path, project_root: Path) -> tuple[str | None, bool]:
+    """Return (relative_path, is_inside_workspace) for a target path in workspace mode.
+
+    In workspace mode:
+    - A path inside the workspace is allowed and returned as workspace-relative
+    - A path inside the project root (but outside workspace) is denied
+    - A path outside both is denied (outside the project)
+    """
+    # resolve both sides: /var and /private/var (macOS) must compare equal
+    workspace = workspace.resolve()
+    project_root = project_root.resolve()
+    path = Path(raw.replace("\\", "/"))
+    if not path.is_absolute():
+        # In workspace mode, relative paths are resolved from the workspace
+        path = workspace / path
+    resolved = path.resolve()
+    # Check if inside workspace first
+    try:
+        rel = resolved.relative_to(workspace).as_posix()
+        return rel, True
+    except ValueError:
+        pass
+    # Check if inside project root (denied for isolated tasks)
+    try:
+        resolved.relative_to(project_root)
+        return None, False  # Inside project but outside workspace: denied
+    except ValueError:
+        return None, False  # Outside everything: denied
 
 
 # --- read guard -------------------------------------------------------------------------
@@ -475,6 +506,39 @@ def decide(event: dict, root: Path) -> tuple:
         )
     if tool in SHELL_TOOLS:
         return "deny", "chipgraph role subagents do not get a shell"
+
+    # Workspace mode: task has an isolated workspace; all writes must go there
+    workspace = task.get("workspace")
+    if workspace:
+        workspace_path = Path(workspace)
+        # In workspace mode, denied_reads are workspace-relative
+        denied = task.get("denied_reads") or []
+        if denied:
+            reason = read_denial(tool, event.get("tool_input"), workspace_path, denied)
+            if reason:
+                return "deny", reason
+        if tool in WRITE_TOOLS:
+            raw = _target_path(event.get("tool_input"))
+            rel, inside = _workspace_relative(raw, workspace_path, root)
+            if not inside:
+                if rel is None:
+                    # Could be inside project root (but outside workspace) or completely outside
+                    check_project = _relative(raw, root)
+                    if check_project is not None:
+                        return "deny", (
+                            f"{raw} is in the project but outside this task's workspace; "
+                            "this isolated task must write only to its workspace"
+                        )
+                return "deny", f"{raw} is outside the workspace"
+            if rel not in task["allowed_writes"]:
+                return "deny", (
+                    f"{rel} is not an output of task {task_id!r}; "
+                    f"this task may write only: {', '.join(task['allowed_writes'])}"
+                )
+            return "none", f"write to output {rel} in workspace"
+        return "none", "bound subagent (isolated)"
+
+    # Non-isolated mode: writes go to the project root
     denied = task.get("denied_reads") or []
     if denied:
         reason = read_denial(tool, event.get("tool_input"), root, denied)

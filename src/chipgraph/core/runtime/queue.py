@@ -185,6 +185,21 @@ class AgentTaskRecord(BaseModel):
     budget_state: TaskBudgetState | None = Field(
         default=None, description="The loop's count across submits; unset until dispatched."
     )
+    workspace: str | None = Field(
+        default=None,
+        description=(
+            "Absolute path to the task's isolated workspace, when `fanout.isolate` is true "
+            "or the rule sets `isolate: true`. The workspace is a worktree at HEAD with the "
+            "task's declared inputs copied in; the subagent writes there, not the user's tree."
+        ),
+    )
+    seed_hashes: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Content hash of each input file copied into the workspace when it was seeded, "
+            "keyed by repo-relative path. Used to detect changes during the task."
+        ),
+    )
     updated_at: AwareDatetime = Field(default_factory=_now, description="Last change.")
 
     @property
@@ -325,6 +340,7 @@ class TaskQueue:
         output_hashes: Mapping[str, str],
         tool_call_cap: int = DEFAULT_TOOL_CALL_CAP,
         max_dispatches: int | None = None,
+        task_id: str | None = None,
     ) -> AgentTaskRecord:
         """Add `task` as `ready`, or return its existing record (idempotent).
 
@@ -338,8 +354,10 @@ class TaskQueue:
         The model tiers come from the task's role (`RoleSpec.default_tier`,
         `escalate_to`) unless the rule's budget sets `tier` or `escalate` itself.
         `max_dispatches` bounds the dispatches of a new record (see `dispatch`).
+        `task_id` (best-of-N) names the record `<instance id>#<n>` instead of the instance id:
+        a candidate of the same instance, with its own workspace and budget.
         """
-        task_id = task.instance.instance_id
+        task_id = task_id or task.instance.instance_id
         existing = self.get(task_id)
         if existing is not None:
             inputs_changed = existing.inputs_hash != inputs_hash
@@ -387,6 +405,8 @@ class TaskQueue:
         run_id: str,
         baseline: Mapping[str, str],
         denied_reads: Iterable[str] = (),
+        workspace: str | None = None,
+        seed_hashes: Mapping[str, str] | None = None,
     ) -> AgentTaskRecord:
         """Hand the task out: `ready`/`rejected` -> `dispatched`, with a new baseline.
 
@@ -394,6 +414,10 @@ class TaskQueue:
         now) replaces the record's, in the same write as the status change, so the
         guard never sees the task dispatched without it. Counts the dispatch in the
         budget cycle; refused (`QueueError`) once `max_dispatches` were handed out.
+
+        `workspace` (absolute path) and `seed_hashes` (input path -> hash) are set when
+        `fanout.isolate` is true: the task runs in an isolated workspace, not the user's
+        tree. The guard uses `workspace` to route writes there.
         """
         record = self._transition(task_id, OPEN_STATUSES, "dispatch")
         state = record.state
@@ -406,17 +430,16 @@ class TaskQueue:
             self.baselines_dir / f"{state_key(task_id)}.json",
             json.dumps(dict(sorted(baseline.items())), indent=1),
         )
-        return self._put(
-            record.model_copy(
-                update={
-                    "status": "dispatched",
-                    "dispatches": record.dispatches + 1,
-                    "run_id": run_id,
-                    "denied_reads": tuple(sorted(set(denied_reads))),
-                    "budget_state": state.model_copy(update={"dispatches": state.dispatches + 1}),
-                }
-            )
-        )
+        update: dict[str, object] = {
+            "status": "dispatched",
+            "dispatches": record.dispatches + 1,
+            "run_id": run_id,
+            "denied_reads": tuple(sorted(set(denied_reads))),
+            "budget_state": state.model_copy(update={"dispatches": state.dispatches + 1}),
+            "workspace": workspace,
+            "seed_hashes": dict(seed_hashes) if seed_hashes is not None else {},
+        }
+        return self._put(record.model_copy(update=update))
 
     def mark_submitted(self, task_id: str) -> AgentTaskRecord:
         """`dispatched` -> `submitted`: the engine is checking the work (no more writes)."""
