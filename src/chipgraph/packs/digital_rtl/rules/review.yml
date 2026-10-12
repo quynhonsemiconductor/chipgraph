@@ -11,13 +11,17 @@
 # of HEAD with the default branch (so on the default branch itself: HEAD, and the diff is
 # the uncommitted change). Findings never block the build (DESIGN.md 4.8): a valid
 # review is accepted whatever its verdict; people read the verdict.
+#
+# `foreach: plan.blocks` (M2-11a): one instance per block. A block with an approved plan
+# takes every module's files and its testbench as inputs, so its review runs after all
+# of them (target `rtl:<block>`); a block without one is reviewed as it is.
 rule: review
 kind: agent
 role: critic
 description: >-
   Review the block's change against its requirements, interface and Design Model; reply
   with a structured review, which the engine writes as the block's review report.
-foreach: blocks
+foreach: plan.blocks
 inputs:
   - model: "block/{block}"
 outputs:

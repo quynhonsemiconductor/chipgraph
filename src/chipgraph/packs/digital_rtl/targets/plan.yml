@@ -1,0 +1,11 @@
+# `chipgraph build plan:<block>` (and `chipgraph plan <block>`): a block's plan, up to and
+# including its gate (task M2-11a): the planner writes it, plan_check checks it, and the
+# build waits on the gate `plan:<block>` until a person approves it.
+schema_version: 1
+target: plan
+description: A block's plan, up to and including the gate plan:<block>.
+params:
+  - name: block
+    description: A block of the profile.
+select:
+  - select: "digital-rtl/plan_expand[block={block}]"

@@ -23,8 +23,9 @@ one attempt at a time) can reuse them without this loop:
   Author, `rtl`; the RTL Author, `tb`) is shown of a failed check: no issue in a denied
   file, no denied path, no source excerpt, and a note when something was withheld (one
   per denied kind, `withheld_note`). The loop below applies it
-  to the redo text of such a role (denying by the role's kinds and globs; a runtime that
-  knows the task's denied paths passes them too);
+  to the redo text of such a role (denying by the role's kinds and globs, and by the
+  task's denied paths when the executor is given `denied_reads`: the same list the
+  out-of-process runtime gives its guard, layout paths included);
 - `attempt_checks`: the checks the engine adds itself (missing inputs, missing or empty
   outputs, files written outside the outputs).
 
@@ -47,7 +48,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -961,7 +962,10 @@ class _InstanceRun:
         self.infra_note: str | None = None
         self.last_label: FailureLabel = "infra"
         self.last_results: tuple[CheckResult, ...] = ()
-        self.shown = FeedbackFilter.for_role(rule.role, root=str(executor.store.root.resolve()))
+        denied = executor.denied_reads(rule, instance) if executor.denied_reads else ()
+        self.shown = FeedbackFilter.for_role(
+            rule.role, denied=denied, root=str(executor.store.root.resolve())
+        )
 
     def redo(self, results: Sequence[CheckResult], label: FailureLabel, **kw: Any) -> str:
         """`render_feedback` over what the role may see (`FeedbackFilter`)."""
@@ -1202,7 +1206,9 @@ class AgentRuleExecutor:
     `ExecContext`'s check runner is used, so each check runs once per try. `layout`
     enables remembered stops (see the module docstring); without it, every run starts
     with a fresh budget. `max_cost` caps the summed `AgentResult.cost` (USD). `results`
-    holds the last `AgentResult` of each instance.
+    holds the last `AgentResult` of each instance. `denied_reads(rule, instance)` gives
+    the paths and globs the instance's role must not read (the project's layout paths
+    among them), which the redo text of a denying role is filtered by.
     """
 
     def __init__(
@@ -1216,6 +1222,7 @@ class AgentRuleExecutor:
         max_cost: float | None = None,
         stagnation: bool = True,
         checks: CheckRunner | None = None,
+        denied_reads: Callable[[RuleSpec, RuleInstance], Iterable[str]] | None = None,
     ) -> None:
         if max_infra_retries < 0:
             raise ValueError("max_infra_retries must be >= 0")
@@ -1227,6 +1234,7 @@ class AgentRuleExecutor:
         self.max_cost = max_cost
         self.stagnation = stagnation
         self.checks = checks
+        self.denied_reads = denied_reads
         self.results: dict[str, AgentResult] = {}
 
     def max_calls(self, rule: RuleSpec) -> int:

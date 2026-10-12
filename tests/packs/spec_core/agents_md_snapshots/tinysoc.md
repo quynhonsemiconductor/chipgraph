@@ -29,8 +29,9 @@ directories. In a template, `{block}` is the block name and `{BLOCK}` is the blo
 | Kind | Path template |
 |---|---|
 | filelist | `filelists/{block}.f` |
+| rtl | `rtl/*.sv` |
 | spec | `doc/specs/TINY_{BLOCK}_MAS.md` |
-| tb | `dv/**` |
+| tb | `dv/{block}/**`, `dv/**` |
 
 Per-block overrides:
 

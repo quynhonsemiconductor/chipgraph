@@ -92,6 +92,10 @@ class GuardedContext:
     )
     """What `get_context` adds to the task's instructions."""
 
+    def covers(self, path: str) -> str | None:
+        """The context section that already holds file input `path`, if any (none here)."""
+        return None
+
     def __init__(self, ctx: AppContext, instance: RuleInstance) -> None:
         self.ctx = ctx
         self.instance = instance
@@ -214,6 +218,22 @@ class RtlAuthorContext:
     def spec_documents(self) -> list[str]:
         """The block's spec documents that exist: the profile layout's `spec` paths."""
         return spec_documents(self.ctx, self.block)
+
+    def covers(self, path: str) -> str | None:
+        """`rtl.style` / `rtl.naming` for a style input (an exemplar or the naming rules
+        file, which the resolver adds as inputs so an edit makes the module stale): the
+        section shows it, capped and labelled, so its text is not given twice."""
+        section = self.section()
+        style = section.get("style")
+        exemplars = style.get("exemplars", []) if isinstance(style, dict) else []
+        if any(isinstance(e, dict) and e.get("path") == path for e in exemplars):
+            return "rtl.style"
+        if self.block is not None:
+            from chipgraph.packs.digital_rtl.plan.resolver import style_inputs
+
+            if path in style_inputs(self.ctx, self.rules, self.block):
+                return "rtl.naming"
+        return None
 
     def model_input(self, key: str) -> dict[str, Any]:
         """The context entry of the model input `key`."""

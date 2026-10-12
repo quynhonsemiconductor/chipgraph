@@ -29,7 +29,8 @@ def test_pack_is_discovered_among_builtins(pack: Pack) -> None:
 def test_review_rule(pack: Pack) -> None:
     [rule] = [r for r in load_pack_rules(pack) if r.id == "digital-rtl/review"]
     assert rule.id == "digital-rtl/review"
-    assert (rule.kind, rule.role, rule.foreach) == ("agent", "critic", "blocks")
+    # Every block; one with an approved plan after its modules and testbench (M2-11a).
+    assert (rule.kind, rule.role, rule.foreach) == ("agent", "critic", "plan.blocks")
     assert rule.outputs == ("reports/review/{block}.json",)
     assert [(i.source, i.selector) for i in rule.inputs] == [("model", "block/{block}")]
     assert rule.skills == ("review/diff",)

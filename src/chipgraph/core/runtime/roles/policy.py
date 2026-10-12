@@ -9,7 +9,8 @@
   (by its kind, or by a name the role's `deny_globs` match: `denied_kind`).
 - `denied_reads`: the repo-relative paths and globs a task's agent must not read, from
   its role's read policy resolved against the project (the build graph's artifacts and
-  the profile's layout).
+  the profile's layout); `task_denied_reads` is the same for a role id and a profile,
+  the one function every runtime uses for a task (M2-11a).
 - `path_denied` / `covers_denied`: how a path is matched against those (the runtime's
   guard implements the same rules on its own).
 """
@@ -21,6 +22,7 @@ import re
 from collections.abc import Iterable, Mapping
 from fnmatch import fnmatchcase
 
+from chipgraph.core.config.models import Profile
 from chipgraph.core.contracts import ArtifactRef, Budget, ModelTier, RuleInstance, RuleSpec
 from chipgraph.core.runtime.roles.registry import find_role
 from chipgraph.core.runtime.roles.spec import RoleError, RoleSpec
@@ -210,6 +212,31 @@ def denied_reads(
     return tuple(sorted(cleaned - set(keep)))
 
 
+def task_denied_reads(
+    role_id: str | None,
+    *,
+    artifacts: Iterable[ArtifactRef],
+    profile: Profile,
+    keep: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """What a task of `role_id` must not read in the project of `profile` (`denied_reads`).
+
+    `artifacts` are the build graph's inputs and outputs; the profile's `layout` and every
+    block's `layout` override are resolved; `keep` (the task's own outputs) is never
+    listed. Empty for an unknown role or one that may read anything.
+    """
+    role = find_role(role_id) if role_id is not None else None
+    if role is None:
+        return ()
+    return denied_reads(
+        role,
+        artifacts=artifacts,
+        layout=profile.layout,
+        block_layouts={name: block.layout for name, block in profile.blocks.items()},
+        keep=keep,
+    )
+
+
 def static_prefix(pattern: str) -> str:
     """The leading path segments of `pattern` that hold no glob character ('' for none)."""
     parts: list[str] = []
@@ -268,4 +295,5 @@ __all__ = [
     "model_ladder",
     "path_denied",
     "static_prefix",
+    "task_denied_reads",
 ]

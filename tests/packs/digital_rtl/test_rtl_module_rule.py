@@ -34,13 +34,17 @@ class _Modules:
         return [dict(e.params) for e in self.expand_entries(expr)]
 
     def expand_entries(self, expr: str) -> list[ForeachEntry]:
-        if expr == "blocks":
-            return [ForeachEntry(params={"block": "pwm"})]
+        values = {"layout.rtl": "rtl", "layout.tb": "dv/pwm"}
+        if expr in ("blocks", "plan.blocks"):
+            return [ForeachEntry(params={"block": "pwm"}, vars=values)]
+        if expr == "plan.block":
+            return []
         return [
             ForeachEntry(
                 params={"block": "pwm", "module": "tiny_pwm"},
                 inputs=("plan/pwm.approved.json",),
                 writes=frozenset({"rtl/tiny_pwm.sv"}),
+                vars=values,
             )
         ]
 
@@ -53,7 +57,7 @@ def test_the_rule_loads_with_its_role_inputs_checks_and_budget(pack: Pack) -> No
         ("model", "block/{block}"),
         ("model", "interface/{module}"),
     ]
-    assert rule.outputs == ("rtl/{module}.sv",)
+    assert rule.outputs == ("{layout.rtl}/{module}.sv",)  # the block's layout.rtl dir
     assert rule.skills == ("lang-sv/rtl", "org/naming")
     assert rule.checks == ("format", "lint", "naming", "style", "hardcode")  # in this order
     assert rule.budget.tries == 3 and rule.budget.model_fields_set == {"tries"}
