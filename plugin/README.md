@@ -33,6 +33,11 @@ open Claude Code in your chip project (the repo root) and run `/chipgraph:status
   `wrap_check` reports whitespace-only differences and a committed wrapper would not
   compare byte for byte. Emacs is not in the CI image (the tests that need it skip there);
   without it `wrap_check` still checks the committed file by its marker and source hash.
+  That fallback is weaker: the marker is a plain sha256, not a signature, so an edited
+  body with a re-rendered header passes it with a `wrap.not_regenerated` warning. When
+  the environment variable `CI` is set, a missing emacs is therefore an error unless the
+  profile sets `wrap_check: { use: wrap_check, require_emacs: false }`. The `emacs` arg is
+  a trusted profile value (the check runs it): a command name, or an absolute path.
 
 ## Commands
 

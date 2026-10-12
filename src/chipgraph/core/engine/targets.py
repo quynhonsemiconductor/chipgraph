@@ -22,26 +22,52 @@ that is off); an optional one is skipped. A selector is a rule selector only
 
 Params are given in order after the colon, `rtl:timer`, or by name, `rtl:block=timer`,
 comma-separated. This module knows no pack, rule or project: only names and templates.
+
+A target file is data a pack ships, so it is read strictly: every selector is parsed when
+the file loads (a malformed one is an error then, not a selector skipped forever), its
+rule part is a literal rule id (no `:`, so never a target), `optional` is a real boolean,
+param names are unique, a YAML key given twice is an error, and the file's size, nesting
+depth and YAML aliases are capped. Errors are short and never quote the file's values.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Hashable, Iterable, Mapping
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from chipgraph.core.plugin_api.pack import Pack
 
 TARGETS_DIR = "targets"
 """The directory of a pack that holds its target files."""
+MAX_FILE_BYTES = 64 * 1024
+"""The largest target file read."""
+MAX_YAML_DEPTH = 32
+"""The deepest nesting of YAML collections in a target file."""
+MAX_YAML_ALIASES = 16
+"""The most YAML aliases (`*name`) in a target file."""
 
 _NAME_RE = r"^[a-z][a-z0-9_-]*$"
 _VALUE_RE = re.compile(r"^[^\s\[\],=:]+$")
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
+_RULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_]*$")
+"""A rule id, as the contracts' `RuleId` (a selector's rule part)."""
+_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SELECTOR_VALUE_RE = re.compile(r"^[^\s\[\],=]+$")
+_MAX_ERRORS = 5
+_MAX_MSG = 200
 
 
 class TargetError(ValueError):
@@ -59,19 +85,44 @@ class TargetParam(_Model):
     description: str = Field(default="", description="What the param is.")
 
 
+def check_selector(value: str) -> None:
+    """Raise `ValueError` unless `value` is a rule selector, `pack/name` or
+    `pack/name[k=v,...]` (values may hold `{param}` placeholders)."""
+    rule, bracket, rest = value.partition("[")
+    if not _RULE_ID_RE.match(rule):
+        raise ValueError(
+            "a target selector names a rule ('pack/name[...]', never a target), "
+            f"got {value[:_MAX_MSG]!r}"
+        )
+    if not bracket:
+        return
+    if not rest.endswith("]") or "[" in rest[:-1] or "]" in rest[:-1] or not rest[:-1]:
+        raise ValueError(f"malformed selector {value[:_MAX_MSG]!r}: expected '[key=value,...]'")
+    keys: set[str] = set()
+    for pair in rest[:-1].split(","):
+        key, sep, item = (p.strip() for p in pair.partition("="))
+        filled = _PLACEHOLDER_RE.sub("x", item)
+        if not sep or not _KEY_RE.match(key) or not _SELECTOR_VALUE_RE.match(filled):
+            raise ValueError(f"malformed selector {value[:_MAX_MSG]!r}: expected 'key=value'")
+        if "{" in filled or "}" in filled:
+            raise ValueError(f"malformed selector {value[:_MAX_MSG]!r}: a stray brace")
+        if key in keys:
+            raise ValueError(f"malformed selector {value[:_MAX_MSG]!r}: {key!r} given twice")
+        keys.add(key)
+
+
 class TargetSelector(_Model):
     """One graph selector of a target."""
 
     select: str = Field(description="A rule selector, `pack/name[k={param}]`.")
-    optional: bool = Field(
+    optional: StrictBool = Field(
         default=False, description="It may match no instance (it is skipped then)."
     )
 
     @field_validator("select")
     @classmethod
     def _rule_selector(cls, value: str) -> str:
-        if "/" not in value.partition("[")[0]:
-            raise ValueError(f"a target selector names a rule ('pack/name[...]'), got {value!r}")
+        check_selector(value)
         return value
 
 
@@ -86,6 +137,14 @@ class TargetSpec(_Model):
     pack: str | None = Field(default=None, description="The pack that provides it.")
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _unique_params(self) -> TargetSpec:
+        names = [p.name for p in self.params]
+        twice = sorted({n for n in names if names.count(n) > 1})
+        if twice:
+            raise ValueError(f"param(s) {', '.join(twice)} declared twice")
+        return self
 
     def selectors(self, params: Mapping[str, str]) -> tuple[TargetSelector, ...]:
         """The selectors with `params` filled in."""
@@ -186,18 +245,78 @@ class TargetRegistry:
         return ", ".join(f"{k}={v!r}" for k, v in values.items())
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """`yaml.SafeLoader` that refuses duplicate keys, deep nesting and many aliases."""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._depth = 0
+        self._aliases = 0
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node | None:
+        if self.check_event(yaml.AliasEvent):
+            self._aliases += 1
+            if self._aliases > MAX_YAML_ALIASES:
+                raise yaml.YAMLError(f"more than {MAX_YAML_ALIASES} YAML aliases")
+        self._depth += 1
+        try:
+            if self._depth > MAX_YAML_DEPTH:
+                raise yaml.YAMLError(f"YAML nested deeper than {MAX_YAML_DEPTH} levels")
+            return super().compose_node(parent, index)  # type: ignore[arg-type]
+        finally:
+            self._depth -= 1
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[Hashable, object]:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=True)
+            try:
+                twice = key in seen
+            except TypeError:
+                continue  # an unhashable key: SafeConstructor refuses it below
+            if twice:
+                mark = key_node.start_mark
+                raise yaml.YAMLError(f"line {mark.line + 1}: a key is given twice")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _short(exc: ValidationError) -> str:
+    """The validation errors as `where: what`, without the values (they may be huge)."""
+    errors = exc.errors(include_url=False, include_input=False, include_context=False)
+    parts = [
+        f"{'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg'][:_MAX_MSG]}"
+        for e in errors[:_MAX_ERRORS]
+    ]
+    if len(errors) > _MAX_ERRORS:
+        parts.append(f"and {len(errors) - _MAX_ERRORS} more")
+    return "; ".join(parts)
+
+
 def load_target_file(path: Path, *, pack: str | None = None) -> TargetSpec:
-    """Load one target file. Raises `TargetError` naming `path`."""
+    """Load one target file. Raises `TargetError` naming `path` (see the module)."""
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise TargetError(f"cannot read target file {path}: {exc}") from exc
+        data = path.read_bytes()
+        if len(data) > MAX_FILE_BYTES:
+            raise TargetError(f"target file {path} is larger than {MAX_FILE_BYTES} bytes")
+        raw = yaml.load(data.decode("utf-8"), Loader=_StrictLoader)
+    except TargetError:
+        raise
+    except UnicodeDecodeError as exc:
+        raise TargetError(f"cannot read target file {path}: not UTF-8 (byte {exc.start})") from exc
+    except (OSError, yaml.YAMLError, RecursionError) as exc:
+        reason = str(exc)[:_MAX_MSG] if not isinstance(exc, RecursionError) else "nested too deep"
+        raise TargetError(f"cannot read target file {path}: {reason}") from exc
     if not isinstance(raw, dict):
         raise TargetError(f"target file {path} must contain a YAML mapping")
     try:
         spec = TargetSpec.model_validate({**raw, "pack": pack})
     except ValidationError as exc:
-        raise TargetError(f"invalid target file {path}: {exc}") from exc
+        raise TargetError(f"invalid target file {path}: {_short(exc)}") from exc
+    except RecursionError as exc:
+        raise TargetError(f"invalid target file {path}: nested too deep") from exc
     return spec
 
 
@@ -217,6 +336,7 @@ __all__ = [
     "TargetRegistry",
     "TargetSelector",
     "TargetSpec",
+    "check_selector",
     "load_pack_targets",
     "load_target_file",
 ]

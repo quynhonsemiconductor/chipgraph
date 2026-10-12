@@ -285,7 +285,10 @@ class BuildGraph:
             return set(self.instances)
         if self.targets is not None and self.targets.is_target(target):
             return self._select_named(target)
+        return self._select_rule(target)
 
+    def _select_rule(self, target: str) -> set[str]:
+        """`select` of a rule id with an optional params filter (never a named target)."""
         rule_id, params = _parse_target(target)
         if rule_id not in self.rules:
             raise GraphError(f"select: unknown rule id {rule_id!r} in target {target!r}")
@@ -304,7 +307,10 @@ class BuildGraph:
         return result
 
     def _select_named(self, target: str) -> set[str]:
-        """`select` of a named target: each selector, a required one must match."""
+        """`select` of a named target: each selector, a required one must match.
+
+        A selector is a rule selector only: it goes to `_select_rule`, never back to a
+        target, so a selector that looks like one cannot recurse."""
         assert self.targets is not None
         try:
             selectors = self.targets.resolve(target)
@@ -313,7 +319,7 @@ class BuildGraph:
         result: set[str] = set()
         for selector in selectors:
             try:
-                result |= self.select(selector.select)
+                result |= self._select_rule(selector.select)
             except GraphError as exc:
                 if selector.optional:
                     continue
