@@ -7,6 +7,7 @@ from typing import Any
 from .suites import Suite
 
 SCHEMA_VERSION = 1
+TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
 
 
 def _per_class(confusion: dict[str, dict[str, int]]) -> dict[str, dict[str, Any]]:
@@ -93,6 +94,66 @@ def _pct(value: float | None) -> str:
     return "-" if value is None else f"{value:.0%}"
 
 
+def _author_lines(metrics: dict[str, Any]) -> list[str]:
+    """The `rtl` / `tb` metrics against their thresholds."""
+    th = metrics["thresholds"]
+    lines = [
+        f"- pass@1: {_pct(metrics['pass_at_1'])}; pass@k: {_pct(metrics['pass_at_k'])} "
+        f"(needs >= {_pct(th['min_pass_at_k'])}); repair turns (tries used), mean: "
+        f"{metrics['repair_turns_mean']}",
+    ]
+    if metrics["phase"] == "rtl":
+        lines.append(
+            f"- cycles matching the oracle, mean: {_pct(metrics.get('match_fraction_mean'))}"
+        )
+    else:
+        lines.append(
+            f"- soundness on the oracle, mean: {_pct(metrics.get('soundness_mean'))}; mutation "
+            f"score, mean: {_pct(metrics.get('mutation_score_mean'))} "
+            f"(needs >= {_pct(th['min_mutation_score'])})"
+        )
+    usage = metrics.get("usage_by_model") or {}
+    per_model = ", ".join(
+        f"{m} ${u.get('cost_usd', 0):.4f} / {int(sum(u.get(k, 0) for k in TOKEN_KEYS))} tok"
+        for m, u in usage.items()
+    )
+    lines.append(f"- tokens: {metrics['tokens']}" + (f" ({per_model})" if per_model else ""))
+    estimate = metrics.get("estimate")
+    if estimate:
+        lines.append(
+            f"- estimated real run (fake run's text, {estimate['basis']}): "
+            f"~${estimate['usd']:.2f} for {metrics['problems']} problem(s)"
+        )
+    return lines
+
+
+def _author_table(metrics: dict[str, Any], items: list[dict[str, Any]]) -> list[str]:
+    """One row per problem."""
+    rtl = metrics["phase"] == "rtl"
+    match = "cycles match" if rtl else "sound / mutants"
+    lines = [
+        f"| problem | pass@1 | pass@k | tries | first rejection | {match} | cost | tokens | wall |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for g in items:
+        if rtl:
+            diff = g.get("diff") or {}
+            got = f"{_pct(diff.get('match_fraction'))} ({diff.get('status', '-')})"
+        else:
+            tb = g.get("tb") or {}
+            got = (
+                f"{_pct(tb.get('soundness'))} / {len(tb.get('killed') or [])} of "
+                f"{tb.get('mutants', 0)} killed"
+            )
+        lines.append(
+            f"| {g['id']} | {'yes' if g['pass_at_1'] else 'no'} | "
+            f"{'yes' if g['pass_at_k'] else 'no'} | {g['repair_turns']}/{g['k']} | "
+            f"{g['first_rejection'] or '-'} | {got} | ${g['cost_usd']:.4f} | {g['tokens']} | "
+            f"{g['wall_s']:.0f} s |"
+        )
+    return lines
+
+
 def markdown(summary: dict[str, Any]) -> str:
     """`summary.md`: the verdict, the metrics against the thresholds, cost, and failures."""
     lines = [f"## chipgraph eval `{summary['suite']}`: {summary['verdict']}", ""]
@@ -116,6 +177,8 @@ def markdown(summary: dict[str, Any]) -> str:
             f"- unanswerable: {metrics['said_unknown']}/{metrics['unanswerable']} said unknown; "
             f"invented: {metrics['invented']} (needs <= {th['max_invented']})",
         ]
+    elif "pass_at_k" in metrics:
+        lines += _author_lines(metrics)
     elif "recall" in metrics:
         th = metrics["thresholds"]
         by_class = ", ".join(
@@ -157,6 +220,8 @@ def markdown(summary: dict[str, Any]) -> str:
     lines.append(f"- cost: ${cost['total']:.4f}{budget}; wall time {summary['wall_s']:.0f} s")
     if summary["foreign_tool_calls"]:
         lines.append(f"- forbidden tool calls: {', '.join(summary['foreign_tool_calls'])}")
+    if "pass_at_k" in metrics:
+        lines += ["", *_author_table(metrics, summary["items"])]
     failed = [i for i in summary["items"] if not i["passed"]]
     if failed:
         lines += ["", "| sample | note |", "|---|---|"]

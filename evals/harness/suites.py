@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import sys
@@ -16,11 +17,30 @@ REPO = EVALS.parent
 TINYSOC = REPO / "examples" / "tinysoc"
 PLUGIN = REPO / "plugin"
 
-SuiteKind = Literal["ask", "triage", "review"]
+SuiteKind = Literal["ask", "triage", "review", "rtl", "tb"]
+RTL_PACKAGE = "chipgraph_evals_rtl"
+
+
+def rtl_module(name: str) -> ModuleType:
+    """A module of `evals/rtl/` (the `rtl` and `tb` suites), loaded as part of the package
+    `chipgraph_evals_rtl`."""
+    if RTL_PACKAGE not in sys.modules:
+        rtl = EVALS / "rtl"
+        spec = importlib.util.spec_from_file_location(
+            RTL_PACKAGE, rtl / "__init__.py", submodule_search_locations=[str(rtl)]
+        )
+        assert spec is not None and spec.loader is not None
+        package = importlib.util.module_from_spec(spec)
+        sys.modules[RTL_PACKAGE] = package
+        spec.loader.exec_module(package)
+    return importlib.import_module(f"{RTL_PACKAGE}.{name}")
 
 
 def load_grader(kind: SuiteKind) -> ModuleType:
-    """`evals/<kind>/grade.py`, as the module `<kind>_grade` (reused if already loaded)."""
+    """`evals/<kind>/grade.py`, as the module `<kind>_grade` (reused if already loaded);
+    `evals/rtl/grade.py` for both `rtl` and `tb`."""
+    if kind in ("rtl", "tb"):
+        return rtl_module("grade")
     name = f"{kind}_grade"
     path = EVALS / kind / "grade.py"
     loaded = sys.modules.get(name)
@@ -43,6 +63,8 @@ class Suite:
     data: Path
     logs: Path | None = None
     description: str = ""
+    budget_usd: float = 3.0
+    """The default `--budget-usd` of a claude-code run of this suite."""
 
     @property
     def grader(self) -> ModuleType:
@@ -55,6 +77,8 @@ class Suite:
         """The grader's items: `Question`s (ask) or `Sample`s (triage, review), in file order."""
         if self.kind == "ask":
             return list(self.grader.load_questions(self.data))
+        if self.kind in ("rtl", "tb"):
+            return list(self.grader.load_samples(self.data, self.kind))
         return list(self.grader.load_samples(self.data))
 
     def log_path(self, sample_id: str) -> Path:
@@ -75,7 +99,7 @@ class Suite:
         the review target (`digital-rtl/review[block=<block>]`)."""
         if self.kind == "ask":
             return str(item.question)
-        if self.kind == "review":
+        if self.kind in ("review", "rtl", "tb"):
             return str(item.target)
         check = self.check_id(item.id)
         return f"logs/{item.id}.log" + (f" {check}" if check else "")
@@ -87,6 +111,8 @@ class Suite:
             return ["unknown"] if item.unknown else list(item.expected)
         if self.kind == "review":
             return ["clean"] if item.clean else [f"{item.at_file}:{item.at_line}"]
+        if self.kind in ("rtl", "tb"):
+            return [f"{item.problem.files.oracle} ({item.problem.commit[:7]})"]
         return [str(item.label)]
 
 
@@ -136,6 +162,26 @@ SUITES: dict[str, Suite] = {
             "(>= 12 of 17), <= 1 false alarm on 8 clean diffs"
         ),
     ),
+    "rtl": Suite(
+        "rtl",
+        "rtl",
+        EVALS / "rtl" / "problems.yml",
+        description=(
+            "RTL Author (digital-rtl/rtl_module) on finished QSoC blocks, differential "
+            "against the human RTL: pass@k >= 50 %"
+        ),
+        budget_usd=10.0,
+    ),
+    "tb": Suite(
+        "tb",
+        "tb",
+        EVALS / "rtl" / "problems.yml",
+        description=(
+            "testbench Author (dv/tb_module) on finished QSoC blocks, run on the human RTL "
+            "and its mutants: pass@k >= 50 %, mean mutation score >= 50 %"
+        ),
+        budget_usd=10.0,
+    ),
 }
 """The suites `chipgraph eval` knows, by name.
 
@@ -144,7 +190,21 @@ author who never read the Critic's prompt, role, skill, context builder or revie
 it is graded only, with the thresholds of `review`, unchanged: recall >= 70 % (at least
 12 of its 17 defects) and at most 1 false alarm on its 8 clean diffs. Both runtimes run
 it exactly as they run `review`.
+
+`rtl` and `tb` (task M2-13) share `rtl/problems.yml`: the RTL Author and the testbench
+Author, each on its own, on leaf modules of finished QSoC blocks, graded by
+`rtl/grade.py` against the RTL people wrote. Not in the weekly workflow (cost).
 """
 
 
-__all__ = ["EVALS", "PLUGIN", "REPO", "SUITES", "TINYSOC", "Suite", "SuiteKind", "load_grader"]
+__all__ = [
+    "EVALS",
+    "PLUGIN",
+    "REPO",
+    "SUITES",
+    "TINYSOC",
+    "Suite",
+    "SuiteKind",
+    "load_grader",
+    "rtl_module",
+]

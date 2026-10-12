@@ -21,6 +21,10 @@ Runtimes (`runtimes`):
 The `review` suite (task M2-09) has its own runtimes (`review`): each sample is its own
 tinysoc copy with a planted change, reviewed by the rule `digital-rtl/review`.
 
+The `rtl` and `tb` suites (task M2-13) have theirs too (`authors`): each problem of
+`evals/rtl/problems.yml` in an eval project of its own, the RTL or testbench Author's
+rule, graded by `evals/rtl/grade.py` against the RTL people wrote.
+
 `run_suite` runs one suite and writes, in its output directory, the Inspect log
 (`logs/`), the answers in the graders' JSONL format (`answers.jsonl`) and a short summary
 (`summary.json`, `summary.md`; `report`).

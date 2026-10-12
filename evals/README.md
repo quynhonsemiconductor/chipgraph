@@ -9,11 +9,11 @@ Real-model runs use `chipgraph eval --runtime claude-code`, by hand or in the `e
 
 ```bash
 chipgraph eval SUITE [--runtime fake|claude-code] [--main-model sonnet]
-               [--small-model haiku] [--large-model opus] [--budget-usd 3]
+               [--small-model haiku] [--large-model opus] [--budget-usd 3 (rtl, tb: 10)]
                [--time-limit 3600] [--out DIR] [--only ID,ID...]
 ```
 
-Suites: `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`),
+Suites: `rtl` and `tb` (`rtl/problems.yml`, below), `ask` (`ask/tinysoc.yml`), `triage` (`triage/faults.yml` and `triage/logs/`),
 `triage-holdout` (`triage/holdout.yml` and `triage/logs-holdout/`), `triage-holdout2`
 (`triage/holdout2.yml` and `triage/logs-holdout2/`), `review` (`review/defects.yml`,
 below) and `review-holdout2` (`review/defects2.yml`). The holdouts have the schema of
@@ -284,3 +284,114 @@ anything is changed because of a result on it, it is spent.
 - `review/grade.py ANSWERS.jsonl --set defects2` grades answers against it.
 - `chipgraph eval review-holdout2 [--runtime claude-code]` runs it as `review` runs
   (not in `evals/run-claude-code.sh`'s default list: an opus Critic on 25 samples costs).
+
+## `rtl/`: the RTL and testbench Authors on finished QSoC blocks (task M2-13)
+
+Two suites over the same problems, `rtl/problems.yml`: `rtl` runs the RTL Author
+(`digital-rtl/rtl_module` for a module of an approved plan), `tb` the testbench Author
+(`dv/tb_module` for the block). The two stay independent: the RTL is written without the
+testbench and the test without the RTL; they meet only in the grader, which runs the test
+on the people's RTL. Every label is that RTL (the **oracle**), never a model's.
+
+### The problems
+
+Leaf modules of finished QSoC blocks (`quynhonsemiconductor/vlsi_deep_training`, public,
+Apache-2.0), each a fixture under `rtl/fixtures/<block>/<path>`: the file at its commit,
+unchanged, below a header that names the repository, path, commit, git blob id and
+licence (`rtl/fixtures.py`; from `evals/`: `uv run python -m rtl.fixtures --repo
+<qsoc clone> --check`, the clone needing the pull-request heads, `git fetch origin
+'+refs/pull/*/head:refs/remotes/pr/*'`).
+
+| problem | block | source | oracle | why |
+|---|---|---|---|---|
+| `rom_wr_resp` | rom | PR #51, `58d1d91` | `m_qnsc_rom_wr_resp`, 76 lines: a 3-state AXI write responder (MAS 7.3) | the ROM's one hand-written FSM; handshakes, a kept ID, a reset state |
+| `syscsr_dbg_en` | syscsr | PR #53, `d792f03` | `m_qnsc_syscsr_dbg_en`, 29 lines: a two-flop synchroniser and a mask (MAS 7.5) | SYSCSR's only hand-written logic; latency, reset value, mask polarity |
+
+Per problem: the MAS, the oracle and the block's filelist (fixtures); the module's
+interface, clock and reset (in `problems.yml`, checked against the oracle's
+declaration); the approved-plan fixture (`rtl/plans/`, written by hand from the MAS:
+the module, its REQs, every other REQ of the block unassigned with the reason, its
+write set); a hand-written reference test (`rtl/reference/`); and why, the provenance
+(both oracles are written by their owner, whose commits carry a `Co-Authored-By: Claude`
+trailer: model-assisted, but the owner's reviewed design, not a generator's or an RTL
+flow's) and the team's testbench (none usable at the module level). `rejected:` lists
+what was looked at and not used: PWM (a wrapper of the vendored apb_adv_timer), INTMAP
+(generated with the teacher's AI RTL flow), the other wrappers of vendor IP, generated
+RTL (the SYSCSR register block, the ROM image, the emacs wrappers), the common cells (no
+MAS) and the blocks with no RTL yet. The style exemplar is QSoC's `qnsc_sync`.
+
+Each sample gets a fresh eval project (`rtl/project.py`), a chipgraph project of its own:
+QSoC's layout, the MAS, a `chip.yml` with the block's clock and reset, and for `rtl` the
+rule's checks (format, QSoC's Verilator `-Wall` lint, the QNSC naming rule, style against
+the exemplar, hardcode) with the plan approved and expanded; for `tb` the `tb_static`
+check and **no RTL at all**. One thing is not ingest's: these MAS interface tables list
+the wrapper's ports, not the leaf module's, so the block's spec ports in the project's
+Design Model are replaced by the problem's interface.
+
+### The graders (`rtl/grade.py`)
+
+- **RTL vs oracle** (`rtl/diffsim.py`): the module's ports must be the interface's
+  (names, directions, widths; read with pyslang); then it and the oracle are compiled
+  into one Verilator harness, driven by the same random stimulus (`rtl/stimulus.py`: from
+  the interface only; reset held at the start and pulsed now and then, every other input
+  random each cycle; seeded) and every output compared each cycle, 1000 cycles x 4 seeds.
+  Match = identical on all of them; the fraction of matching cycles and seeds is reported.
+- **TB vs oracle** (`rtl/tbsim.py`): the test runs (cocotb 2.1 on Verilator, through the
+  `edalize` adapter) on the oracle: soundness = the share of its tests that pass; and on
+  each mutant of the oracle (`rtl/mutants.py`: inverted condition, wrong reset value,
+  swapped concatenation, shifted bit index, `&`/`|`, dropped `~`, flipped constant, next
+  enum state; deterministic, at most 8, round-robin over the operators; ids in
+  `mutants.exclude` are dropped with the reason, e.g. a reset value the MAS does not
+  specify). Mutation score = mutants killed by a test that passes on the oracle.
+- **Static**: the rule's own checks of the last try, Verilator `-Wall` warnings and the
+  style distance to the exemplar, each next to the oracle's.
+
+### Metrics and verdict
+
+Per problem: **pass@1** = the first try is accepted by the rule's checks *and* matches
+the oracle (RTL: identical outputs; test: at least one test, all passing on the oracle);
+**pass@k** (k = the rule's tries, 3) = accepted after repairs and matching; **repair
+turns** = tries used (1 = at once); the failure label of the first rejection; **cost**
+(USD and tokens per model, from the stream's `result` event); wall time. Per suite: their
+means and sums, in `summary.md` (one row per problem) and `summary.json` in `--out`.
+Verdict, proposed before any real run and not to be tuned on one:
+
+- `rtl`: pass@k >= 50 %;
+- `tb`: pass@k >= 50 % and a mean mutation score >= 50 % (an unsound test scores 0).
+
+### Runtimes
+
+- `fake` (CI, when Verilator is on PATH; `tb` also needs `uv sync --extra sim`; the
+  tests skip with the reason otherwise): the real `next_task`/`get_context`/`submit` with
+  scripted authors, one reply per try from `fake:` (by default `rom_wr_resp` passes the
+  RTL rule at once and its test after a `tb_static` rejection, `syscsr_dbg_en` the
+  reverse; tests override the scripts with the broken variants to see each failure).
+
+  ```bash
+  uv run chipgraph eval rtl --out /tmp/cg-eval-rtl
+  uv run chipgraph eval tb --out /tmp/cg-eval-tb
+  ```
+
+- `claude-code`: one headless `claude -p "/chipgraph:run <target>"` per problem in its
+  project, with the dev plugin; main session `--main-model` (default sonnet), the author
+  on the tiers `medium` = the main model and `large` = `--large-model` (default opus,
+  after a rejection); `--budget-usd` default $10 per suite, `--time-limit`; pre-approved
+  tools: `next_task`, `get_context`, `submit`, `Agent`, `Write`, `Edit`, `MultiEdit`
+  (`Bash`, `Read`, `Glob`, `Grep` and the rest denied). Forbidden: any other tool, a
+  `ToolSearch` that loads one, a write to any file but the task's output, any subagent
+  but the phase's author.
+
+  ```bash
+  uv run chipgraph eval rtl --runtime claude-code --out /tmp/cg-eval-rtl-sonnet
+  uv run chipgraph eval tb --runtime claude-code --large-model sonnet --out /tmp/cg-eval-tb-sonnet
+  ```
+
+  Neither suite is in the weekly workflow or `run-claude-code.sh`'s defaults (cost).
+
+**Cost, an estimate** (not measured): the fake run counts the text each author read and
+wrote (characters / 4) and `rtl/metrics.py` scales it with fixed session overheads at
+Sonnet list prices ($3 in, $15 out, $0.30 cache read per million tokens): about **$0.65**
+for `rtl` and **$0.67** for `tb` with the fake scripts' 3 tries per suite, so roughly
+$0.2 per try and $0.3 to $0.6 per problem. A real run with repairs, or with escalation to
+opus, costs more: budget about $2 per suite for the two problems; the $10 default is the
+cap, not the expectation.
