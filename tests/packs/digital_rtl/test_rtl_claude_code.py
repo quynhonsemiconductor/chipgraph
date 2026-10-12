@@ -124,7 +124,14 @@ def test_the_context_has_the_plan_requirements_interface_naming_and_exemplars(
     assert [r["id"] for r in block["requirements"]] == list(fx.REQS)
     assert {r["name"] for r in block["registers"]} == {"PERIOD", "DUTY", "CTRL"}
     paths = [i["path"] for i in context["inputs"] if "path" in i]
-    assert paths == ["plan/pwm.approved.json", fx.SPEC]
+    exemplar_paths = list(fx.exemplar_files("a"))
+    assert paths == ["plan/pwm.approved.json", *exemplar_paths, ".chipgraph/naming.yml", fx.SPEC]
+    # The style files are inputs (an edit makes the module stale, M2-11a), but their text
+    # is in the `rtl` section only: the input entries point there.
+    by_path = {i["path"]: i for i in context["inputs"] if "path" in i}
+    for rel in exemplar_paths:
+        assert by_path[rel]["section"] == "rtl.style" and "content" not in by_path[rel]
+    assert by_path[".chipgraph/naming.yml"]["section"] == "rtl.naming"
 
 
 def test_the_context_has_no_testbench_text(project: Path) -> None:

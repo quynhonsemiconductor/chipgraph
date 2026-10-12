@@ -211,6 +211,10 @@ def test_a_sigkilled_fanout_is_swept_by_the_next_one(tmp_path: Path) -> None:
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert marker.exists(), "the worker never started its branch"
+        # Branch a writes the marker as soon as ITS workspace exists; b's is created on its
+        # own schedule. Kill only when both are there, or the count below is a race.
+        while len(linked_worktrees(root)) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
         os.kill(proc.pid, signal.SIGKILL)
         proc.wait(timeout=10)
     finally:

@@ -91,7 +91,7 @@ from chipgraph.adapters.runtime.claude_code.previous import (
     moves_outputs,
 )
 from chipgraph.adapters.runtime.claude_code.runtime import output_hashes
-from chipgraph.app.build import make_scheduler, pack_search_paths
+from chipgraph.app.build import graph_artifacts, make_scheduler, pack_search_paths
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext
 from chipgraph.app.errors import AppError
@@ -119,12 +119,12 @@ from chipgraph.core.runtime.roles import (
     SkillSet,
     SkillSpec,
     denied_kind,
-    denied_reads,
     find_role,
     load_skills,
     parse_review,
     path_denied,
     review_problems,
+    task_denied_reads,
 )
 from chipgraph.core.state import journal as journal_mod
 from chipgraph.core.state.artifacts import hash_file
@@ -237,16 +237,10 @@ def _check_skills(ctx: AppContext, graph: BuildGraph) -> SkillSet:
 
 def _denied_reads(ctx: AppContext, graph: BuildGraph, record: AgentTaskRecord) -> tuple[str, ...]:
     """What the task's agent must not read: its role's read policy over this project."""
-    role = find_role(record.role)
-    if role is None:
-        return ()
-    profile = ctx.require_profile().profile
-    refs = [ref for inst in graph.instances.values() for ref in (*inst.inputs, *inst.outputs)]
-    return denied_reads(
-        role,
-        artifacts=refs,
-        layout=profile.layout,
-        block_layouts={name: block.layout for name, block in profile.blocks.items()},
+    return task_denied_reads(
+        record.role,
+        artifacts=graph_artifacts(graph),
+        profile=ctx.require_profile().profile,
         keep=record.allowed_writes,
     )
 
@@ -794,7 +788,10 @@ async def get_context(ctx: AppContext, task_id: str) -> dict[str, Any]:
         fragment = graph.spec_fragments.get(f"{ref.repo}:{ref.path}")
         if fragment:
             entry["fragment"] = fragment
-        if ctx.store.exists(ref):
+        section = guarded.covers(ref.path) if guarded is not None else None
+        if section is not None:  # shown in a section of the context already
+            entry["section"] = section
+        elif ctx.store.exists(ref):
             text = (ctx.root / ref.path).read_text(encoding="utf-8", errors="replace")
             if len(text) > _MAX_INPUT_CHARS:
                 text = text[:_MAX_INPUT_CHARS]

@@ -1,0 +1,20 @@
+# `chipgraph build rtl:<block>` (and `chipgraph rtl <block>`, MCP next_task(target=...)):
+# the RTL of one block, from its plan to a pull request (task M2-11a).
+#
+#   digital-rtl/plan -> plan_expand (gate plan:<block>) -> rtl_module, one per planned
+#   module (in dependency order) -> with dv/tb_module (independent of the RTL) ->
+#   digital-rtl/review -> open_pr -> pr_gate (gate pr:<block>)
+#
+# Before the plan is approved only the first selector matches: the build stops at the
+# plan gate and nothing after the plan runs. Once it is approved, `pr_gate` exists and
+# brings in everything it depends on (the modules, the testbench, the review, open_pr).
+schema_version: 1
+target: rtl
+description: The RTL of one block, from its plan to a pull request and its gate.
+params:
+  - name: block
+    description: A block of the profile.
+select:
+  - select: "digital-rtl/plan_expand[block={block}]"
+  - select: "digital-rtl/pr_gate[block={block}]"
+    optional: true

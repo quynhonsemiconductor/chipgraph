@@ -91,9 +91,12 @@ def test_the_review_rule_of_the_digital_rtl_pack_passes() -> None:
     packs_dir = builtin_packs_dir()
     assert packs_dir is not None
     rules = load_pack_rules(discover_packs([packs_dir])["digital-rtl"])
+    both = [{"block": "timer"}, {"block": "gpio"}]
     blocks = StaticForeach(
         {
-            "blocks": [{"block": "timer"}, {"block": "gpio"}],
+            "blocks": both,
+            "plan.blocks": both,
+            "plan.block": [],
             "plan.modules": [],
             "wrappers": [],
             "wrappers.vendor": [],

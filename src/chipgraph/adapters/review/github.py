@@ -56,6 +56,7 @@ Profile options (`review:` in `.chipgraph.yml`)
       allow_gh_fallback: true         # use `gh auth token` if no env token; off when CI is set
       timeout_s: 30                   # per HTTP request
       max_retries: 3                  # on 5xx, rate limits and (GET) network errors
+      remote: origin                  # the git remote a PR branch is pushed to (M2-11a)
 
 `api_url` must be `https://` (plain `http://` only for `localhost`/`127.0.0.1`).
 
@@ -128,7 +129,9 @@ TOKEN_ENV = "CHIPGRAPH_GITHUB_TOKEN"
 _DEFAULT_API_URL = "https://api.github.com"
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-_OPTIONS = frozenset({"repo", "base", "api_url", "allow_gh_fallback", "timeout_s", "max_retries"})
+_OPTIONS = frozenset(
+    {"repo", "base", "api_url", "allow_gh_fallback", "timeout_s", "max_retries", "remote"}
+)
 _RETRY_STATUSES = frozenset({500, 502, 503, 504})
 _MAX_RETRY_AFTER_S = 60.0
 _MAX_PAGES = 50
@@ -317,6 +320,8 @@ class GitHubReview:
 
         self.repo = repo
         self.base = base
+        self.remote = "origin"
+        """The git remote a PR branch is pushed to (the VCS adapter pushes; never this)."""
         self.api_url = api_url
         self.timeout_s = timeout_s
         self.max_retries = max_retries
@@ -369,7 +374,10 @@ class GitHubReview:
             raise ReviewError("review.timeout_s must be a number of seconds")
         if isinstance(max_retries, bool) or not isinstance(max_retries, int):
             raise ReviewError("review.max_retries must be an integer")
-        return cls(
+        remote = raw.get("remote", "origin")
+        if not isinstance(remote, str) or not remote:
+            raise ReviewError("review.remote must be the name of a git remote")
+        review = cls(
             repo,
             base=base,
             api_url=api_url,
@@ -382,6 +390,8 @@ class GitHubReview:
             gh_token=gh_token,
             sleep=sleep,
         )
+        review.remote = remote
+        return review
 
     def __repr__(self) -> str:
         return (

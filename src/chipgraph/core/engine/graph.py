@@ -26,6 +26,7 @@ from chipgraph.core.contracts import (
     RuleSpec,
     Sha256,
 )
+from chipgraph.core.engine.targets import TargetRegistry
 from chipgraph.core.state.artifacts import hash_inputs
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
@@ -82,7 +83,10 @@ class ForeachEntry(BaseModel):
     - `after`: the params (without the base params) of other entries of the *same*
       expansion that this instance runs after: an ordering edge between instances of
       one rule;
-    - `writes`: when set, every output of the instance must be one of these paths.
+    - `writes`: when set, every output of the instance must be one of these paths;
+    - `vars`: extra values for the rule's `{name}` placeholders (outputs and inputs) that
+      are not params, so they never change the instance id (e.g. a directory the
+      project's layout gives the block). A param of the same name wins.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -94,6 +98,10 @@ class ForeachEntry(BaseModel):
     )
     writes: frozenset[str] | None = Field(
         default=None, description="The only paths the instance may output, when set."
+    )
+    vars: dict[str, str] = Field(
+        default_factory=dict,
+        description="Placeholder values that are not params (they do not change the id).",
     )
 
 
@@ -196,8 +204,10 @@ class BuildGraph:
         dependents: dict[str, tuple[str, ...]],
         external: frozenset[str],
         spec_fragments: dict[str, str],
+        targets: TargetRegistry | None = None,
     ) -> None:
         self.instances = MappingProxyType(dict(instances))
+        self.targets = targets
         self.rules = MappingProxyType(dict(rules))
         self.producers = MappingProxyType(dict(producers))
         self.spec_fragments = MappingProxyType(dict(spec_fragments))
@@ -267,10 +277,14 @@ class BuildGraph:
 
         `target` is `"*"`, a rule id (`pack/name`), or a rule id with a params filter
         (`pack/name[block=timer]`); a params filter matches any instance whose params
-        contain those key/value pairs (a subset match).
+        contain those key/value pairs (a subset match). With a `TargetRegistry`, it may
+        also be a named target (`rtl:timer`, see `targets.py`): the union of what each
+        of its selectors selects.
         """
         if target == "*":
             return set(self.instances)
+        if self.targets is not None and self.targets.is_target(target):
+            return self._select_named(target)
 
         rule_id, params = _parse_target(target)
         if rule_id not in self.rules:
@@ -289,6 +303,26 @@ class BuildGraph:
             result |= self._upstream(iid)
         return result
 
+    def _select_named(self, target: str) -> set[str]:
+        """`select` of a named target: each selector, a required one must match."""
+        assert self.targets is not None
+        try:
+            selectors = self.targets.resolve(target)
+        except ValueError as exc:
+            raise GraphError(str(exc)) from exc
+        result: set[str] = set()
+        for selector in selectors:
+            try:
+                result |= self.select(selector.select)
+            except GraphError as exc:
+                if selector.optional:
+                    continue
+                raise GraphError(
+                    f"target {target!r}: {exc}; check its params "
+                    f"({self.targets.describe_params(target)})"
+                ) from exc
+        return result
+
 
 def build_graph(
     rules: Iterable[RuleSpec],
@@ -296,12 +330,14 @@ def build_graph(
     *,
     base_params: Mapping[str, str] | None = None,
     repo: str = ".",
+    targets: TargetRegistry | None = None,
 ) -> BuildGraph:
     """Build a `BuildGraph` from `rules`, expanding `foreach` with `resolver`.
 
     An `EntryForeachResolver` may also give each instance extra inputs, sibling
-    instances of the same rule to run after (ordering edges), and the write set its
-    outputs must stay inside (see `ForeachEntry`).
+    instances of the same rule to run after (ordering edges), the write set its
+    outputs must stay inside, and placeholder values that are not params (see
+    `ForeachEntry`). `targets` lets `select` take named targets.
 
     Raises `GraphError` for a missing placeholder value, two instances writing the
     same output (the write-set rule, F2), an output outside an entry's write set, an
@@ -322,17 +358,18 @@ def build_graph(
         base = dict(base_params or {})
         for entry in _entries(rule, resolver, base_params):
             params = entry.params
+            values = {**entry.vars, **params}
             output_refs = tuple(
                 ArtifactRef(
                     repo=repo,
-                    kind=kind_for(path := _substitute(template, params, rule_id=rule.id)),
+                    kind=kind_for(path := _substitute(template, values, rule_id=rule.id)),
                     path=path,
                 )
                 for template in rule.outputs
             )
             input_refs = tuple(
                 _resolve_input(
-                    input_spec, params, rule_id=rule.id, repo=repo, spec_fragments=spec_fragments
+                    input_spec, values, rule_id=rule.id, repo=repo, spec_fragments=spec_fragments
                 )
                 for input_spec in rule.inputs
             )
@@ -415,6 +452,7 @@ def build_graph(
         dependents=frozen_dependents,
         external=frozenset(external),
         spec_fragments=spec_fragments,
+        targets=targets,
     )
 
 

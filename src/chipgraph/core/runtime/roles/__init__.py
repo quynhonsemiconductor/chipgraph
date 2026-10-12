@@ -22,6 +22,7 @@ from chipgraph.core.runtime.roles.policy import (
     model_ladder,
     path_denied,
     static_prefix,
+    task_denied_reads,
 )
 from chipgraph.core.runtime.roles.registry import find_role, get_role, list_roles, roles_dir
 from chipgraph.core.runtime.roles.review import (
@@ -86,4 +87,5 @@ __all__ = [
     "roles_dir",
     "split_frontmatter",
     "static_prefix",
+    "task_denied_reads",
 ]

@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -32,7 +32,7 @@ from chipgraph.app.baseline import (
     plan_project_baseline,
     run_baseline,
 )
-from chipgraph.app.build import make_scheduler
+from chipgraph.app.build import make_scheduler, project_graph
 from chipgraph.app.checks import ProfileCheckRunner
 from chipgraph.app.context import AppContext, default_identity, find_repo_root
 from chipgraph.app.errors import AppError
@@ -40,6 +40,7 @@ from chipgraph.core.config.errors import ConfigError
 from chipgraph.core.config.loader import ConfigIssue
 from chipgraph.core.contracts import ArtifactRef, CheckResult, Finding, RuleInstance
 from chipgraph.core.engine import gate as gate_mod
+from chipgraph.core.engine.graph import BuildGraph, GraphError
 from chipgraph.core.engine.scheduler import RunSummary
 from chipgraph.core.plugin_api.local import LocalPluginRecord
 from chipgraph.core.state import journal as journal_mod
@@ -671,7 +672,9 @@ def _build_tracer(state: CliState, *, offline: bool) -> Tracer:
 @_handle_errors
 def build(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="Rule id, 'id[k=v]', or '*'.")],
+    target: Annotated[
+        str, typer.Argument(help="Rule id, 'id[k=v]', a named target ('rtl:timer'), or '*'.")
+    ],
     concurrency: Annotated[int, typer.Option("--concurrency", min=1)] = 4,
 ) -> None:
     """Build TARGET with the scheduler."""
@@ -768,6 +771,7 @@ def status(ctx: typer.Context, run_id: Annotated[str | None, typer.Argument()] =
                     "rules": run_state.rules,
                     "counts": dict(counts),
                     "waiting_gates": waiting,
+                    "chain": _chain_rows(app_ctx, rid, run_state.rules),
                 },
                 indent=2,
             )
@@ -782,6 +786,44 @@ def status(ctx: typer.Context, run_id: Annotated[str | None, typer.Argument()] =
         typer.echo("waiting on gates:")
         for iid, gate_id in sorted(waiting.items()):
             typer.echo(f"  {iid} -> {gate_id}")
+    chain = _target_chain(app_ctx, rid, run_state.rules)
+    if chain:
+        typer.echo(f"chain of {chain[0]}:")
+        typer.echo(chain[1])
+
+
+def _chain_rows(app_ctx: AppContext, rid: str, states: Mapping[str, str]) -> list[dict[str, str]]:
+    """The instances of the run's named target, in build order, with their state.
+
+    Empty when the run's target is not a named target (`rtl:<block>`), or the graph
+    cannot be built now.
+    """
+    if app_ctx.resolved is None:
+        return []
+    try:
+        target = journal_mod.read_manifest(app_ctx.layout, rid).target
+        graph = project_graph(app_ctx)
+        if graph.targets is None or not graph.targets.is_target(target):
+            return []
+        selected = graph.select(target)
+    except (AppError, GraphError, OSError, ValueError):
+        return []
+    rows: list[dict[str, str]] = []
+    for iid in graph.topo_order():
+        if iid in selected:
+            rows.append({"instance": iid, "state": states.get(iid, "not run")})
+    return rows
+
+
+def _target_chain(
+    app_ctx: AppContext, rid: str, states: Mapping[str, str]
+) -> tuple[str, str] | None:
+    rows = _chain_rows(app_ctx, rid, states)
+    if not rows:
+        return None
+    target = journal_mod.read_manifest(app_ctx.layout, rid).target
+    lines = [f"  {i + 1:2}. {r['state']:13} {r['instance']}" for i, r in enumerate(rows)]
+    return target, "\n".join(lines)
 
 
 # --- approve -------------------------------------------------------------------------
@@ -792,7 +834,13 @@ def status(ctx: typer.Context, run_id: Annotated[str | None, typer.Argument()] =
 def approve(
     ctx: typer.Context,
     gate_id: Annotated[str, typer.Argument()],
-    instance: Annotated[str, typer.Option("--instance", help="The rule instance id.")],
+    instance: Annotated[
+        str | None,
+        typer.Option(
+            "--instance",
+            help="The rule instance id; optional when exactly one instance has the gate.",
+        ),
+    ] = None,
     reject: Annotated[bool, typer.Option("--reject", help="Reject instead of approve.")] = False,
     by: Annotated[str | None, typer.Option("--by")] = None,
     note: Annotated[str, typer.Option("--note")] = "",
@@ -802,6 +850,8 @@ def approve(
     app_ctx = _load_ctx(state)
     app_ctx.require_profile()
     scheduler = make_scheduler(app_ctx, "*")
+    if instance is None:
+        instance = _gated_instance(scheduler.graph, gate_id)
     rule_instance = scheduler.graph.instances.get(instance)
     if rule_instance is None:
         raise AppError(
@@ -828,22 +878,42 @@ def approve(
         typer.echo(f"{decision} recorded for gate {gate_id!r} by {who!r}")
 
 
-# --- plan show -----------------------------------------------------------------------
+def _gated_instance(graph: BuildGraph, gate_id: str) -> str:
+    """The one instance whose rule's gate is `gate_id`; an `AppError` if not exactly one."""
+    found = sorted(
+        iid
+        for iid, inst in graph.instances.items()
+        if (rule := graph.rules[inst.rule_id]).gate
+        and _format_gate_id(rule.gate, inst.params) == gate_id
+    )
+    if len(found) != 1:
+        known = sorted(
+            {
+                _format_gate_id(rule.gate, inst.params)
+                for inst in graph.instances.values()
+                if (rule := graph.rules[inst.rule_id]).gate
+            }
+        )
+        what = "no instance has" if not found else f"{len(found)} instances have"
+        raise AppError(
+            f"{what} gate {gate_id!r}: pass --instance; gates: {', '.join(known) or 'none'}"
+        )
+    return found[0]
 
-plan_app = typer.Typer(no_args_is_help=True, help="Read a block's plan before approving it.")
-app.add_typer(plan_app, name="plan")
+
+def _format_gate_id(template: str, params: dict[str, str]) -> str:
+    try:
+        return gate_mod.gate_id_for(template, params)
+    except gate_mod.GateError:
+        return template
 
 
-@plan_app.command("show")
-@_handle_errors
-def plan_show(ctx: typer.Context, block: Annotated[str, typer.Argument()]) -> None:
-    """Print a block's plan for its approver: modules, REQ coverage, write sets, questions.
+# --- plan, rtl: the RTL target of a block --------------------------------------------
 
-    Exit 1 when there is no plan yet or it fails `plan_check`.
-    """
+
+def _plan_show(state: CliState, block: str) -> None:
     from chipgraph.packs.digital_rtl.plan.show import plan_summary, render_text
 
-    state: CliState = ctx.obj
     app_ctx = _load_ctx(state)
     summary = plan_summary(app_ctx, block)
     if state.json_output:
@@ -852,6 +922,85 @@ def plan_show(ctx: typer.Context, block: Annotated[str, typer.Argument()]) -> No
         typer.echo(render_text(summary), nl=False)
     if not summary["exists"] or not summary["ok"]:
         raise typer.Exit(code=1)
+
+
+def _build_target(state: CliState, target: str, concurrency: int) -> None:
+    """Build a named target, print the run and what is next; exit like `build`."""
+    from chipgraph.cli.next_steps import next_steps, write_chain
+
+    app_ctx = _load_ctx(state)
+    resolved = app_ctx.require_profile()
+    tracer = _build_tracer(state, offline=resolved.profile.offline)
+    scheduler = make_scheduler(app_ctx, target, concurrency=concurrency, tracer=tracer)
+    try:
+        summary = asyncio.run(scheduler.run(target))
+    finally:
+        tracer.flush()
+    steps = next_steps(app_ctx, scheduler.graph, summary)
+    handoff = _handoff_path(app_ctx, summary.run_id)
+    steps["chain"] = [
+        {"instance": iid, "state": st}
+        for iid, st in write_chain(handoff, scheduler.graph, target, summary)
+    ]
+    if state.json_output:
+        payload = summary.model_dump(mode="json")
+        payload["handoff"] = str(handoff)
+        payload["target"] = target
+        payload["next"] = steps
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        _print_summary(summary, False, handoff)
+        typer.echo("next:")
+        for step in steps["lines"]:
+            typer.echo(f"  {step}")
+    if not summary.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("plan")
+@_handle_errors
+def plan_cmd(
+    ctx: typer.Context,
+    words: Annotated[
+        list[str],
+        typer.Argument(help="BLOCK: build its plan up to the gate; 'show BLOCK': read it."),
+    ],
+    concurrency: Annotated[int, typer.Option("--concurrency", min=1)] = 4,
+) -> None:
+    """Build a block's plan up to and including its gate `plan:<block>`, or show it.
+
+    `chipgraph plan <block>` builds target `plan:<block>` (the planner writes the plan,
+    `plan_check` checks it, the build waits on the gate) and prints what is next: the
+    gate to approve, or the tasks waiting for `/chipgraph:run`. Exit 0 when the gate is
+    approved, 1 while something waits or failed, 2 on a usage or config error.
+
+    `chipgraph plan show <block>` prints the plan for its approver: modules, REQ
+    coverage, write sets, questions; exit 1 when there is none yet or it fails
+    `plan_check`.
+    """
+    state: CliState = ctx.obj
+    if len(words) == 2 and words[0] == "show":
+        _plan_show(state, words[1])
+        return
+    if len(words) != 1:
+        raise AppError("usage: chipgraph plan <block> | chipgraph plan show <block>")
+    _build_target(state, f"plan:{words[0]}", concurrency)
+
+
+@app.command("rtl")
+@_handle_errors
+def rtl_cmd(
+    ctx: typer.Context,
+    block: Annotated[str, typer.Argument(help="The block.")],
+    concurrency: Annotated[int, typer.Option("--concurrency", min=1)] = 4,
+) -> None:
+    """Build target `rtl:<block>`: plan, gate, RTL per module, testbench, review, PR, gate.
+
+    Prints what is next: the gate to approve (`plan:<block>`, then `pr:<block>` and the
+    PR's URL), or the agent tasks waiting for `/chipgraph:run`. Exit 0 when the PR is
+    approved, 1 while something waits or failed, 2 on a usage or config error.
+    """
+    _build_target(ctx.obj, f"rtl:{block}", concurrency)
 
 
 # --- baseline ------------------------------------------------------------------------

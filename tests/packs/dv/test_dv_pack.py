@@ -6,7 +6,7 @@ import pytest
 
 from chipgraph.app.build import builtin_packs_dir
 from chipgraph.core.contracts import RuleSpec
-from chipgraph.core.engine.graph import StaticForeach, build_graph
+from chipgraph.core.engine.graph import ForeachEntry, build_graph
 from chipgraph.core.engine.rules import load_pack_rules
 from chipgraph.core.plugin_api.pack import Pack, discover_packs
 from chipgraph.core.runtime.roles import (
@@ -45,7 +45,7 @@ def test_tb_module_rule(rule: RuleSpec) -> None:
         ("model", "block/{block}"),
         ("model", "interface/{block}"),
     ]
-    assert rule.outputs == ("dv/{block}/test_{block}.py",)
+    assert rule.outputs == ("{layout.tb}/test_{block}.py",)  # the block's layout.tb dir
     assert rule.checks == ("tb_static",)
     assert rule.skills == ("dv/cocotb",)
     assert rule.budget.tries == 3
@@ -53,7 +53,7 @@ def test_tb_module_rule(rule: RuleSpec) -> None:
 
 
 def test_the_rule_gives_the_tb_author_no_rtl_input(rule: RuleSpec) -> None:
-    graph = build_graph([rule], StaticForeach({"blocks": [{"block": "gpio"}, {"block": "x"}]}))
+    graph = build_graph([rule], _Blocks("gpio", "x"))
     check_agent_rules(graph.rules, graph.instances.values())
     assert sorted(graph.instances) == ["dv/tb_module[block=gpio]", "dv/tb_module[block=x]"]
     denied = set(get_role("tb-author").read_policy.deny_kinds)
@@ -70,9 +70,26 @@ def test_the_validator_refuses_an_rtl_input_added_to_the_rule(rule: RuleSpec) ->
     bad = rule.model_copy(
         update={"inputs": (*rule.inputs, *RuleSpec.model_validate(_with_rtl()).inputs)}
     )
-    graph = build_graph([bad], StaticForeach({"blocks": [{"block": "gpio"}]}))
+    graph = build_graph([bad], _Blocks("gpio"))
     with pytest.raises(RoleError, match=r"'tb-author' must not see 'rtl'.*rtl/tiny_gpio\.sv"):
         check_agent_rules(graph.rules, graph.instances.values())
+
+
+class _Blocks:
+    """`blocks`, with each block's layout directories, as the project's resolver gives them."""
+
+    def __init__(self, *blocks: str) -> None:
+        self.blocks = blocks
+
+    def expand(self, expr: str) -> list[dict[str, str]]:
+        return [dict(e.params) for e in self.expand_entries(expr)]
+
+    def expand_entries(self, expr: str) -> list[ForeachEntry]:
+        assert expr == "blocks"
+        return [
+            ForeachEntry(params={"block": b}, vars={"layout.tb": f"dv/{b}", "layout.rtl": "rtl"})
+            for b in self.blocks
+        ]
 
 
 def _with_rtl() -> dict[str, object]:
