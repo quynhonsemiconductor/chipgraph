@@ -15,7 +15,7 @@ description: >-
   `layout.rtl`, the testbench's from `layout.tb`. Also the wrappers around vendor IP in the
   emacs verilog-mode AUTO style: the rule `digital-rtl/wrapper` (role `rtl-author`, skill
   `rtl/wrapper-auto`) writes a wrapper's source, `digital-rtl/wrapper_gen` (tool `emacs_auto`)
-  expands it, check `wrap_check`.
+  expands it (needs Emacs 31 or newer), check `wrap_check`.
 provides:
   rules:
     - rules

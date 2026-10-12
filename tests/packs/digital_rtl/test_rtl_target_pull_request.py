@@ -534,3 +534,220 @@ def test_the_publishing_code_never_forces_a_push(pattern: str) -> None:
     sources += [inspect.getsource(GitVcs.advance_branch)]
     for text in sources:
         assert not re.search(pattern, text, flags=re.IGNORECASE), pattern
+
+
+# --- the Opus review of #106: branch, symlinks, stale head, host, redaction ---------------
+
+
+def _set_record_branch(built: Built, branch: str) -> None:
+    record = built.record().model_copy(update={"branch": branch})
+    (built.root / PR_RECORD).write_text(
+        json.dumps(record.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    )
+
+
+def _remote_ref(built: Built, ref: str) -> str:
+    """The sha `ref` has in the remote, or "" when there is no such ref."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=built.remote,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "main",
+        "refs/heads/main",
+        "chipgraph/run-1/gpio",  # another block's branch
+        "chipgraph/a/b/timer",
+        "chipgraph//timer",
+        "chipgraph/r1/timer/extra",
+        "-evil/r1/timer",
+        "feature/x",
+    ],
+)
+def test_a_record_naming_any_other_branch_is_refused_and_nothing_moves(
+    built: Built, branch: str
+) -> None:
+    """The record is a file in the working tree: it must not choose which branch is moved
+    and pushed (it once could: `main` was updated and pushed without a PR)."""
+    local_main = git(built.root, "rev-parse", "main")
+    remote_main = _remote_ref(built, "refs/heads/main")
+    digest = tree_digest(built.root)
+    _set_record_branch(built, branch)
+    with pytest.raises(OpenPrError, match="refusing branch"):
+        built.open()
+    assert git(built.root, "rev-parse", "main") == local_main
+    assert _remote_ref(built, "refs/heads/main") == remote_main
+    assert tree_digest(built.root) == digest
+
+
+def test_a_branch_that_is_checked_out_in_the_users_tree_is_refused(built: Built) -> None:
+    name = "chipgraph/zz/timer"
+    git(built.root, "checkout", "-q", "-b", name)
+    head = git(built.root, "rev-parse", "HEAD")
+    _set_record_branch(built, name)
+    digest = tree_digest(built.root)
+    with pytest.raises(OpenPrError, match="checked out in a worktree"):
+        built.open()
+    assert git(built.root, "rev-parse", name) == head
+    assert tree_digest(built.root) == digest
+    assert _remote_ref(built, f"refs/heads/{name}") == ""
+
+
+def test_a_branch_that_is_checked_out_in_a_linked_worktree_is_refused(
+    built: Built, tmp_path: Path
+) -> None:
+    name = "chipgraph/zz2/timer"
+    other = tmp_path / "other-worktree"
+    git(built.root, "worktree", "add", "-q", "-b", name, str(other))
+    tip = git(built.root, "rev-parse", name)
+    _set_record_branch(built, name)
+    with pytest.raises(OpenPrError, match="checked out in a worktree"):
+        built.open()
+    assert git(built.root, "rev-parse", name) == tip
+    assert git(other, "rev-parse", "HEAD") == tip
+    assert name in GitVcs().checked_out_branches(built.root)
+
+
+def test_the_vcs_itself_refuses_to_move_a_checked_out_branch(built: Built) -> None:
+    """Defence in depth: `advance_branch` and `create_branch` check, whoever calls them."""
+    vcs = GitVcs()
+    current = git(built.root, "rev-parse", "--abbrev-ref", "HEAD")
+    head = git(built.root, "rev-parse", "HEAD")
+    with pytest.raises(VcsError, match="checked out"):
+        vcs.advance_branch(built.root, current, head, head[:-1] + ("0" if head[-1] != "0" else "1"))
+    with pytest.raises(VcsError, match="checked out"):
+        vcs.create_branch(built.root, current, head)
+
+
+def test_a_symlinked_directory_in_the_users_tree_is_refused(built: Built, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    rtl = built.root / "rtl"
+    for item in rtl.iterdir():
+        item.rename(outside / item.name)
+    rtl.rmdir()
+    rtl.symlink_to(outside, target_is_directory=True)
+    before = sorted(p.name for p in outside.iterdir())
+    with pytest.raises(OpenPrError, match="symlink"):
+        built.open()
+    assert sorted(p.name for p in outside.iterdir()) == before
+
+
+def test_a_symlinked_output_file_is_refused(built: Built, tmp_path: Path) -> None:
+    target = tmp_path / "secret.txt"
+    target.write_text("not part of the block\n")
+    module = built.root / RTL_FILES[0]
+    module.unlink()
+    module.symlink_to(target)
+    with pytest.raises(OpenPrError, match="symlink"):
+        built.open()
+
+
+def test_a_symlinked_directory_in_the_committed_branch_cannot_write_outside(
+    tmp_path: Path,
+) -> None:
+    """The workspace is a checkout of the branch tip: if the tip commits `rtl` as a symlink,
+    copying `rtl/x.sv` would write through it to wherever it points."""
+    from chipgraph.packs.digital_rtl.pr.open import build_branch
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    (root / "rtl").symlink_to(outside, target_is_directory=True)
+    git(root, "add", "-A")
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "link")
+    (root / "rtl").unlink()  # the working tree has a real directory now
+    (root / "rtl").mkdir()
+    (root / "rtl/x.sv").write_text("module x; endmodule\n")
+    with pytest.raises(OpenPrError, match="symlink"):
+        build_branch(GitVcs(), root, "chipgraph/r1/timer", ["rtl/x.sv"], "msg")
+    assert list(outside.iterdir()) == []
+
+
+def test_a_path_that_climbs_out_or_is_absolute_is_refused(tmp_path: Path) -> None:
+    from chipgraph.packs.digital_rtl.pr.open import build_branch
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    (root / "a.txt").write_text("a\n")
+    git(root, "add", "-A")
+    git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a")
+    for rel in ("../a.txt", "/etc/hosts", "rtl/../../a.txt"):
+        with pytest.raises(OpenPrError, match="plain relative path"):
+            build_branch(GitVcs(), root, "chipgraph/r1/timer", [rel], "msg")
+
+
+def test_the_gate_waits_while_the_record_is_behind_the_pull_requests_head(
+    built: Built, tmp_path: Path
+) -> None:
+    import asyncio
+
+    from chipgraph.core.contracts import CheckSpec
+    from chipgraph.core.plugin_api.types import ToolContext
+    from chipgraph.packs.digital_rtl.pr.gate import PrGateTool
+
+    def run_gate() -> str:
+        spec = CheckSpec(id="pr_gate", capability="gen", adapter="pr_gate", args={})
+        ctx = ToolContext(
+            repo_root=built.root,
+            runner=built.app().registry.get("runner", "local"),
+            env={},
+            params={"block": "timer"},
+        )
+        return asyncio.run(PrGateTool().run(spec, ctx))
+
+    built.open()
+    ok = run_gate()
+    assert ok.status == "pass"
+    moved = built.push_elsewhere(tmp_path)
+    stale = run_gate()
+    assert stale.status == "fail"
+    message = stale.issues[0].msg
+    assert "branch moved" in message and moved[:12] in message
+    assert not (built.root / "pr/timer.approved.json").exists() or (
+        json.loads((built.root / "pr/timer.approved.json").read_text())["head_sha"] != moved
+    )
+
+
+@pytest.mark.parametrize(
+    ("remote", "api", "ok"),
+    [
+        ("https://github.com/o/r.git", "https://api.github.com", True),
+        ("https://x-access-token@github.com/o/r.git", "https://api.github.com", True),
+        ("https://evil.example/o/r.git", "https://api.github.com", False),
+        ("https://github.com.evil.example/o/r.git", "https://api.github.com", False),
+        ("https://ghe.corp/o/r.git", "https://ghe.corp/api/v3", True),
+        ("https://other.corp/o/r.git", "https://ghe.corp/api/v3", False),
+        ("http://127.0.0.1:5000/o/r.git", "http://127.0.0.1:6000", True),
+        ("ssh://git@github.com/o/r.git", "https://api.github.com", False),
+    ],
+)
+def test_the_token_goes_only_to_the_apis_host(remote: str, api: str, ok: bool) -> None:
+    from chipgraph.packs.digital_rtl.pr.open import check_token_host
+
+    if ok:
+        check_token_host(remote, api)
+    else:
+        with pytest.raises(OpenPrError, match="refusing to send the GitHub token"):
+            check_token_host(remote, api)
+
+
+def test_a_remote_on_another_host_gets_no_token_and_no_push(
+    built: Built, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git(built.root, "remote", "set-url", "origin", "https://evil.example/o/r.git")
+    pushes: list[object] = []
+    monkeypatch.setattr(GitVcs, "push_branch", lambda *a, **k: pushes.append((a, k)))
+    with pytest.raises(OpenPrError) as info:
+        built.open()
+    assert pushes == []
+    assert TOKEN not in str(info.value)

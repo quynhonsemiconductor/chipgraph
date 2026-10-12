@@ -27,6 +27,12 @@ open Claude Code in your chip project (the repo root) and run `/chipgraph:status
   not stopped when it happens. `chipgraph doctor` checks it.
 - For `/chipgraph:trace` and `/chipgraph:ask`: a Design Model, built by
   `chipgraph ingest` in the project.
+- Vendor-IP wrappers (rule `digital-rtl/wrapper`, tool `emacs_auto`, check `wrap_check`):
+  **Emacs 31 or newer** with its bundled `verilog-mode`. The expansion was verified with
+  Emacs 31.1; an older Emacs (Debian's `emacs-nox` is 28.2) aligns columns differently, so
+  `wrap_check` reports whitespace-only differences and a committed wrapper would not
+  compare byte for byte. Emacs is not in the CI image (the tests that need it skip there);
+  without it `wrap_check` still checks the committed file by its marker and source hash.
 
 ## Commands
 

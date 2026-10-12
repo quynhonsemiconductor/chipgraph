@@ -27,6 +27,8 @@ build graph, a `cmd` tool adapter and the Verilator log parser working together.
   wrapper: `rtl/emacs/tiny_fifo_wrap.src.sv` (the AUTO_TEMPLATE source) expanded by emacs
   verilog-mode to `rtl/tiny_fifo_wrap.sv` (`digital-rtl/wrapper_gen`; `wrap_check`
   compares the two); `make lint BLOCK=top` also lints it (`filelists/tiny_fifo_wrap.f`).
+  Regenerating the wrapper needs Emacs 31 or newer (`verilog-mode` bundled); see
+  `plugin/README.md`.
 - `Makefile` — `make lint BLOCK=<block>` runs `verilator --lint-only -Wall`;
   `make lint-all` runs it for every block; `make clean` removes build output.
 - `scripts/gen_manifest.py` — writes `build/<block>.manifest.json`: the block's

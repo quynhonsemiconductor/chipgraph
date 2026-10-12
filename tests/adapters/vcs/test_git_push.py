@@ -227,3 +227,81 @@ def test_git_asks_the_helper_and_the_error_never_shows_the_token(
     assert base64.b64decode(seen[0].split()[1]).decode() == f"x-access-token:{TOKEN}"
     assert TOKEN not in str(caught.value)
     assert TOKEN not in (root / ".git" / "config").read_text()
+
+
+# --- the Opus review of #106: other git commands carry no token; every spelling is redacted
+
+
+def test_no_other_git_command_carries_the_token(
+    repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _bare = repo
+    for name in ("CHIPGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "CHIPGRAPH_ASKPASS_VALUE"):
+        monkeypatch.setenv(name, TOKEN)
+    monkeypatch.setenv("GIT_ASKPASS", "/usr/bin/evil")
+    spy = _Spy(monkeypatch)
+    vcs = GitVcs()
+    head = vcs.head(root)
+    vcs.branch_tip(root, "main")
+    vcs.remote_url(root, "origin")
+    vcs.checked_out_branches(root)
+    assert spy.calls, "no git command ran"
+    for cmd, env in spy.calls:
+        assert TOKEN not in " ".join(cmd) + "".join(env.values()), cmd
+        assert not {"CHIPGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GIT_ASKPASS"} & set(env)
+    spy.calls.clear()
+    vcs.push_branch(root, "origin", head, "feat", token=TOKEN)
+    [(_cmd, env)] = spy.pushes()
+    assert [k for k, v in env.items() if TOKEN in v] == [ASKPASS_VALUE_VAR]
+
+
+def test_every_spelling_of_the_token_is_redacted() -> None:
+    import base64
+    import urllib.parse
+
+    from chipgraph.adapters.vcs.git import redact_secret
+
+    secret = "ghp_a/b+c=d e&f"
+    spellings = [
+        secret,
+        urllib.parse.quote(secret, safe=""),
+        urllib.parse.quote_plus(secret),
+        base64.b64encode(secret.encode()).decode(),
+        base64.urlsafe_b64encode(secret.encode()).decode(),
+        base64.b64encode(secret.encode()).decode().rstrip("="),
+        base64.b64encode(f"x-access-token:{secret}".encode()).decode(),
+        base64.urlsafe_b64encode(f"x-access-token:{secret}".encode()).decode(),
+        base64.b64encode(f":{secret}".encode()).decode(),
+    ]
+    for spelling in spellings:
+        out = redact_secret(f"fatal: bad credentials {spelling} for the remote", secret)
+        assert spelling not in out and "***" in out, spelling
+    assert redact_secret("nothing here", secret) == "nothing here"
+    assert redact_secret("keeps text", None) == "keeps text"
+
+
+def test_a_push_error_with_an_encoded_token_is_redacted(
+    repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+
+    root, _bare = repo
+    encoded = base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
+
+    def fail(cmd: Any, *args: Any, **kwargs: Any) -> Any:
+        if "push" in cmd:
+            raise subprocess.CalledProcessError(
+                128,
+                cmd,
+                output=b"",
+                stderr=f"remote: Authorization: basic {encoded} rejected {TOKEN}".encode(),
+            )
+        return real(cmd, *args, **kwargs)
+
+    real = subprocess.run
+    monkeypatch.setattr(git_module.subprocess, "run", fail)
+    head = GitVcs().head(root)
+    with pytest.raises(VcsError) as info:
+        GitVcs().push_branch(root, "origin", head, "feat", token=TOKEN)
+    text = str(info.value)
+    assert TOKEN not in text and encoded not in text and "***" in text
