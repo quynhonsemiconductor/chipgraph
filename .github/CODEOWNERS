@@ -1,1 +1,5 @@
-* @Nghia-VanTrong
+# Default owner for everything in this repo.
+# Enforced via the main-protection ruleset (require_code_owner_review).
+# Org docs: quynhonsemiconductor/.github → docs/ORG-GOVERNANCE.md (the area-team model).
+
+* @quynhonsemiconductor/ai-leads
