@@ -23,11 +23,11 @@
 ARG OSS_CAD_SUITE_DATE=2026-09-28
 ARG OSS_CAD_SUITE_SHA256_AMD64=6d04cf3e36c45d4eacbe2fa07f3860b9a86f503c2b725bdee4d02e54defbf80d
 ARG OSS_CAD_SUITE_SHA256_ARM64=7f80d70662b089363687663020d7f319c412e9ab0d243d8603634de763950802
-ARG UV_VERSION=0.13.1
+ARG UV_VERSION=0.13.5
 ARG PYTHON_VERSION=3.14
 
 # --- uv: copy the static binary from astral's official image, pinned by tag + digest ---
-FROM ghcr.io/astral-sh/uv:${UV_VERSION}@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
+FROM ghcr.io/astral-sh/uv:${UV_VERSION}@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
 
 # --- eda-base: debian + the OSS CAD Suite release tarball for the build arch ------------
 FROM debian:bookworm-slim AS eda-base
