@@ -25,7 +25,7 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.45",
 ]
 llm = [
-    "anthropic>=1.9,<2",
+    "anthropic>=2.3,<3",
 ]
 evals = [
     "inspect-ai==0.3.281",
@@ -108,7 +108,7 @@ dev = [
     "types-PyYAML",
     "import-linter>=2.15",
     "opentelemetry-sdk>=1.45",
-    "anthropic>=1.9,<2",
+    "anthropic>=2.3,<3",
     "inspect-ai==0.3.281",
 ]
 
