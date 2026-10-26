@@ -92,6 +92,7 @@ def test_maps_the_request_and_the_response() -> None:
     sent = server.requests[0]
     assert str(sent.url) == "https://api.anthropic.com/v1/messages"
     assert sent.headers["x-api-key"] == "test-key-anthropic"
+    assert "authorization" not in sent.headers  # SDK v2 would add a Bearer copy
     assert server.body() == {
         "model": "claude-sonnet-5-5",
         "max_tokens": 99,
