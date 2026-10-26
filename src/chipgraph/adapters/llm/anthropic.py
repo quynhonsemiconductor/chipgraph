@@ -156,7 +156,14 @@ class AnthropicProvider:
                 f"provider {self.name!r}: environment variable {self.api_key_env} is not set; "
                 f"it should hold the API key ({where}.api_key_env)"
             )
-        credential = {"api_key": key} if self.auth == "x-api-key" else {"auth_token": key}
+        # SDK v2 sends `api_key` as `Authorization: Bearer`, v1 as `x-api-key`. Set the header
+        # explicitly (and drop the Bearer one) so `auth = "x-api-key"` is the same on the wire
+        # under both; `auth_token` is Bearer in both.
+        credential: dict[str, Any] = (
+            {"api_key": key, "default_headers": {"x-api-key": key, "Authorization": sdk.Omit()}}
+            if self.auth == "x-api-key"
+            else {"auth_token": key}
+        )
         self._client = sdk.AsyncAnthropic(
             **credential,
             base_url=self.base_url or ANTHROPIC_BASE_URL,
