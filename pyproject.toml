@@ -28,7 +28,7 @@ llm = [
     "anthropic>=2.3,<3",
 ]
 evals = [
-    "inspect-ai==0.3.285",
+    "inspect-ai==0.3.287",
 ]
 # Simulation (adapter `edalize`, parser `cocotb`): exact pins, since cocotb's GPI env
 # contract changed between 1.x and 2.x and Edalize's cocotb glue lags it (docs/spikes/S3.md).
@@ -109,7 +109,7 @@ dev = [
     "import-linter>=2.15",
     "opentelemetry-sdk>=1.45",
     "anthropic>=2.3,<3",
-    "inspect-ai==0.3.285",
+    "inspect-ai==0.3.287",
 ]
 
 [tool.hatch.build.targets.wheel]
