@@ -1,11 +1,14 @@
 name: image
 
-# zizmor 1.5.2 anchors cache-poisoning at the workflow's trigger, not at the cache
-# step, so the inline form on the build actions does not cover it. The risk is
-# closed in the workflow instead: the PR-running build job READS the GHA cache but
-# never writes it (cache-to is conditional on a push), and the job that writes and
-# publishes runs only on push/tag. The trigger-level ignore is what the audit points
-# at; revisit when the shared action's zizmor reaches 1.30, which reports nothing here.
+# zizmor 1.5.2 (the version the shared action installs) anchors cache-poisoning at
+# the workflow's trigger, not at the cache step, so the inline form on the build
+# actions does not cover it — CONFIRMED 2026-11-04 against a local 1.5.2 (two
+# findings, both image.yml:3:1). The risk is closed in the workflow instead: the
+# PR-running build job READS the GHA cache but never writes it (cache-to is
+# conditional on a push), and the job that writes and publishes runs only on
+# push/tag. OWNER RE-CHECK: when the shared action's pinned zizmor is raised to
+# >=1.30 (which reports nothing here), delete this ignore and confirm the check
+# still passes.
 on:  # zizmor: ignore[cache-poisoning]
   pull_request:
   push:

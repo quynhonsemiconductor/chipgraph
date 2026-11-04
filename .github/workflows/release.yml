@@ -26,8 +26,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # zizmor: ignore[cache-poisoning] — cache is enabled by default in setup-uv; this
-      # workflow runs on a tag only, never on an untrusted PR, so nothing can poison it first.
+      # zizmor: ignore[cache-poisoning] — cache is enabled by default in setup-uv. This
+      # workflow runs on a tag push or a maintainer workflow_dispatch only, never on a
+      # pull request, so nothing untrusted can populate the cache first.
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2  # zizmor: ignore[cache-poisoning]
         with:
           python-version: "3.13"
@@ -85,6 +86,7 @@ jobs:
     # Installs from the public TestPyPI index and checks out nothing: it needs no token.
     permissions: {}
     steps:
+      # Same trust boundary as build: a tag push or a maintainer dispatch, never a PR.
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2  # zizmor: ignore[cache-poisoning]
         with:
           python-version: "3.13"
