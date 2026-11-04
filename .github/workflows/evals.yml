@@ -8,9 +8,10 @@ name: evals
 #
 # Auth: the repository secret CHIPGRAPH_EVALS_CLAUDE_TOKEN, a Claude Code OAuth token of
 # a separate account (`claude setup-token`), passed to `claude` as
-# CLAUDE_CODE_OAUTH_TOKEN. Without the secret the job FAILS with a message naming the
-# secret: a weekly run that is green while every eval step is skipped reads as "evals
-# passed" and nobody looks. Set the secret, or disable this workflow deliberately.
+# CLAUDE_CODE_OAUTH_TOKEN. Without the secret the job skips cleanly, green, with a
+# ::notice:: and a line in the run summary (owner decision 2026-11-04). There is no
+# schedule: this workflow runs by hand only, so a green skip can never read as a weekly
+# eval that passed.
 # Cost cap: --budget-usd per suite (claude's --max-budget-usd per sample, and the suite
 # stops once the summed total_cost_usd reaches it); --time-limit per suite.
 
@@ -30,9 +31,6 @@ on:
         description: Cost cap per suite, in USD
         type: string
         default: "3"
-  schedule:
-    - cron: "17 3 * * 1" # Mondays 03:17 UTC
-
 permissions:
   contents: read
 
@@ -56,10 +54,10 @@ jobs:
           if [ -n "$TOKEN" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            msg="CHIPGRAPH_EVALS_CLAUDE_TOKEN is not set, so no eval can run. This job fails on purpose: a green run with every step skipped is a silent no-op. Set the repository secret (evals/README.md) or disable the scheduled workflow deliberately."
-            echo "::error::$msg"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            msg="CHIPGRAPH_EVALS_CLAUDE_TOKEN is not set: real-model evals skipped (see evals/README.md)."
+            echo "::notice::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

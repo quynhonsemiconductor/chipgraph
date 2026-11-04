@@ -2,6 +2,8 @@
 
 The job itself needs the evals secret and a model, so it is not run here; this checks
 what it is wired to do: when it runs, how it skips, what it runs and what it uploads.
+It runs BY HAND ONLY (owner decision 2026-11-04): without a schedule, a green skip can
+never read as a weekly eval that passed.
 """
 
 from __future__ import annotations
@@ -26,10 +28,10 @@ def _steps() -> list[dict[str, Any]]:
     return job["steps"]
 
 
-def test_runs_by_hand_or_weekly_never_on_push_or_pr() -> None:
+def test_runs_by_hand_only_never_on_push_pr_or_a_schedule() -> None:
     data = _workflow()
     triggers = data.get("on", data.get(True))  # YAML 1.1 reads a bare `on` as true
-    assert set(triggers) == {"workflow_dispatch", "schedule"}
+    assert set(triggers) == {"workflow_dispatch"}
     inputs = triggers["workflow_dispatch"]["inputs"]
     assert set(inputs) == {"suite", "main_model", "budget_usd"}
     assert inputs["main_model"]["default"] == "sonnet"
