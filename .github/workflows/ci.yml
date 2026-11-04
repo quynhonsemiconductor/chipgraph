@@ -136,6 +136,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - uses: trufflesecurity/trufflehog@31ce31ee1abbcc7dc8eee5764c17121c3044c8b2 # v3.99.7
-        with:
-          extra_args: --only-verified
+      # The org's shared scanner (gitleaks CLI, canary-checked before trusting a
+      # clean result), pinned like every other ci ref. Replaces the upstream
+      # trufflehog action this repo carried on its own.
+      - uses: quynhonsemiconductor/ci/actions/scan-secrets@400b7e9868e9ba6d172d956a08041ba19b574689 # v1.33.1

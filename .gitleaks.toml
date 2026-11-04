@@ -1,0 +1,13 @@
+# The org scan runs gitleaks with THIS repository's config. gitleaks treats a
+# repo config as THE config, so extend the default ruleset instead of replacing
+# it (the shared action's canary step fails loudly if this is ever dropped).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures: the CLI tool's idempotency key is an assertion target, not a credential"
+regexTarget = "line"
+regexes = [
+  '''idempotency_key (==|!=)''',
+]
