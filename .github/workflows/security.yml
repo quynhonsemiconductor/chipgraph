@@ -1,0 +1,52 @@
+# =============================================================================
+# Security · Scan — thin caller of the shared reusable suite (qnsc-ci).
+#
+# Org-wide standard, adopted after the 2026-11-04 CI cross-check: Semgrep (SAST),
+# Gitleaks (secrets) and osv-scanner (dependency CVEs, reads uv.lock) in ONE job,
+# plus actions-security (actionlint + zizmor) in another. Before this file
+# chipgraph ran only a bare secret scan on PRs and nothing on a schedule.
+#
+# scan_container is false: the test image is built by image.yml, and the Trivy
+# container scan reads an image from a registry this job does not have.
+# =============================================================================
+name: Security · Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '50 1 * * *' # UTC; staggered per product so the runner fleet does not stack
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # CEILINGS for the called workflow's jobs, not grants used here. GitHub validates
+  # every called job's ceiling at STARTUP, before any `if:`; missing `packages: read`
+  # makes the reusable's trivy job a startup_failure even though `scan_container:
+  # false` means it cannot run — and a startup_failure produces no checks at all.
+  security-events: write # zizmor: ignore[excessive-permissions]
+  packages: read # zizmor: ignore[excessive-permissions]
+
+jobs:
+  actions-security:
+    permissions:
+      contents: read
+      security-events: write
+    uses: quynhonsemiconductor/ci/.github/workflows/actions-security.yml@b696a7d77e650057b4ee1de16be84bcce3936566 # v1.34.0
+    with:
+      blocking: true
+      combine: true # actionlint + zizmor as ONE job: `actions-security / Workflow security (actionlint, zizmor)`
+
+  security:
+    # No job-level permissions: the job inherits the top-level ceiling above.
+    uses: quynhonsemiconductor/ci/.github/workflows/security.yml@b696a7d77e650057b4ee1de16be84bcce3936566 # v1.34.0
+    with:
+      product: chipgraph
+      combine: true # Gitleaks + osv-scanner + Semgrep as ONE job: `security / Security scans (Gitleaks, osv-scanner, Semgrep)`
+      scan_container: false
+      osv_blocking: true
