@@ -29,7 +29,7 @@ jobs:
       # zizmor: ignore[cache-poisoning] — cache is enabled by default in setup-uv. This
       # workflow runs on a tag push or a maintainer workflow_dispatch only, never on a
       # pull request, so nothing untrusted can populate the cache first.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2  # zizmor: ignore[cache-poisoning]
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3  # zizmor: ignore[cache-poisoning]
         with:
           python-version: "3.13"
 
@@ -87,7 +87,7 @@ jobs:
     permissions: {}
     steps:
       # Same trust boundary as build: a tag push or a maintainer dispatch, never a PR.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2  # zizmor: ignore[cache-poisoning]
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3  # zizmor: ignore[cache-poisoning]
         with:
           python-version: "3.13"
 
