@@ -37,14 +37,14 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: quynhonsemiconductor/ci/.github/workflows/actions-security.yml@b696a7d77e650057b4ee1de16be84bcce3936566 # v1.34.0
+    uses: quynhonsemiconductor/ci/.github/workflows/actions-security.yml@956804ad4aa2dcf930909553d306d72b3708fd5d # v1.34.1+ci#308
     with:
       blocking: true
       combine: true # actionlint + zizmor as ONE job: `actions-security / Workflow security (actionlint, zizmor)`
 
   security:
     # No job-level permissions: the job inherits the top-level ceiling above.
-    uses: quynhonsemiconductor/ci/.github/workflows/security.yml@b696a7d77e650057b4ee1de16be84bcce3936566 # v1.34.0
+    uses: quynhonsemiconductor/ci/.github/workflows/security.yml@956804ad4aa2dcf930909553d306d72b3708fd5d # v1.34.1+ci#308
     with:
       product: chipgraph
       combine: true # Gitleaks + osv-scanner + Semgrep as ONE job: `security / Security scans (Gitleaks, osv-scanner, Semgrep)`
