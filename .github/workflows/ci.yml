@@ -141,4 +141,4 @@ jobs:
       # The org's shared scanner (gitleaks CLI, canary-checked before trusting a
       # clean result), pinned like every other ci ref. Replaces the upstream
       # trufflehog action this repo carried on its own.
-      - uses: quynhonsemiconductor/ci/actions/scan-secrets@400b7e9868e9ba6d172d956a08041ba19b574689 # v1.33.1
+      - uses: quynhonsemiconductor/ci/actions/scan-secrets@956804ad4aa2dcf930909553d306d72b3708fd5d # v1.34.1+ci#308
